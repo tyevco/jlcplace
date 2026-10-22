@@ -143,6 +143,21 @@ def test_an_origin_mismatch_says_which_rows_sit_on_their_parts_already():
         f"(1 row sits on its part already: {rows[1].ref})" in hint, hint
 
 
+def test_the_origin_finding_counts_the_parts_jlc_would_put_off():
+    """From the Gerbers' origin, a row a little off the common vector is outside its cluster but displaced all the
+    same: JLC would put every part off. Only rows in place make it "N of the M parts"."""
+    from jlcplace.pipeline import origin_findings
+    b, resolved = board(n=12)
+    b = dataclasses.replace(b, origin_kind="gerber")
+    rows = rows_from(b, resolved, (0.0, 0.0))
+    rows[2] = dataclasses.replace(rows[2], x=rows[2].x + 0.2)
+    (f,) = origin_findings(check(b, rows, resolved), origins=ORIGINS)
+    assert "(11 of 12 rows): JLC would put every part 141.42 mm off" in f.message, f.message
+    rows[1] = rows_from(b, resolved)[1]                          # fixed by hand: in place
+    (f,) = origin_findings(check(b, rows, resolved), origins=ORIGINS)
+    assert "(10 of 12 rows): JLC would put 11 of the 12 parts 141.42 mm off" in f.message, f.message
+
+
 # ------------------------------------------------------------------------------------------------------- origins
 
 @pytest.mark.parametrize("kind", ["absolute", "grid"])

@@ -805,7 +805,9 @@ def origin_findings(run: Run, *, given=None, given_kind: str = "", units: str = 
             ([] if off.y_up else ["negate Mid Y (JLC's y grows upward from the origin)"])
         fix = " and ".join(each + [("either " if each and len(one) > 1 else "") + ", or ".join(one)]) + (
             "; `check --fixed-cpl FILE` writes the CPL so, from the Gerbers' origin" if each else "")
-        parts = "every part" if off.rows == off.total else f"{off.rows} of the {off.total} parts"
+        # every row not in place is displaced, also one a little off the common vector (a part whose EasyEDA origin
+        # is not KiCad's anchor): only rows in place make it "N of the M"
+        parts = "every part" if not off.in_place else f"{off.total - len(off.in_place)} of the {off.total} parts"
         does = (f"JLC would put {parts} {math.hypot(off.dx, off.dy):.2f} mm off, displaced by ({_pm(off.dx)}, "
                 f"{_pm(off.dy)}) mm" if plain else "JLC would put the parts off their pads")
         return [Finding("origin", RED, f"origin mismatch: {gerbers}, but the CPL was written from {where}"
