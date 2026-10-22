@@ -121,9 +121,11 @@ def test_cpl_writes_rows_that_check_clean(env, capsys):
     u1 = next(r for r in d["results"] if r["ref"] == "U1")
     assert u1["correction"]["source"] == "fit" and u1["correction"]["rot"] == 180.0 and u1["line"] == 4
     assert all(lnd["ee"] == lnd["kicad"] for lnd in u1["landings"])
-    # U2: bottom at a row angle of 330, so the bottom reading matters and the angle is odd
-    cats = {(i["category"], i["ref"]) for i in d["checklist"]}
-    assert {("bottom reading", "U2"), ("odd angle", "U2")} <= cats and ("bottom reading", "R2") not in cats
+    # U2: bottom at a row angle of 330, so the bottom reading matters and the angle is odd: one item (cli-6)
+    items = {i["ref"]: i for i in d["checklist"]}
+    assert set(items) == {"U2"} and (items["U2"]["category"], items["U2"]["also"]) == ("bottom reading",
+                                                                                         ["odd angle"])
+    assert "pin 1 would" in items["U2"]["what"] and "rotation 330 is not a multiple of 90" in items["U2"]["what"]
     md = (t / "c.md").read_text()
     assert "## Bottom reading" in md and "- [ ] **U2**" in md
     suite = ET.fromstring((t / "r.xml").read_text())
@@ -178,6 +180,30 @@ def test_cpl_refuses_red_rows(env, capsys):
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force")
     assert code == 2 and "red rows included (--force)" in out
     assert [r.ref for r in read_cpl(env.out)] == ["D1", "R1", "R2", "U1", "U2"]
+
+
+def test_a_red_cpl_run_says_what_it_left(env, capsys, monkeypatch):
+    """cli-10: a red run left an old CPL in place under the name of the one it refused, said 'the rows above' under
+    -q with nothing above, named the unwritten file in the summary header, and `-o -` wrote a file called '-'."""
+    env.make(two("D1", TOP, 115.0, 70.0, 0.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
+    Path(env.out).write_text("STALE OLD CONTENT\n")
+    code, out, err = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "-q")
+    assert code == 2 and Path(env.out).read_text() == "STALE OLD CONTENT\n"
+    assert out.strip() == (f"jlcplace: {env.out} not written: D1 is red (--force writes it anyway); the existing "
+                           f"{env.out} is left unchanged"), out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.tmp / "new.csv", *offline(env))
+    head, last = out.splitlines()[0], out.splitlines()[-1]
+    assert code == 2 and "vs the rows jlcplace would write (5 rows)" in head and "new.csv" not in head, head
+    assert last == f"jlcplace: {env.tmp / 'new.csv'} not written: the rows above are red (--force writes it anyway)", \
+        last
+    assert not (env.tmp / "new.csv").exists()
+    code, out, err = run(capsys, "cpl", env.board, "-o", env.tmp / "new.csv", *offline(env), "--force", "--json", "-")
+    assert code == 2 and json.loads(out)["cpl"] == str(env.tmp / "new.csv")
+    assert "vs new.csv (5 rows)" in err.splitlines()[0]
+    monkeypatch.chdir(env.tmp)
+    for argv in (["cpl", env.board, "-o", "-"], ["snapshot", env.board, "-o", "-"]):
+        code, out, err = run(capsys, *argv, *offline(env)[:2] if argv[0] == "cpl" else [])
+        assert code == 3 and "-o -" in err and not (env.tmp / "-").exists(), (argv, err)
 
 
 def test_offline_check_from_a_committed_database(env, capsys):
@@ -653,16 +679,30 @@ def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_b
 
 def test_checklist_puts_the_placements_in_doubt_first(env, capsys):
     """truth-5: 'uncertain correction' items in plain ref order hid the one wrong fit among the right ones; the ones
-    whose choice of placement is in doubt (a polarity, an orientation) now come first."""
+    whose choice of placement is in doubt (a polarity, an orientation) now come first. cli-6: a green row whose
+    correction is yellow only for its land-pattern residual (C0: rms 0.17 mm, every pad landing) is nothing the
+    preview can settle, and is left out; a correction that leaves a KiCad pad bare (Q5) is still listed, after the
+    polarity, and says why first."""
     write_records(env, C2286=record2([("2", -0.75, 0.0, 0.8, 0.8, 0), ("1", 0.75, 0.0, 0.8, 0.8, 0)],
                                      names={"1": "1", "2": "2"}, uuid="led"),
-                  C2003=record([("1", -0.65, 0.0, 0.6, 0.6, 0), ("2", 0.65, 0.0, 0.6, 0.6, 0)], uuid="r3"))
+                  C2003=record([("1", -0.65, 0.0, 0.6, 0.6, 0), ("2", 0.65, 0.0, 0.6, 0.6, 0)], uuid="r3"),
+                  C2004=record([("1", -0.95, 0.0, 0.6, 0.6, 0), ("2", 0.95, 0.0, 0.6, 0.6, 0)], uuid="q3"))
+    q5 = Part("Q5", TOP, 118.0, 72.0, 0.0, footprint="Package_TO_SOT_SMD:SOT-23", lcsc="C2004",
+              pads=[Pad("1", -0.95, 0.0, 0.6, 0.6, net="G"), Pad("2", 0.95, 0.0, 0.6, 0.6, net="S"),
+                    Pad("3", 0.0, 1.5, 0.6, 0.6, net="D")])
     env.make(two("C0", TOP, 112.0, 70.0, 0.0, "C2003", footprint="Capacitor_SMD:C_0402_1005Metric"),
-             diode("LED9", 110.0, 75.0, "C2286", names=("", ""), footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
+             diode("LED9", 110.0, 75.0, "C2286", names=("", ""), footprint="LED_SMD:LED_0603_1608Metric", half=0.7875),
+             q5)
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
-    unsure = [i["ref"] for i in json.loads(out)["checklist"] if i["category"] == "uncertain correction"]
-    assert unsure == ["LED9", "C0"], unsure
+    d = json.loads(out)
+    unsure = [i for i in d["checklist"] if i["category"] == "uncertain correction"]
+    assert [i["ref"] for i in unsure] == ["LED9", "Q5"], unsure
+    c0 = next(r for r in d["results"] if r["ref"] == "C0")
+    assert c0["verdict"] == GREEN and c0["correction"]["verdict"] == YELLOW, c0
+    assert [r for r in c0["correction"]["reasons"] if not r.startswith("rms ")] == [], c0
+    assert unsure[1]["what"].startswith("yellow fit correction (auto): KiCad pads that no EasyEDA pad lands on"), \
+        unsure[1]
 
 
 # ------------------------------------------------------------------------------------------------------- confirm
@@ -1082,6 +1122,7 @@ def test_checklists_and_the_cpl_carry_no_formulas_or_markup(env, capsys):
                   "<img src=http://evil.example/p.png> [click](http://evil.example/) `code` *bold* _it_ \\", YELLOW)]
     rows = list(csv.reader(io.StringIO(report.checklist_csv(run_))))
     assert rows[1][1] == "'=1+1" and rows[1][6] == "'@SUM(1)" and rows[2][1] == "R1](http://evil.example/)![x"
+    assert rows[1][7] == "'=1+1"                    # the refs column (cli-6) too
     md = report.checklist_markdown(run_)
     item = md.split("- [ ] ", 2)[2]
     assert re.search(r"(?<!\\)[\[\]<>`*_]", item.replace("**", "", 2).replace("**(", "(")) is None, item
@@ -1172,3 +1213,140 @@ def test_readme_ci_recipe_writes_no_html_report_and_downloads_nothing():
     assert "jlcplace check" in commands and "--report" not in commands and "--online" not in commands, recipe
     assert "upload" in recipe.lower() and "artifact" in recipe.lower(), recipe
     assert "--online" in text and "max_total_wait" not in text
+
+
+# ------------------------------------------------------------------------------------------------------- cli-13
+
+def test_option_quirks(env, capsys, monkeypatch):
+    """cli-13: '--origin -5,3' read the value as an option; -v only worked before the subcommand; ctrl-C exited 130
+    without a word; a --db that does not exist (a typo) silently dropped every stored correction."""
+    import logging
+
+    from jlcplace import cli
+    env.make()
+    assert run(capsys, "cpl", env.board, "-o", env.out, *offline(env))[0] == 0
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env), "--origin", "-5,3")
+    assert code == 2 and "origin user -5, 3" in out, err
+    assert run(capsys, "check", env.board, env.out, *offline(env), "--origin=-5,3")[:2] == (code, out)
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env), "--origin", "4.75in,-500mil")
+    assert code == 2 and "origin user 120.65, -12.7" in out, err
+
+    for argv in (["check", env.board, env.out, *offline(env), "-v"], ["-v", "check", env.board, env.out,
+                                                                       *offline(env)]):
+        code, _, err = run(capsys, *argv)
+        assert code == 0 and logging.getLogger("jlcplace").level == logging.INFO, (argv, err)
+    assert run(capsys, "check", env.board, env.out, *offline(env))[0] == 0
+    assert logging.getLogger("jlcplace").level == logging.WARNING
+    code, _, err = run(capsys, "fetch", "C1001", "--cache", env.cache, "-v")
+    assert code == 0, err
+
+    def interrupted(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "cmd_check", interrupted)
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env))
+    assert code == 130 and err.strip() == "jlcplace: interrupted"
+    monkeypatch.undo()
+
+    missing = env.tmp / "jlcplace-bd"
+    for argv in (["check", env.board, env.out, "-q"], ["cpl", env.board, "-o", env.tmp / "x.csv", "-q"],
+                 ["show", "C1001"]):
+        code, _, err = run(capsys, *argv, *offline(env), "--db", missing)
+        assert code == 0 and f"--db {missing} does not exist" in err, (argv, err)
+    assert not missing.exists()
+    afile = env.tmp / "afile"
+    afile.write_text("x\n")
+    code, _, err = run(capsys, "check", env.board, env.out, *offline(env), "--db", afile)
+    assert code == 3 and "not a directory" in err, err
+    code, _, err = run(capsys, "fit", env.board, *offline(env), "--db", env.tmp / "new-db", "-q")
+    assert code == 0 and "does not exist" not in err and (env.tmp / "new-db").is_dir()
+
+
+def test_a_cpl_in_inches_gets_a_hint(env, capsys):
+    """cli-13: KiCad's CSV position file says no unit; one exported in inches gave a page of red rows and no hint."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    inch = env.tmp / "inch.csv"
+    inch.write_text("Designator,Mid X,Mid Y,Layer,Rotation\n" + "".join(
+        f"{r.ref},{r.x / 25.4:.6f},{r.y / 25.4:.6f},{r.layer},{r.rotation:g}\n" for r in read_cpl(env.out)))
+    code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "-q")
+    assert code == 2 and "--units in" in out and "4 of 4 rows" in out, out
+    code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "--units", "in", "-q")
+    assert code == 0 and "--units" not in out, out
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--origin", "-5,3", "-q")
+    assert code == 2 and "--units" not in out, out
+
+
+# ------------------------------------------------------------------------------------------------------- cli-6, cli-12
+
+def test_checklist_is_one_item_per_part_and_per_code_at_odd_angles(env, capsys):
+    """cli-6: 44 LEDs of one code around a ring were 44 'odd angle' items (the terminal showed 12, 'and 80 more'),
+    and a part could be listed three times. Now a part is one item with its other reasons folded in, one code on one
+    side at odd angles is one item naming the part to look at, bottom parts that move alike are one item, and the
+    part that moves under every other bottom reading comes first: it settles the reading for all."""
+    env.make(*[two(f"R{k}", TOP, 100.0 + 3 * k, 60.0, a, "C1002") for k, a in ((3, 10.0), (4, 20.0), (5, 30.0),
+                                                                            (6, 40.0), (7, 50.0))],
+             sot("U3", BOTTOM, 140.0, 90.0, 0.0), sot("U4", BOTTOM, 145.0, 90.0, 0.0))
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    t = env.tmp
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", t / "r.json", "--checklist",
+                       t / "c.md", "--report", t / "r.html")
+    items = json.loads((t / "r.json").read_text())["checklist"]
+    assert code == 0 and [(i["category"], i["ref"], i["refs"]) for i in items] == [
+        ("bottom reading", "U2", ["U2"]), ("bottom reading", "U3", ["U3", "U4"]),
+        ("odd angle", "R6", ["R3", "R4", "R5", "R6", "R7"])], items
+    u2, u3, ring = items
+    assert u2["first"] and u2["what"].startswith("look at this one first") and u2["also"] == ["odd angle"]
+    assert "pin 1 would land off copper" in u2["what"] and "pin 1 would sit on pad 4" in u2["what"], u2
+    assert "U2" not in [r for i in items[1:] for r in i["refs"]]               # one item per part
+    assert not u3["first"] and "2 parts of one code at one rotation" in u3["what"]
+    assert ring["rotation"] is None and "R6 at 40" in ring["what"] and "10 to 50 degrees" in ring["what"]
+    assert "Preview checklist (3 items, 8 parts)" in out, out
+    assert "  odd angle       R6 of R3..R7 (C1002, 5 parts at 10 to 50 deg: look at R6)" in out, out
+    assert "U2 (look at it first: it settles the bottom reading), U3 U4" in out, out
+    md = (t / "c.md").read_text()
+    assert "- [ ] **R6** of R3–R7 (C1002, top, 5 parts): " in md and "- [ ] **U3 U4** (C1001, bottom, rot 0, " \
+        "2 parts)" in md, md
+    page = (t / "r.html").read_text()
+    assert "of R3–R7 (5 parts)" in page and "look at this one first" in page
+
+
+def test_html_report_labels_legends_and_checklist(env, capsys):
+    """cli-12: the board views' labels sat on their part's pad outlines in the same colour; the legend said '+ CPL
+    row point' where the board views draw the CPL origin, and 'off copper' dashed where they use verdict colours; the
+    checklist table had no red flag; the header held absolute local paths."""
+    board = env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = read_cpl(env.out)
+    for r in rows:
+        if r.ref == "U1":                               # turned half a turn: red, and labelled on the top view
+            r.rotation = 0.0
+        if r.ref == "U2":                               # red, and on the checklist (the bottom reading matters)
+            r.rotation = (r.rotation + 180.0) % 360.0
+    write_cpl(env.out, rows)
+    page_path = env.tmp / "r.html"
+    code, _, _ = run(capsys, "check", env.board, env.out, *offline(env), "--report", page_path, "-q")
+    page = page_path.read_text()
+    assert code == 2
+    assert str(env.tmp) not in page                      # file names only
+    head = page[page.index('<p class="sub">'):page.index("</p>", page.index('<p class="sub">'))]
+    assert "<code>out.csv</code>" in head and "<code>board.kicad_pcb</code>" in head, head
+    boards, cards = page.index('<div class="boards">'), page.index('<details class="card')
+    legend_b = page[page.index("<h2>Board</h2>"):boards]
+    assert "the CPL origin" in legend_b and "red row" in legend_b and "off copper" not in legend_b, legend_b
+    legend_c = page[page.index("<h2>Parts"):cards]
+    assert "off copper" in legend_c and "CPL row&rsquo;s point" in legend_c, legend_c
+    # the label: a halo, and above U1's copper and the pads JLC puts down, not on the row point
+    m = re.search(r'<text class="ref v-red" x="([-\d.]+)" y="([-\d.]+)" font-size="([\d.]+)" '
+                  r'stroke-width="([\d.]+)">U1</text>', page)
+    assert m, page[page.index('<svg class="board"'):][:400]
+    y, fs = float(m.group(2)), float(m.group(3))
+    u1 = board.part("U1")
+    top = min(cv.library_to_board(u1, q)[1] for p in u1.copper_pads() for q in geom.pad_outline(p))
+    assert y < top - 0.3 * fs and float(m.group(4)) > 0, (y, top)
+    assert ".ref{text-anchor:middle;font-weight:700;paint-order:stroke;stroke:var(--card)" in page
+    table = page[page.index('<table class="cl">'):]
+    table = table[:table.index("</table>")]
+    assert "<th>row</th>" in table
+    u2 = next(tr for tr in table.split("<tr>") if ">U2</a>" in tr)
+    assert '<span class="badge b-red">RED</span>' in u2, u2

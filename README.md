@@ -13,9 +13,12 @@ RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4,
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only (...)
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 3 red, 2 yellow, 179 green, 0 verified
-Preview checklist (109): look at these in JLC's placement preview
-  bottom reading        BZ1 J1 J40 U10 U11 U12 U30 U32 U40 U41
-  ...
+Preview checklist (12 items, 99 parts): look at these in JLC's placement preview
+  uncertain correction  BZ1: yellow fit correction (auto): polarity decided by pad numbers only (...) ...
+  not simulated         R26
+  bottom reading        U10 (look at it first: it settles the bottom reading), J1, J40, U11, U12, U30, U32, U40 U41
+  odd angle             C107 of C102..C112 C114..C124 C126..C136 C138..C148 (C1525, 44 parts at 8 to 353 deg: look at C107)
+                        D107 of D102..D112 D114..D124 D126..D136 D138..D148 (C55109522, 44 parts at 8 to 353 deg: look at D107)
 ```
 
 ## Why
@@ -76,8 +79,9 @@ only excludes from its BOM are checked too when the BOM lists them, since JLC pl
 `--bom`, a board whose parts mostly have no LCSC code gets a hint to pass the BOM or `--lcsc-field NAME`. The CPL may use JLC's header (Designator, Mid X, Mid Y, Layer, Rotation) or any common spelling. It may also be
 a KiCad position file (CSV or ASCII). UTF-8, cp1252 and UTF-16 (Excel's "Unicode Text") files are read, with any
 line ends (also Excel for Mac's CR-only "CSV (Macintosh)"); a value that is not a finite number ("nan", "inf") is bad
-input. Use `--units in` for a CSV position file exported in inches. The CPL origin is
-the board's aux (drill/place file) origin; use `--origin grid|absolute|X,Y` for other origins.
+input. Use `--units in` for a CSV position file exported in inches (`check` suggests it when most rows would sit
+on their parts in inches). The CPL origin is the board's aux (drill/place file) origin; use
+`--origin grid|absolute|X,Y` for other origins (X,Y in mm, or with a unit: `--origin 4in,-500mil`).
 
 **Write the CPL:**
 
@@ -86,7 +90,9 @@ jlcplace cpl board.kicad_pcb -o board-CPL.csv
 ```
 
 `cpl` takes each part's correction from the database (`--db`) or fits one, writes the rows, and checks the file it
-wrote. If any row is red, it exits with code 2 and keeps no file; `--force` writes the file anyway.
+wrote. If any row is red, it exits with code 2 and writes no file: a CPL already at that path is left unchanged,
+and the run says so. `--force` writes the file anyway. `-o -` is refused: the CPL is a file (`--json -` prints the
+results).
 
 **When the records cannot decide.** Some parts need a person to decide. For example, the TS-1187A switch is numbered
 1-4 in EasyEDA and 1,1,2,2 in KiCad, and which EasyEDA pins the switch joins inside is in its datasheet, not in the
@@ -123,7 +129,8 @@ Every CPL row gets a verdict:
 
 Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input (a file
 that cannot be read or written, a database file that cannot be read, a bad option or value, a reference that cannot
-be a designator), 4 an internal error (a bug: the traceback is printed). Outputs:
+be a designator, a `--db` that is a file), 4 an internal error (a bug: the traceback is printed), 130 interrupted
+(ctrl-C). `-v` (before or after the command) logs what the EasyEDA client does. Outputs:
 `--report` (one self-contained HTML page, for your own review: see below), `--json`, `--junit`, `--checklist`
 (`.md` or `.csv`) and `--github-annotations`.
 
@@ -135,18 +142,31 @@ formula (`'=...`), and the Markdown checklist escapes Markdown.
 
 The HTML report has top and bottom views of the board and a card for every part. KiCad copper pads are filled and
 numbered. The EasyEDA pads are outlined where JLC will put them. On the part cards they are blue on their own pin,
-amber on another pin and red off copper; on the board views they take their row's verdict colour. The bottom is drawn
-seen from below, as JLC's preview shows it. Above the board views and above the part cards the report declares the
-source of the outlines, the JLCEDA/EasyEDA Official Library, with links to https://lceda.cn/ and
-https://easyeda.com, as the records' licence asks.
+amber on another pin and red off copper; on the board views they take their row's verdict colour, and red and yellow
+parts are labelled above them (each view has its own legend; the big "+" on a board view is the CPL origin). The
+bottom is drawn seen from below, as JLC's preview shows it. The header names the board and the CPL, not their paths.
+Above the board views and above the part cards the report declares the source of the outlines, the JLCEDA/EasyEDA
+Official Library, with links to https://lceda.cn/ and https://easyeda.com, as the records' licence asks.
 
-The **preview checklist** lists what only JLC's preview can settle:
+The **preview checklist** lists what only JLC's preview can settle, short enough to work through. Each part is
+listed once, its other reasons folded into its item, and alike parts share one item that names the part to look at.
+In this order:
 
-* bottom parts whose pins would move if JLC read the bottom rotation differently (see below);
-* parts with no EasyEDA footprint;
-* rows at angles that are not multiples of 90;
-* parts whose fitted correction is not green, the ones whose choice of placement is in doubt (a polarity, an
-  orientation) first.
+* **uncertain correction**: parts whose correction is not green for a reason the preview can settle: red, a choice
+  of placement in doubt (a polarity, names against numbers, an orientation the pads do not fix; those first), or a
+  bare KiCad pad, a numbering, a manual decision. A green row whose fit is yellow only because the land patterns
+  differ (every pad lands) is left out: the preview cannot settle that.
+* **not simulated**: parts with no EasyEDA footprint, each on its own.
+* **bottom reading**: bottom parts whose pins would move if JLC read the bottom rotation differently (see below),
+  said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
+  green part that moves under every other reading comes first, and when it sits right the others follow. Parts of
+  one code at one rotation move alike and share an item.
+* **odd angle**: rows at angles that are not multiples of 90, one item per code and side (an LED ring of 44 is one
+  item), naming the part furthest from a multiple of 90.
+
+Within each (after the bottom reading's first part), red rows come first and are flagged: fix the row before
+looking at it. The Markdown, CSV, JSON and HTML
+checklists carry the same items; the CSV and JSON list every part an item stands for (`refs`).
 
 ## How the check works
 
@@ -249,7 +269,9 @@ before the check; nothing else in the job talks to EasyEDA.
 * The bottom-side reading is a well-supported hypothesis, not a documented fact; see the caveat above.
 * EasyEDA's rotation sense is proven from the records' corner order at multiples of 90 degrees. At other angles,
   RECT and OVAL pads are checked against their own outlines.
-* Symbol pin names are used where EasyEDA has them. Multi-unit symbols are parsed, but no real one has been tested.
+* Symbol pin names are used where EasyEDA has them. Multi-unit symbols are parsed through every unit, a unit's
+  names before the main symbol's; on three real records (two 324-ball BGAs, a 3-unit module) they name exactly
+  the footprint's pads.
 * A part EasyEDA has no record for is not simulated: yellow for a two-pad non-polar part, red otherwise, unless a
   stored correction exists.
 * The EasyEDA API is not a documented, stable interface. Only `fetch` and `--online` use it. jlcplace waits at least

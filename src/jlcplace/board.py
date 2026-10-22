@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from .convention import board_to_library, norm_angle, rot
+from .cpl import parse_length
 from .lcsc import find_lcsc
 from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, TOP, Board, Pad, Part, ref_problem
@@ -66,7 +67,8 @@ def load_board(path, *, origin="aux", lcsc_fields=(), reader: str = "auto") -> B
     except (OSError, RuntimeError) as e:
         if not Path(p).is_file():
             raise
-        warnings.warn(f"pcbnew could not load {p} ({e}); reading it with the S-expression reader")
+        why = str(e) if p in str(e) else f"pcbnew could not load {p} ({e})"     # say the file's name once
+        warnings.warn(f"{why}; reading it with the S-expression reader")
         return load_board_sexpr(p, origin=origin, lcsc_fields=lcsc_fields)
 
 
@@ -122,6 +124,15 @@ def resolve_origin(origin, aux, grid) -> tuple[tuple[float, float], str]:
     return (x, y), kind
 
 
+def _length(text: str) -> float:
+    """mm from one origin coordinate: a number (nan and inf too: resolve_origin refuses them by name), or a length
+    with a unit as the CPL reader takes it ('10mm', '3.937in', '100 mil')."""
+    try:
+        return float(text) + 0.0
+    except ValueError:
+        return parse_length(text) + 0.0
+
+
 def _origin(origin, aux, grid) -> tuple[tuple[float, float], str]:
     if isinstance(origin, str):
         key = origin.strip().lower()
@@ -130,13 +141,16 @@ def _origin(origin, aux, grid) -> tuple[tuple[float, float], str]:
             if named[key] is None:
                 raise ValueError(f"origin {origin!r} is not known for this board")
             return (float(named[key][0]) + 0.0, float(named[key][1]) + 0.0), key
-        nums = [s for s in re.split(r"[\s,;()]+|mm", key) if s]
+        nums = [s for s in re.split(r"[,;()]+", key) if s.strip()]
+        if len(nums) == 1:
+            nums = key.split()                      # "10 20"
         if len(nums) == 2:
             try:
-                return (float(nums[0]) + 0.0, float(nums[1]) + 0.0), "user"
+                return (_length(nums[0]), _length(nums[1])), "user"
             except ValueError:
                 pass
-        raise ValueError(f"origin must be aux, grid, absolute, 'X,Y' or (x, y); got {origin!r}")
+        raise ValueError(f"origin must be aux, grid, absolute, 'X,Y' (mm, or with a unit: 4in, 100mil) or (x, y); "
+                         f"got {origin!r}")
     x, y = origin
     return (float(x) + 0.0, float(y) + 0.0), "user"
 

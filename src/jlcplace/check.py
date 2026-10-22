@@ -29,7 +29,8 @@ A row that lands the pads as a fitted correction does whose choice among several
 lands every pad on its own pad but sits off where a (not red) correction puts the part is yellow ("offset").
 
 Bottom rows are placed again under every other reading in convention.BOTTOM_READINGS: a row whose pin -> net mapping
-changes, or whose pads leave copper, under one of them is `convention_sensitive` (look at it in JLC's preview).
+changes, or whose pads leave copper, under one of them is `convention_sensitive` (look at it in JLC's preview), and
+`reading_moves` says, per such reading, which EasyEDA pads move and where to (the checklist says it in pins).
 Relative to jlc-2022, the readings turn a bottom part by 2A (ccw-from-top), 2A + 180 (ccw-from-top+180) and 180
 (jlc-2022+180) degrees about its row point, A the row's angle.
 """
@@ -424,6 +425,7 @@ def _sensitivity(res: RowResult, part: Part, row: CplRow, ee: EEFootprint, origi
         if keys == base or (flip_ok and _swap_of(base, keys)):
             continue
         moved = sorted((a for a, k, b in zip(alt, keys, base) if k != b), key=lambda a: natural_key(a.ee_number))
+        res.reading_moves[name] = [(a.ee_number, a.kicad_number) for a in moved]
         moved = [f"{a.ee_number}->{a.kicad_number or 'off'}" for a in moved]
         changed.append(f"{name}: " + ", ".join(moved[:6]) + (" ..." if len(moved) > 6 else ""))
     if changed:

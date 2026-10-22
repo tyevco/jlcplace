@@ -257,6 +257,49 @@ def test_pin_names_single_and_multi_part():
     assert ee.from_response("C1", rec).pin_names == {"8": "VCC", "1": "A", "2": "B", "3": "C"}
 
 
+def test_pin_names_prefer_the_units_over_a_main_symbol_that_repeats_one():
+    """ee-8: C111548's main symbol repeats its first unit with the '/' between a pin's functions lost
+    ('PA0MCI0_CKTCLK3' against the unit's 'PA0/MCI0_CK/TCLK3'). The unit's name is the one that splits into
+    functions KiCad's pin names can match; the main symbol still names what no unit does."""
+    def unit(*p):
+        return {"dataStr": {"head": {"x": 0, "y": 0}, "shape": list(p)}}
+
+    f = parse([pad()], symbol=[pin("L1", "PA0MCI0_CKTCLK3"), pin("A1", "VSS"), pin("B2", "NC")],
+              subparts=[unit(pin("L1", "PA0/MCI0_CK/TCLK3"), pin("A1", "")), unit(pin("C3", "PB1"))])
+    assert f.pin_names == {"L1": "PA0/MCI0_CK/TCLK3", "A1": "VSS", "B2": "NC", "C3": "PB1"}
+
+
+MULTI_UNIT = ("C20916", "C111548", "C108023")          # real multi-unit symbols (BGA-324 x2, a 3-unit module)
+
+
+@pytest.mark.cache
+def test_multi_unit_records_name_every_pad():
+    """ee-8: every multi-unit record in the local caches (the CI e2e job fetches MULTI_UNIT; nothing of them is in
+    this repository) names exactly its footprint's pads, through all of its units."""
+    found = []
+    for f in cached_files() + cached_files((ee.default_cache_dir(),)):
+        rec = load(f)
+        res = rec.get("result") if isinstance(rec, dict) else None
+        if not isinstance(res, dict) or len(ee._units({"dataStr": res.get("dataStr"),
+                                                       "subparts": res.get("subparts")}, "symbol")) < 2:
+            continue
+        fp = ee.from_response(f.stem, rec)
+        numbers = {p.number for p in fp.pads if p.number}
+        names = ee.pin_names(res)
+        assert set(names) == numbers, f.stem
+        assert all(names.values()), f.stem
+        by_units: dict[str, str] = {}            # a unit's name wins over the main symbol's
+        for u in ee._units({"dataStr": res.get("dataStr"), "subparts": res.get("subparts")}, "symbol")[1:]:
+            for s in u.get("shape") or []:
+                p = ee._pin(s) if isinstance(s, str) and s.startswith("P~") else None
+                if p and p[1]:
+                    by_units.setdefault(p[0], p[1])
+        assert {k: names[k] for k in by_units} == by_units, f.stem
+        found.append(f.stem)
+    if not found:
+        pytest.skip(f"no multi-unit EasyEDA record cached (`jlcplace fetch {' '.join(MULTI_UNIT)}` into {EE_RAW})")
+
+
 def test_response_envelopes():
     nf = ee.from_response("c4167968", {"success": False, "code": 404, "message": "Component not found"})
     assert nf == NotFound("C4167968", "Component not found")

@@ -62,6 +62,45 @@ def plural(n: int, word: str, many: str = "") -> str:
     return f"{n} {word if n == 1 else many or word + 's'}"
 
 
+def ref_ranges(refs, dash: str = "\u2013") -> str:
+    """References with runs of three or more consecutive numbers (one prefix) as ranges: 'C102–C112 C114 C116–C148'."""
+    out: list[str] = []
+    run: list[tuple[str, int, str]] = []
+
+    def flush():
+        if len(run) >= 3:
+            out.append(f"{run[0][2]}{dash}{run[-1][2]}")
+        else:
+            out.extend(r[2] for r in run)
+        run.clear()
+
+    for ref in refs:
+        m = re.fullmatch(r"(.*?)(\d+)", ref)
+        if m is None:
+            flush()
+            out.append(ref)
+            continue
+        if not (run and m.group(1) == run[-1][0] and int(m.group(2)) == run[-1][1] + 1):
+            flush()
+        run.append((m.group(1), int(m.group(2)), ref))
+    flush()
+    return " ".join(out)
+
+
+def _label(it: CheckItem, dash: str = "\u2013") -> str:
+    """The item's part; a group's parts ('U40 U41'), with the one to look at when it is named ('C107 of C102–C112
+    C114–C148')."""
+    if len(it.refs) <= 1:
+        return it.ref
+    return f"{it.ref} of {ref_ranges(it.refs, dash)}" if it.category == "odd angle" else ref_ranges(it.refs, dash)
+
+
+def _parts(items: list[CheckItem]) -> str:
+    """'12 items' or '12 items, 99 parts'."""
+    n = sum(max(1, len(it.refs)) for it in items)
+    return plural(len(items), "item") + (f", {plural(n, 'part')}" if n != len(items) else "")
+
+
 def headline(res: RowResult) -> str:
     """'status: first message', the status left out when the message already says it ('2 of 2 EasyEDA pads land off
     copper', 'placement not simulated: ...')."""
@@ -81,7 +120,7 @@ def summary(run: Run, *, color: bool = False) -> str:
 
     b = run.board
     out = [printable(f"{TOOL}: {_name(b.path)} ({b.source}, {len(b.parts)} parts, origin {b.origin_kind} "
-                     f"{b.origin[0]:g}, {b.origin[1]:g}) vs {_name(run.cpl_path) or 'the rows jlcplace makes'} "
+                     f"{b.origin[0]:g}, {b.origin[1]:g}) vs {_name(run.cpl_path) or 'the rows jlcplace would write'} "
                      f"({len(run.rows)} rows), bottom reading {run.reading}")]
     bad = [r for _, r in _sorted(run.results) if r.verdict in (RED, YELLOW)]
     w = max((len(printable(r.ref)) for r in bad), default=0)
@@ -101,21 +140,32 @@ def summary(run: Run, *, color: bool = False) -> str:
                + (f"; {plural(len(run.bom_messages), 'BOM issue')}" if run.bom_messages else ""))
     items = run.checklist()
     if items:
-        out.append(f"Preview checklist ({len(items)}): look at these in JLC's placement preview")
+        out.append(f"Preview checklist ({_parts(items)}): look at these in JLC's placement preview")
         groups: dict[str, list[CheckItem]] = {}
         for it in items:
             groups.setdefault(it.category, []).append(it)
         cw = max(len(k) for k in groups)
         for cat, its in groups.items():
             if cat == "uncertain correction":
-                for k, it in enumerate(its):
-                    out.append(printable(f"  {cat if k == 0 else '':<{cw}}  {it.ref}: {it.what}"))
+                lines = [f"{_label(it, '..')}: {it.what}" for it in its]
             elif cat == "odd angle":
-                out.append(printable(f"  {cat:<{cw}}  " + ", ".join(f"{it.ref} ({it.rotation:g})" for it in its[:SHOW])
-                                     + (f" and {len(its) - SHOW} more" if len(its) > SHOW else "")))
+                single = [it for it in its if len(it.refs) <= 1]
+                rots = {r.ref: r.row.rotation for r in run.results if r.row is not None}
+                lines = []
+                for it in its:
+                    a = [rots[r] for r in it.refs if r in rots]
+                    if len(it.refs) > 1 and a:
+                        lines.append(f"{_label(it, '..')} ({it.lcsc}, {len(it.refs)} parts at {min(a):g} to "
+                                     f"{max(a):g} deg: look at {it.ref})")
+                if single:
+                    lines.append(", ".join(f"{it.ref} ({it.rotation:g})" for it in single[:SHOW])
+                                 + (f" and {len(single) - SHOW} more" if len(single) > SHOW else ""))
             else:
-                out.append(printable(f"  {cat:<{cw}}  " + " ".join(it.ref for it in its[:2 * SHOW])
-                                     + (f" and {len(its) - 2 * SHOW} more" if len(its) > 2 * SHOW else "")))
+                lines = [", ".join(_label(it, "..") + (" (look at it first: it settles the bottom reading)"
+                                                        if it.first else "") for it in its[:2 * SHOW])
+                         + (f" and {len(its) - 2 * SHOW} more" if len(its) > 2 * SHOW else "")]
+            for k, ln in enumerate(lines):
+                out.append(printable(f"  {cat if k == 0 else '':<{cw}}  {ln}"))
     return "\n".join(out) + "\n"
 
 
@@ -167,8 +217,9 @@ def to_dict(run: Run) -> dict:
 
 
 def _item(it: CheckItem) -> dict:
-    return {"category": it.category, "ref": it.ref, "lcsc": it.lcsc, "layer": it.layer, "rotation": it.rotation,
-            "what": it.what, "verdict": it.verdict}
+    return {"category": it.category, "ref": it.ref, "refs": list(it.refs) or [it.ref], "lcsc": it.lcsc,
+            "layer": it.layer, "rotation": it.rotation, "what": it.what, "verdict": it.verdict, "also": list(it.also),
+            "first": it.first}
 
 
 # ------------------------------------------------------------------------------------------------------- checklist
@@ -186,9 +237,11 @@ def checklist_markdown(run: Run) -> str:
     """The preview checklist as Markdown tick boxes, by category; references, file names and messages escaped."""
     items = run.checklist()
     out = [f"# JLC preview checklist: {_md(_name(run.board.path))}", "",
-           f"CPL {_md(_name(run.cpl_path) or 'made by jlcplace')}, bottom reading `{run.reading}`, {TOOL}.", "",
+           f"CPL {_md(_name(run.cpl_path) or 'made by jlcplace')}, bottom reading `{run.reading}`, {TOOL}"
+           + (f"; {_parts(items)}" if items else "") + ".", "",
            "Open the order's placement preview at JLC and look at each part below. Tick it when the part sits on "
-           "its pads with pin 1 / polarity where the board wants it."]
+           "its pads with pin 1 / polarity where the board wants it. An item for several parts names the one to "
+           "look at."]
     if not items:
         out += ["", "Nothing to check: every row was simulated, no bottom part depends on the reading, every angle is "
                     "a multiple of 90 and every correction is green or verified."]
@@ -198,8 +251,13 @@ def checklist_markdown(run: Run) -> str:
             cat = it.category
             out += ["", f"## {cat.capitalize()}", ""]
         rot = f", rot {it.rotation:g}" if it.rotation is not None else ""
+        head = f"**{_md(it.ref)}**"
+        if len(it.refs) > 1:
+            head = f"{head} of {_md(ref_ranges(it.refs))}" if it.category == "odd angle" else \
+                f"**{_md(ref_ranges(it.refs))}**"
+        n = f", {len(it.refs)} parts" if len(it.refs) > 1 else ""
         flag = " **(red: fix the row first)**" if it.verdict == RED else ""
-        out.append(f"- [ ] **{_md(it.ref)}** ({_md(it.lcsc or 'no code')}, {it.layer}{rot}){flag}: {_md(it.what)}")
+        out.append(f"- [ ] {head} ({_md(it.lcsc or 'no code')}, {it.layer}{rot}{n}){flag}: {_md(it.what)}")
     return "\n".join(out) + "\n"
 
 
@@ -213,11 +271,11 @@ def checklist_csv(run: Run) -> str:
     """The preview checklist as CSV for a spreadsheet (a cell that would be a formula starts with an apostrophe)."""
     buf = io.StringIO(newline="")
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["category", "ref", "lcsc", "layer", "rotation", "row verdict", "what", "checked"])
+    w.writerow(["category", "ref", "lcsc", "layer", "rotation", "row verdict", "what", "refs", "checked"])
     for it in run.checklist():
         w.writerow([_cell(printable(v)) for v in (it.category, it.ref, it.lcsc, it.layer,
                                                    "" if it.rotation is None else f"{it.rotation:g}", it.verdict,
-                                                   it.what, "")])
+                                                   it.what, " ".join(it.refs or [it.ref]), "")])
     return buf.getvalue()
 
 
@@ -504,8 +562,21 @@ def _board_svg(run: Run, side: str, side_pads, anchors: dict[str, str]) -> str:
         out.append(f'<path class="ee v-{res.verdict}" d="{_path(o)}"/>')
     for res in results:
         if res.verdict in (RED, YELLOW):
-            p = _point(run, res.row, mirror)
-            label = _text((p[0], p[1] - 0.6 * fs), res.ref, fs, f"ref v-{res.verdict}")
+            # above the part's copper and the pads JLC would put down (a label on them is lost in their outlines),
+            # with a halo in the background colour; below them when there is no room above
+            part = run.board.part(res.ref)
+            box = _Box()
+            for p in part.copper_pads():
+                box.add(_kicad_outline(part, p, mirror))
+            for r, o in ee:
+                if r is res:
+                    box.add(q for q in o if view.holds(q))
+            if not box.ok:
+                box.add([_point(run, res.row, mirror)])
+            x = min(max((box.x0 + box.x1) / 2, view.x0 + 1.5 * fs), view.x1 - 1.5 * fs)
+            y = box.y0 - 0.35 * fs if box.y0 - 1.2 * fs > view.y0 else box.y1 + 1.0 * fs
+            label = (f'<text class="ref v-{res.verdict}" x="{_f(x)}" y="{_f(y)}" font-size="{_f(fs)}" '
+                     f'stroke-width="{_f(0.3 * fs)}">{_esc(res.ref)}</text>')
             out.append(f'<a href="#{anchors.get(res.ref, "")}">{label}<title>{_esc(res.ref)}: '
                        f'{_esc(res.status)}</title></a>')
     ox, oy = run.board.origin
@@ -540,7 +611,8 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywher
 border:2px solid transparent}
 .l-kp::before{background:var(--cu)}.l-own::before{border-color:var(--own)!important}
 .l-other::before{border-color:var(--other)!important}.l-off::before{border-color:var(--off)!important;
-border-style:dashed!important}.l-mark::before{display:none!important}
+border-style:dashed!important}.l-mark::before{display:none!important}.l-vgreen::before{border-color:var(--own)!important;
+opacity:.7}.l-vyellow::before{border-color:var(--other)!important}.l-vred::before{border-color:var(--off)!important}
 .boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
 figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px}
 figcaption{font-size:12px;color:var(--muted);margin-bottom:4px}
@@ -552,11 +624,15 @@ svg{display:block;width:100%;height:auto}svg.board{max-height:75vh}svg.ov{max-he
 .ee.v-green,.ee.v-verified{stroke:var(--own);opacity:.7}.ee.v-yellow{stroke:var(--other)}.ee.v-red{stroke:var(--off)}
 .cpl{stroke:var(--mark);stroke-width:1.5;vector-effect:non-scaling-stroke;fill:none}
 .exp{stroke:var(--mark);stroke-width:1.2;vector-effect:non-scaling-stroke;fill:none;stroke-dasharray:2 2}
-.ref{text-anchor:middle;font-weight:700}.ref.v-red{fill:var(--red)}.ref.v-yellow{fill:var(--yellow)}
+.ref{text-anchor:middle;font-weight:700;paint-order:stroke;stroke:var(--card);stroke-linejoin:round}
+.ref.v-red{fill:var(--red)}.ref.v-yellow{fill:var(--yellow)}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600}
 .tablewrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
+@media (max-width:700px){table.cl tr:first-child{display:none}table.cl tr{display:block;padding:6px 0;
+border-bottom:1px solid var(--line)}table.cl td{display:inline-block;border:0;padding:1px 6px}
+table.cl td:last-child{display:block}}
 details.card{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--line);border-radius:8px;
 margin:10px 0}
 details.card.red{border-left-color:var(--red)}details.card.yellow{border-left-color:var(--yellow)}
@@ -649,8 +725,8 @@ def html(run: Run) -> str:
            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_esc(title)}</title>'
            f'<style>{_CSS}</style></head><body><main>',
            f"<h1>{_esc(title)}</h1>",
-           f'<p class="sub">CPL <code>{_esc(run.cpl_path or "made by jlcplace")}</code> ({len(run.rows)} rows) '
-           f'against <code>{_esc(b.path)}</code> ({_esc(b.source)}, {len(b.parts)} parts). Origin '
+           f'<p class="sub">CPL <code>{_esc(_name(run.cpl_path) or "made by jlcplace")}</code> ({len(run.rows)} '
+           f'rows) against <code>{_esc(_name(b.path))}</code> ({_esc(b.source)}, {len(b.parts)} parts). Origin '
            f'{_esc(b.origin_kind)} ({b.origin[0]:g}, {b.origin[1]:g}); bottom reading <code>{_esc(run.reading)}'
            f'</code>, alternatives checked: {_esc(alts)}. {datetime.datetime.now():%Y-%m-%d %H:%M}, '
            f'{_esc(TOOL)}.</p>',
@@ -659,11 +735,11 @@ def html(run: Run) -> str:
            + (f'<span class="badge b-yellow">{plural(len(run.bom_messages), "BOM issue")}</span>'
               if run.bom_messages else "")
            + "</div>",
-           '<div class="legend"><span class="l-kp">KiCad copper pad</span><span class="l-own">EasyEDA pad as JLC '
-           'places it, on its own number</span><span class="l-other">on another number</span><span class="l-off">'
-           'off copper</span><span class="l-mark">+ CPL row point, &#9675; jlcplace&rsquo;s row point</span></div>',
            _source(),
            "<h2>Board</h2>",
+           '<div class="legend"><span class="l-kp">KiCad copper pad</span><span class="l-vgreen">EasyEDA pads as JLC '
+           'places them: green row</span><span class="l-vyellow">yellow row</span><span class="l-vred">red row'
+           '</span><span class="l-mark">+ the CPL origin</span></div>',
            f'<div class="boards"><figure><figcaption>Top, seen from above</figcaption>'
            f'{_board_svg(run, TOP, side_pads, anchors)}</figure><figure><figcaption>Bottom, seen from below as '
            f'JLC&rsquo;s preview shows it (x mirrored)</figcaption>{_board_svg(run, BOTTOM, side_pads, anchors)}'
@@ -671,21 +747,37 @@ def html(run: Run) -> str:
            '<p class="note">EasyEDA pads are outlined in their row&rsquo;s verdict colour; red and yellow parts are '
            'labelled and link to their cards.</p>']
     items = run.checklist()
-    out.append(f"<h2>Preview checklist ({len(items)})</h2>")
+    out.append(f"<h2>Preview checklist ({_esc(_parts(items))})</h2>")
     if items:
-        rows = "".join(f'<tr><td>{_esc(it.category)}</td><td><a href="#{anchors.get(it.ref, "")}">{_esc(it.ref)}</a>'
-                       f'</td><td>{_esc(it.lcsc)}</td><td>{_esc(it.layer)}</td><td>'
+        def link(ref: str) -> str:
+            return f'<a href="#{anchors.get(ref, "")}">{_esc(ref)}</a>'
+
+        def ref_cell(it: CheckItem) -> str:
+            first = '<br><span class="sub">look at this one first</span>' if it.first else ""
+            if len(it.refs) > 1 and it.category != "odd angle":
+                return " ".join(link(r) for r in it.refs) + first
+            many = (f'<br><span class="sub">of {_esc(ref_ranges(it.refs))} ({len(it.refs)} parts)</span>'
+                    if len(it.refs) > 1 else "")
+            return link(it.ref) + many + first
+
+        rows = "".join(f'<tr><td>{_esc(it.category)}</td><td>{_badge(it.verdict)}</td><td>{ref_cell(it)}</td>'
+                       f'<td>{_esc(it.lcsc)}</td><td>{_esc(it.layer)}</td><td>'
                        f'{"" if it.rotation is None else f"{it.rotation:g}"}</td><td>{_esc(it.what)}</td></tr>'
                        for it in items)
-        out.append('<p class="note">Look at these parts in JLC&rsquo;s placement preview before ordering.</p>'
-                   '<div class="tablewrap"><table><tr><th>check</th><th>ref</th><th>LCSC</th><th>side</th>'
-                   f'<th>rot</th><th>what</th></tr>{rows}</table></div>')
+        out.append('<p class="note">Look at these parts in JLC&rsquo;s placement preview before ordering. A red row '
+                   'is wrong already: fix the row first. An item for several parts names the one to look at.</p>'
+                   '<div class="tablewrap"><table class="cl"><tr><th>check</th><th>row</th><th>ref</th><th>LCSC</th>'
+                   f'<th>side</th><th>rot</th><th>what</th></tr>{rows}</table></div>')
     else:
         out.append('<p class="note">Nothing to look at in the preview.</p>')
     if run.bom_messages:
         out.append("<h2>BOM</h2><ul>" + "".join(f"<li>{_esc(m)}</li>" for m in run.bom_messages) + "</ul>")
     out.append(f"<h2>Parts ({len(run.results)})</h2>")
     out.append(_source("EasyEDA pads outlined on the cards"))
+    out.append('<div class="legend"><span class="l-kp">KiCad copper pad</span><span class="l-own">EasyEDA pad as JLC '
+               'places it, on its own number</span><span class="l-other">on another number</span><span class="l-off">'
+               'off copper</span><span class="l-mark">+ the CPL row&rsquo;s point, &#9675; jlcplace&rsquo;s row '
+               'point</span></div>')
     out.extend(_card(run, res, f"r{i}", side_pads) for i, res in order)
     notice = _esc(SOURCE_NOTICE)
     for u in SOURCE_LINKS:

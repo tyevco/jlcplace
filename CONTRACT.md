@@ -46,10 +46,12 @@ def save_snapshot(board, path) / load_snapshot(path) -> Board            # JSON 
 def resolve_origin(origin, aux, grid) -> ((x, y), kind)
 ```
 * `reader`: "auto" (a `.json` path -> snapshot; else pcbnew if importable, else sexpr; a file pcbnew cannot load,
-  such as a KiCad 10 file for which `LoadBoard` returns None, falls back to sexpr with a warning), "pcbnew",
+  such as a KiCad 10 file for which `LoadBoard` returns None, falls back to sexpr with a warning naming the file
+  once), "pcbnew",
   "sexpr", "json".
 * `origin`: "aux" (setup `aux_axis_origin`; (0, 0) if absent), "grid", "absolute" (0, 0), an "X,Y" string (also
-  "(x;y)", "10mm,20mm") or a tuple in mm; `Board.origin_kind` is aux | grid | absolute | user. A snapshot stores
+  "(x;y)", "10 20", and lengths with a unit as `cpl.parse_length` reads them: "10mm,20mm", "4in,-500mil") or a
+  tuple in mm; `Board.origin_kind` is aux | grid | absolute | user. A snapshot stores
   only the origin it was made with: "aux" or its own kind keeps it, an explicit absolute/"X,Y"/tuple overrides it,
   another named origin raises ValueError, and so does a coordinate that is not a finite number ("nan,nan"). A
   snapshot keeps `source` = the reader that made it; a file that is not JSON or not a snapshot (`{}`, `[]`) raises
@@ -123,8 +125,11 @@ class EEClient:
 * `marks`: CIRCLE on layer 101 (a pin-1 dot: it sits by pad 1 whatever its function, so it says nothing of
   polarity). `plus`: the "+" signs drawn on layers 3 / 12 (two crossing strokes, TRACKs or thin SOLIDREGIONs, alike
   in length, crossing near both middles, no other stroke near), as (x, y, bar length). `tags`: `result.tags`, the
-  part categories ("Tantalum Capacitors", "TVS", ...). `pin_names` from `result.dataStr` and both multi-unit layouts.
-  `tokens`: TL TR BL BR RD FD CW BI. `title` = packageDetail.title (else c_para.package). `uuid` =
+  part categories ("Tantalum Capacitors", "TVS", ...). `pin_names` from `result.dataStr` and both multi-unit
+  layouts, the first non-empty name winning, the units' before the main symbol's (C111548's main symbol repeats a
+  unit with the '/' between functions lost); checked on three real multi-unit records (C20916, C111548, C108023:
+  every pad named, no extra names; the test reads them from a local cache, never from this repository). `tokens`:
+  TL TR BL BR RD FD CW BI. `title` = packageDetail.title (else c_para.package). `uuid` =
   packageDetail.uuid, `utime` = packageDetail.updateTime (else head.utime).
 
 ## parts.py — shared by fit, check and the pipeline
@@ -243,10 +248,11 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   is within 0.1 mm of its pads' box (red when it is not), red otherwise, with the reason (a polar two-pad part, a
   one-pad part, N copper pads). Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
-  verdict unchanged). With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm / 0.5 deg gets a
-  message; further than max(0.15 mm, a quarter of the smallest pad it lands on) or 2 deg (up to 45) from a correction
-  that is not red, with every pad on copper, it is yellow, status "offset", the message first; a row matching a
-  verified correction's expected row is VERIFIED.
+  verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
+  or None off copper), natural order. With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm /
+  0.5 deg gets a message; further than max(0.15 mm, a quarter of the smallest pad it lands on) or 2 deg (up to 45)
+  from a correction that is not red, with every pad on copper, it is yellow, status "offset", the message first; a
+  row matching a verified correction's expected row is VERIFIED.
 * `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
   JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. A reference that more than one part
   JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
@@ -333,8 +339,10 @@ def check(board, rows, resolved, *, reading=DEFAULT, bom_rows=None, cpl_path="")
 def proxy_footprint(part, corr) -> EEFootprint   # KiCad pads through the inverse correction
 def apply_bom_codes(board, bom_rows) -> list[(ref, board code, BOM code)]; def bom_overrides(changed) -> list[str]
 def bom_listed(part, bom_rows) -> bool; def lookup_ee(client, code); def key_reasons(corr, n=2)
+def needs_preview(corr) -> bool; def moves_text(res) -> str
 class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, resolved, reading, cpl_path,
     bom_messages, row_lines): counts(), worst(), exit_code(fail_on), checklist() -> list[CheckItem]
+class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also, first)
 ```
 * A part with no EasyEDA record (offline miss or not found) but a database correction is simulated with
   `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
@@ -343,26 +351,46 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
   its BOM line's code (JLC assembles from the BOM): `apply_bom_codes` returns the parts whose board code it
   replaced, `bom_overrides` makes their BOM messages. `resolve(bom_rows=...)` also resolves the parts the board
   only excludes from its BOM but the BOM lists (`bom_listed`), and `check` simulates their rows.
-* Checklist: bottom reading (convention-sensitive), not simulated, odd angle (row rotation not a multiple of 90),
-  uncertain correction (correction yellow or red and not a fallback; those whose `doubt` is a polarity, then names,
-  then an orientation first).
+* `key_reasons`: what a person or a later refit added (latest first), then the fit's own reasons, those that make
+  it yellow or red before those that only inform ("rot 0 also lands every pad, on other nets; ruled out by pad
+  numbers", "N pin names agree"). `needs_preview`: the correction is red, its `doubt` is set, or a reason other than
+  an rms residual ("rms 0.213 mm: the land patterns differ") or a non-90 angle makes it yellow.
+* Checklist, in this order of categories: uncertain correction (correction yellow or red, not a fallback, on a
+  simulated row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can
+  settle shown first), not simulated, bottom reading (convention-sensitive, said in pins with `moves_text`: "as
+  ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2 would swap"), odd
+  angle (row rotation not a multiple of 90). A part is one item, under its first category; its other categories
+  are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and `ref`
+  the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
+  `rotation` None; bottom reading per (code, side, verdict, rotation, what); uncertain correction per (code, side,
+  verdict, what); never a not-simulated row or a part without a code. `first`: the bottom-reading item of a green
+  row whose pins move under every other reading (the most of its pads off copper under each, then the most pads),
+  `what` starting "look at this one first": it settles the reading for every bottom part. Sorted by category, then
+  `first`, row verdict (red first), the correction's doubt (polarity, names, orientation), natural ref.
 
 ## report.py and cli.py
 
 * report: `summary(run, color=False)` (one line per red or yellow result: `headline(res)`, "status: first message",
-  the status left out when the message says it; text through `model.printable`), `plural(n, word)`, `to_dict(run)`
-  (strict JSON: a landing with no copper to measure to has dist null; no EasyEDA geometry), `checklist_markdown`
-  (references, file names and messages Markdown-escaped), `checklist_csv` (a cell starting with = + - @, tab or CR
-  gets a leading apostrophe), `junit(run, fail_on=)` (characters XML 1.0 forbids become U+FFFD),
-  `github_annotations(run, fail_on=)`, `html(run)` (one page, inline CSS and SVG, no external resources, noindex;
-  bottom drawn seen from below with x mirrored; the EasyEDA source, the JLCEDA/EasyEDA Official Library with links
-  to https://lceda.cn/ and https://easyeda.com, declared above the board views and above the part cards, and in the
-  footer).
+  the status left out when the message says it; text through `model.printable`; with no CPL file, "vs the rows
+  jlcplace would write"; the checklist as "N items, M parts" by category, groups as ranges "C102..C112"),
+  `plural(n, word)`, `ref_ranges(refs, dash)`, `to_dict(run)` (strict JSON: a landing with no copper to measure to
+  has dist null; no EasyEDA geometry; checklist items with refs, also, first), `checklist_markdown` (references, file
+  names and messages Markdown-escaped; red rows flagged "fix the row first"), `checklist_csv` (columns category, ref,
+  lcsc, layer, rotation, row verdict, what, refs, checked; a cell starting with = + - @, tab or CR gets a leading
+  apostrophe), `junit(run, fail_on=)` (characters XML 1.0 forbids become U+FFFD), `github_annotations(run,
+  fail_on=)`, `html(run)` (one page, inline CSS and SVG, no external resources, noindex; file names, never paths;
+  bottom drawn seen from below with x mirrored; board views in verdict colours with their own legend (the "+" is
+  the CPL origin) and red and yellow parts labelled above their copper and EasyEDA pads, with a halo; the cards'
+  legend above the cards; the checklist table with the row's verdict, stacked on narrow screens; the EasyEDA
+  source, the JLCEDA/EasyEDA Official Library with links to https://lceda.cn/ and https://easyeda.com, declared
+  above the board views and above the part cards, and in the footer).
 * cli (`jlcplace`, also `python -m jlcplace`):
   `check BOARD CPL [--bom] [--db] [--online|--offline] [--cache] [--origin] [--reading] [--fail-on red|yellow]
   [--report] [--json PATH|-] [--junit] [--checklist .md|.csv] [--github-annotations] [--lcsc-field]... [--reader]
   [--units] [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless
-  --force; parts without a footprint or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`;
+  --force: an existing CPL is left unchanged and the note says so, under -q naming the red refs; the reports of a
+  run that wrote nothing name no CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint
+  or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`;
   `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board
   [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need
   --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one
@@ -370,10 +398,13 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
   is written); `show CODE | BOARD --ref REF [--json]`;
   `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
   default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache lacked
-  and say how to fetch them. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red
-  (fetch: records that could not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and
-  database files included; when one output cannot be written the others still are), 4 an internal error (the
-  traceback is printed): no crash exits 1.
+  and say how to fetch them; `check` also says `--units in` (or mil) when most rows are red and would sit within 2
+  mm of their parts in that unit. `-v` is taken before or after the command; `--origin -5,3` is read as
+  `--origin=-5,3`. `check`, `cpl` and `show` warn on stderr when `--db` does not exist (`fit` and `confirm` create
+  it); a `--db` that exists and is not a directory is bad input. Exit codes: 0 clean, 1 yellow (rows or BOM issues)
+  with --fail-on yellow, 2 red (fetch: records that could not be fetched), 3 bad input (argparse errors, unreadable or
+  unwritable files and database files included; when one output cannot be written the others still are), 4 an
+  internal error (the traceback is printed): no crash exits 1; 130 interrupted (ctrl-C, "jlcplace: interrupted").
 
 ## Open
 
@@ -386,5 +417,4 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
 * The "+" mark reader is a heuristic on EasyEDA's drawings (two crossing strokes beside a pad). It settled all 6
   name-against-number cases in JLC's preview data; where it reads nothing, such a part is red until confirmed.
 * `EEPad` has no plated flag (unplated holed pads are dropped); slot geometry is parsed but not exposed.
-* Multi-unit EasyEDA symbols are handled in both known layouts but unverified on a real record.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.

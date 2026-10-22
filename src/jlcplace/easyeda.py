@@ -220,10 +220,12 @@ def _pin(s: str) -> tuple[str, str] | None:
 
 
 def pin_names(result: dict) -> dict[str, str]:
-    """Pad number -> symbol pin name, over every unit of the symbol. The first non-empty name wins."""
+    """Pad number -> symbol pin name, over every unit of the symbol. The first non-empty name wins, the units' before
+    the main symbol's: a multi-unit record's main symbol can repeat a unit with the '/' between a pin's functions
+    lost ('PA0MCI0_CKTCLK3' for the unit's 'PA0/MCI0_CK/TCLK3', C111548)."""
     names: dict[str, str] = {}
     units = _units({"dataStr": result.get("dataStr"), "subparts": result.get("subparts")}, "symbol")
-    for ds in units:
+    for ds in units[1:] + units[:1]:
         for s in ds.get("shape") or []:
             if isinstance(s, str) and s.startswith("P~"):
                 p = _pin(s)
