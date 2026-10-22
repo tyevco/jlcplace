@@ -17,9 +17,11 @@ Conventions for every module:
 * Tests: `tests/test_<module>.py`, pytest, deterministic (seeded random), markers `pcbnew`, `cache`, `network`
   (see pyproject). Tests that need a file that may be absent skip with a reason. Run with
   `/home/user/jlcplace/.venv/bin/python -m pytest -q -p no:cacheprovider`.
-* Fixture locations can be overridden: `JLCPLACE_DIAL_ME_SPINNER` (the dial-me-spinner checkout),
-  `JLCPLACE_TEST_EASYEDA` (the directory holding `ee_raw/`, `dl/`, `fab-before/`, `src/`). Network tests run only
-  with `JLCPLACE_NETWORK_TESTS=1`.
+* Fixture locations can be overridden, and every test module reads them: `JLCPLACE_DIAL_ME_SPINNER` (the
+  dial-me-spinner checkout), `JLCPLACE_TEST_EASYEDA` (the directory holding `ee_raw/`, `dl/`, `fab-before/`, `src/`),
+  `KICAD_FOOTPRINT_DIR` (KiCad's footprint libraries). Network tests run only with `JLCPLACE_NETWORK_TESTS=1`.
+  `.github/workflows/ci.yml` runs the unmarked tests without KiCad, the pcbnew tests in KiCad's image and the cache
+  tests with fetched records; `.github/skip_gate.py` fails a job on any skip whose reason it does not allow.
 * Real data used by the tests on the development machine (read-only; EasyEDA records are never copied into the repo):
   KiCad 9.0.9 (`pcbnew`, `kicad-cli`, `/usr/share/kicad/footprints`, `/usr/share/kicad/demos`); the dial-me-spinner
   boards, CPLs, BOMs and `jlc_offsets.json`; the old buggy CPLs (7 rows wrong: main J1 J20 J40, base J1 J2 J3 SW1);
@@ -108,22 +110,47 @@ class EEClient:
   corner order of every rotated RECT pad in the cached records; RECT/OVAL pads at other angles are checked against
   their own point lists. w, h are along the pad's own axes. Pads on layers 1 (top), 2 (bottom), 11 (multi); other
   layers and unplated holed pads are dropped. Hole = 2 * radius * 0.254. POLYGON pads: poly = the point list.
-* `marks`: CIRCLE on layer 101. `pin_names` from `result.dataStr` and both multi-unit layouts. `tokens`: TL TR BL BR
-  RD FD CW. `title` = packageDetail.title (else c_para.package). `uuid` = packageDetail.uuid, `utime` =
-  packageDetail.updateTime (else head.utime).
+* `marks`: CIRCLE on layer 101 (a pin-1 dot: it sits by pad 1 whatever its function, so it says nothing of
+  polarity). `plus`: the "+" signs drawn on layers 3 / 12 (two crossing strokes, TRACKs or thin SOLIDREGIONs, alike
+  in length, crossing near both middles, no other stroke near), as (x, y, bar length). `tags`: `result.tags`, the
+  part categories ("Tantalum Capacitors", "TVS", ...). `pin_names` from `result.dataStr` and both multi-unit layouts.
+  `tokens`: TL TR BL BR RD FD CW BI. `title` = packageDetail.title (else c_para.package). `uuid` =
+  packageDetail.uuid, `utime` = packageDetail.updateTime (else head.utime).
 
 ## parts.py — shared by fit, check and the pipeline
 
 ```python
-NONPOLAR_REFS          # R RN RT RV C L FB F NTC Y X XTAL SW JP: two terminals that may be swapped
-POLAR_FOOTPRINT        # footprint names that make such a part polar (diode, LED, tantalum, electrolytic, battery ...)
+NONPOLAR_REFS          # R RN RT RV C L FB F NTC Y XTAL SW JP: two terminals that may be swapped (X only for a crystal)
+POLAR_FOOTPRINT        # footprint names that make such a part polar (diode, LED, tant, Elec, CP_, battery ...)
+def nonpolar(part, ee=None) -> bool          # the one polarity rule fit and check use (below)
+def name_tokens(name, number="") -> frozenset[str]; def compare_names(a, b) -> int
+def kicad_positive_pad(part) -> (number, how) | None; def ee_positive_pad(ee) -> str | None
+def uncovered_exemption(pad, covered_pads) -> str   # "inside" | "via" | "same pin" | ""
+def pad_size(pad) -> float     # the smaller dimension of a KiCad pad's copper along its own axes
 def norm_number(s) -> str      # upper case, '01' -> '1'
 def ref_prefix(ref) -> str
 def ee_key(ee) -> str          # "ee-" + geom.pad_hash(ee.pads): the database key of an EasyEDA footprint
+def kicad_hash(part) -> str    # geom.pad_hash of the copper pads, with the pin functions' name tokens when informative
 ```
-`ee_key` replaces `EEFootprint.key()` (uuid:updateTime) as the key corrections are stored and looked up under:
-updateTime also moves when EasyEDA edits only a record's metadata, which would make every verified correction stale.
-`Correction.ee_key` holds `parts.ee_key` (model.py's comment still says `EEFootprint.key()`).
+* `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI)
+  or a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
+  designates connectors X) with nothing that says polar: the KiCad footprint name (polar words as words, not
+  "Angled" or "KOHERelec"; a right-angle body), anode / cathode pin functions, and with `ee` its title (LED, SOD,
+  diode, tant, elec; a polarised capacitor's CAP-SMD_ / CASE-x_ / CP- unless its categories name a non-polar class),
+  its categories (tantalum, electrolytic, polymer, diode, LED, zener, schottky, TVS, rectifier) and its symbol's
+  anode / cathode pin names. Unknown parts are polar.
+* `name_tokens`: as fit.py describes; a name that only repeats its pad number is uninformative unless it means
+  something of its own (K on a pad numbered K). Synonyms include VO ~ VOUT, VI ~ VIN, IN ~ VIN, OUT ~ VOUT.
+* `kicad_positive_pad`: from the pin functions or pad numbers (A, K, +, -), else KiCad's library convention for its
+  own diode / LED (pad 1 = cathode) and polarised capacitor (pad 1 = +) libraries. `ee_positive_pad`: the pad a
+  two-terminal footprint draws its one `plus` beside (not one near the middle, not marks on both sides).
+* `uncovered_exemption`: KiCad copper no EasyEDA pad lands on that belongs to a covered pin (thermal vias inside a
+  covered pad, a via-sized plated hole numbered like a covered SMD pad, a much smaller pad of a covered pad's number
+  and net such as a DPAK's cut lead): fit and check both use it. Two equal pads of a number are never exempt.
+* `ee_key` replaces `EEFootprint.key()` (uuid:updateTime) as the key corrections are stored and looked up under:
+  updateTime also moves when EasyEDA edits only a record's metadata, which would make every verified correction
+  stale. `kicad_hash` keys the KiCad side: the fit decides polarity and orientation by pin names too, so parts whose
+  pin functions differ need entries of their own (uninformative names leave it the plain pad hash).
 
 ## fit.py — work out the correction for one part
 
@@ -142,35 +169,47 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
 2. **By geometry**: angles 0/90/180/270 and those aligning the farthest-apart pairs, normal and mirrored;
    translations voted by landed pads, refined 3x with assignment + Kabsch. Every transform landing all EasyEDA
    pads is a member of S; members landing every pad on the same lands are merged.
-3. **Names**: split at '/', ',' and parentheses, upper case, synonyms (EP/PAD/TAB ~ GND, DP ~ D+, A ~ ANODE, K ~
-   CATHODE, ...); names equal up to a trailing index (CC1/CC2) compare as unknown. Names count only where they
+3. **Names** (`parts.name_tokens`): split at '/', ',' and parentheses, upper case, synonyms (EP/PAD/TAB ~ GND, DP ~
+   D+, A ~ ANODE, K ~ CATHODE, VO ~ VOUT, ...); names equal up to a trailing index (CC1/CC2) compare as unknown. Names count only where they
    separate members of S.
-4. **Equivalence**: same nets on every pad, or a terminal swap of a non-polar two-terminal part (NONPOLAR_REFS
-   unless the footprint, the EasyEDA title or anode/cathode pin names say polar; unknown parts are polar).
-5. **Verdict**:
+4. **Equivalence**: same nets on every pad, or a terminal swap of a non-polar two-terminal part (`parts.nonpolar`,
+   the rule check uses too; unknown parts are polar).
+5. **+ mark** (polar two-terminal parts): `parts.ee_positive_pad` against `parts.kicad_positive_pad`.
+6. **Verdict**:
    * green = the number fit lands every pad with no numbering conflict, names agree or are uninformative, and every
      other member of S is equivalent or ruled out by the pad numbers (for a polar two-terminal part, by the names
-     as well; otherwise yellow "polarity decided by pad numbers only");
-   * yellow = names pick a member the numbers do not (the names win); numbering differs but the members are
-     equivalent or the names pick one; rms > 0.1 mm; < 80 % of the *numbered* EasyEDA pads matched; a non-90 angle
-     (kept unsnapped); KiCad lands no EasyEDA pad lands on (thermal vias inside a covered pad exempt); another
-     placement as good on the same numbers and nets (the pads do not orient the body);
-   * red = nothing lands every pad; a numbering conflict (an EasyEDA pad on a land of another number and another
-     net while its own number exists in KiCad) that pin names do not vouch for; several non-equivalent members that
-     nothing separates ("ambiguous"); the mirror wins (only a mirror lands, or it is better supported and no normal
-     placement gives the same nets, or as well supported and far more exact) -> `mirror=True`, never placed.
+     or the + mark as well; otherwise yellow "polarity decided by pad numbers only");
+   * yellow = names pick a member the numbers do not (the names win; for a polar two-terminal part only when the +
+     mark sides with them, and the numbers win when it sides with them); numbering differs but the members are
+     equivalent or the names (or the + mark) pick one; rms above max(0.1 mm, a quarter of the smallest KiCad pad
+     the pads land on); < 80 % of the EasyEDA pads *whose number KiCad has* matched; a non-90 angle (kept
+     unsnapped); KiCad lands no EasyEDA pad lands on (`parts.uncovered_exemption` exempt; each label named once);
+     another placement as good on the same numbers and nets (the pads do not orient the body); all pads on one land
+     (their shape picks the rotation up to 180 when they are not square or round);
+   * red = nothing lands every pad (the best partial placement at a multiple of 90 is reported, the tilted best in
+     the reason only); a numbering conflict (an EasyEDA pad on a land of another number and another net while its
+     own number exists in KiCad) that pin names do not vouch for; several non-equivalent members that nothing
+     separates ("ambiguous"); a polar two-terminal part whose names and numbers disagree and no + mark settles it,
+     or whose + mark contradicts the numbers (or the names) that are its only other evidence; the mirror wins (only
+     a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
+     far more exact) -> `mirror=True`, never placed.
    Angles within `snap` of a multiple of 90 are snapped and the translation refitted. `dx, dy` (4 decimals) = the
-   EasyEDA origin in the library frame. `ee_key = parts.ee_key(ee)`, `kicad_hash = geom.pad_hash(copper pads)`.
-   `alternatives` = [{rot, dx, dy, mirror, matched, conflicts, names, equivalent, nets_changed}].
+   EasyEDA origin in the library frame. Pairs for the number fit and translation hypotheses use copper centres
+   (a custom / polygon KiCad pad's outline box centre, an EasyEDA polygon pad's point-list box centre: SOT-89's tab
+   is numbered with its middle lead); landing uses the pad centres, as check does; translations are anchored on at
+   least two EasyEDA pads. `ee_key = parts.ee_key(ee)`, `kicad_hash = parts.kicad_hash(part)`. `doubt` =
+   "polarity" | "names" | "orientation" | "" (why the choice among placements may be wrong), `polar` = whether a
+   two-terminal part was judged polar. `alternatives` = [{rot, dx, dy, mirror, matched, conflicts, names,
+   equivalent, nets_changed}].
 
 ## check.py — simulate any CPL against the board
 
 ```python
 def place_row(part, row: CplRow, ee: EEFootprint, origin, reading="jlc-2022") -> list[PadLanding]
 def check_row(part, row, ee, origin, *, corr=None, reading="jlc-2022", alt_readings=True) -> RowResult
-def check_cpl(board, rows, ee_lookup, *, corrections=None, reading="jlc-2022") -> list[RowResult]
+def check_cpl(board, rows, ee_lookup, *, corrections=None, reading="jlc-2022", bom_refs=None) -> list[RowResult]
 def check_bom(board, bom_rows, cpl_rows) -> list[str]
-def nonpolar(part) -> bool
+def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
   `convention.ee_to_board`, then to the library frame, then onto the copper pad containing it (`LAND_TOL` 1e-3
@@ -181,21 +220,32 @@ def nonpolar(part) -> bool
   (MP, S1, A1B12; message), when the pad has the net its own number has, or when a non-polar two-terminal part
   has its terminals swapped (status "renumbered", green). Otherwise, when `corr` gives every EasyEDA pad the net the
   row gives it, status "renumbered" with the correction's verdict (red if the correction is red: nothing vouches
-  for the numbering); else "wrong-pad", red. Pads landing by number on other nets than `corr` gives them: red
-  against a verified correction, yellow against a fitted one, a message against a red one. KiCad soldered pads no
-  EasyEDA pad lands on: yellow, listed in `uncovered` (status stays "ok"). No EasyEDA footprint: "not-simulated",
-  yellow for a non-polar part with two copper pads, red otherwise. Bottom rows are re-placed under the other
-  readings (`alt_readings`: True, False, or names): a changed pin -> net mapping or a pad leaving copper sets
-  `convention_sensitive` (a checklist item, verdict unchanged). With `corr`, `expected` = `cpl_row_for(...)`; a row
-  further than 0.05 mm / 0.5 deg gets a message; a row matching a verified correction's expected row is VERIFIED.
+  for the numbering); else "wrong-pad", red. The numbers *decide* a row when at least EVIDENCE (80 %, and 2) of
+  the EasyEDA pads whose number KiCad has land on that number or its net. Pads landing by number (or where the
+  numbers decide nothing) on other nets than `corr` gives them: red against a verified correction, for a polar
+  two-terminal part, or when the numbers do not decide the row; yellow against a fitted one otherwise. Against a
+  red correction: a polar two-terminal part is red unless the row differs from it only harmlessly and the
+  correction's doubt is not its polarity ("the polarity needs a decision"); any other row is red when the numbers
+  do not decide it ("nothing vouches for it"). With no correction a row the numbers do not decide is yellow. A row
+  that lands as a fitted ("auto") yellow correction does whose `doubt` is set is yellow. KiCad soldered pads no
+  EasyEDA pad lands on: yellow, listed in `uncovered` (status stays "ok"; `parts.uncovered_exemption` pads are a
+  message). No EasyEDA footprint: "not-simulated", yellow for a non-polar part with two copper pads whose row point
+  is within 0.1 mm of its pads' box (red when it is not), red otherwise, with the reason (a polar two-pad part, a
+  one-pad part, N copper pads). Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
+  names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
+  verdict unchanged). With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm / 0.5 deg gets a
+  message; further than max(0.15 mm, a quarter of the smallest pad it lands on) or 2 deg (up to 45) from a correction
+  that is not red, with every pad on copper, it is yellow, status "offset", the message first; a row matching a
+  verified correction's expected row is VERIFIED.
 * `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
   JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. Rows for refs not on the board
   ("not-on-board"), on the wrong layer ("layer-mismatch"), repeated ("duplicate", every copy) are red; "not-placed"
-  is red for DNP/exclude_pos/board_only parts and yellow when the only flag is exclude_bom. A row for a part with no
-  code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups happen once
-  per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
-* Statuses: ok | off-copper | wrong-pad | renumbered | not-simulated | no-row | not-on-board | layer-mismatch |
-  not-placed | duplicate (model.py's comment lacks "duplicate").
+  is red for DNP/exclude_pos/board_only parts and yellow when the only flag is exclude_bom, unless `bom_refs` (the
+  designators a JLC BOM lists) lists it: then it is simulated like any other row, with a message. A row for a part
+  with no code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
+  happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
+* Statuses: ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row | not-on-board |
+  layer-mismatch | not-placed | duplicate.
 
 ## cpl.py — read and write CPL / BOM files
 
@@ -228,9 +278,12 @@ class CorrectionDB:
 def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> Correction
 ```
 * File `<dir>/<code>.json`: `{"lcsc", "entries": [{ee: {key, title}, kicad: {fpid, pad_hash}, correction: {rot, dx,
-  dy, mirror}, fit: {method, rms, matched, score, alternatives (scalars only)}, verdict, reasons, status,
-  verifications: [{by, date, source, ok, board, ref, layer, presses, note}], tool, fitted}]}`; `ee.key` is
-  `parts.ee_key`. Atomic writes, sorted keys, 1-space indent, trailing newline.
+  dy, mirror}, fit: {method, rms, matched, score, alternatives (scalars only), doubt?, polar?}, verdict, reasons,
+  status, verifications: [{by, date, source, ok, board, ref, layer, presses, note}], tool, fitted}]}`; `ee.key` is
+  `parts.ee_key`, `kicad.pad_hash` is `parts.kicad_hash` (pads and pin functions), `ee.title` the EasyEDA
+  footprint's title (a package name, for people reading the file). Atomic writes, sorted keys, 1-space indent,
+  trailing newline. `jlcplace fit --db` does not let a second part with the same keys and other numbers replace the
+  entry a first part stored in the same run.
 * `lookup`: board-verified > preview-verified > manual > auto, then the later entry; "" (in the call or the entry)
   matches any. Entries for the pad hash but none for the ee key: the strongest is returned with status "stale",
   verdict red, reason "footprint changed since verified"; the caller refits (pipeline: same numbers -> the refit
@@ -245,24 +298,32 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 ## pipeline.py — the modules put together (used by cli.py and report.py; usable from a KiCad plugin)
 
 ```python
-def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False) -> dict[ref, Resolved]
 def correction(part, ee, db=None, *, snap=0.5) -> (Correction | None, source)     # db | fit | ""
 def fallback(part, ee) -> Correction          # KiCad's own row (rot 0); yellow for a non-polar 2-pad part, else red
+def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None) -> dict[ref, Resolved]
 def check(board, rows, resolved, *, reading=DEFAULT, bom_rows=None, cpl_path="") -> Run
 def proxy_footprint(part, corr) -> EEFootprint   # KiCad pads through the inverse correction
-def apply_bom_codes(board, bom_rows) -> list[str]; def lookup_ee(client, code); def key_reasons(corr, n=2)
+def apply_bom_codes(board, bom_rows) -> list[(ref, board code, BOM code)]; def bom_overrides(changed) -> list[str]
+def bom_listed(part, bom_rows) -> bool; def lookup_ee(client, code); def key_reasons(corr, n=2)
 class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, resolved, reading, cpl_path,
     bom_messages, row_lines): counts(), worst(), exit_code(fail_on), checklist() -> list[CheckItem]
 ```
 * A part with no EasyEDA record (offline miss or not found) but a database correction is simulated with
-  `proxy_footprint`; its verdict is capped by the correction's. With a BOM, a code-less part not in the BOM is yellow
-  ("JLC does not place it"), and code-less parts take their BOM codes.
+  `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
+  so ("yellow because the stored auto correction is yellow: <its key reason>"); the note on how it was simulated
+  comes last. With a BOM, a code-less part not in the BOM is yellow ("JLC does not place it"), and every part takes
+  its BOM line's code (JLC assembles from the BOM): `apply_bom_codes` returns the parts whose board code it
+  replaced, `bom_overrides` makes their BOM messages. `resolve(bom_rows=...)` also resolves the parts the board
+  only excludes from its BOM but the BOM lists (`bom_listed`), and `check` simulates their rows.
 * Checklist: bottom reading (convention-sensitive), not simulated, odd angle (row rotation not a multiple of 90),
-  uncertain correction (correction yellow or red and not a fallback).
+  uncertain correction (correction yellow or red and not a fallback; those whose `doubt` is a polarity, then names,
+  then an orientation first).
 
 ## report.py and cli.py
 
-* report: `summary(run, color=False)`, `to_dict(run)` (JSON; no EasyEDA geometry), `checklist_markdown`,
+* report: `summary(run, color=False)` (one line per red or yellow result: `headline(res)`, "status: first message",
+  the status left out when the message says it), `plural(n, word)`, `to_dict(run)` (JSON; no EasyEDA geometry),
+  `checklist_markdown`,
   `checklist_csv`, `junit(run, fail_on=)`, `github_annotations(run, fail_on=)`, `html(run)` (one page, inline CSS
   and SVG, no external resources; bottom drawn seen from below with x mirrored; footer carries the EasyEDA source
   notice).
@@ -281,8 +342,11 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
 * `Pad.poly` is one ring with zero-width bridges: points within `tol` of a bridge to an island count as inside
   (`geom.pad_contains` with tol > 0; check uses 1e-3 mm). A multi-ring `Pad.polys` or bridge-aware distance in
   geom would remove it.
-* Fit's "rms > 0.1 mm" yellow flags many correct parts whose land patterns differ (SOT-23 0.28 mm, SOT-23-6 0.21);
-  a size-relative criterion would cut the noise.
+* Fit's rms yellow is relative to the smallest pad the pads land on (a quarter of it, at least 0.1 mm); it still
+  flags correct SOT-23 (0.28 mm on 0.6 mm pads) and SOT-23-6 (0.21) fits whose land patterns differ. A per-pad,
+  per-axis criterion would cut that too.
+* The "+" mark reader is a heuristic on EasyEDA's drawings (two crossing strokes beside a pad). It settled all 6
+  name-against-number cases in JLC's preview data; where it reads nothing, such a part is red until confirmed.
 * `EEPad` has no plated flag (unplated holed pads are dropped); slot geometry is parsed but not exposed.
 * Multi-unit EasyEDA symbols are handled in both known layouts but unverified on a real record.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.

@@ -31,9 +31,10 @@ from .db import SOURCES, CorrectionDB
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound
-from .parts import ee_key
-from .pipeline import apply_bom_codes, check, correction, describe, fallback, is_code, lookup_ee, resolve, \
-    row_lines
+from .parts import ee_key, kicad_hash
+from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, is_code, lookup_ee, \
+    resolve, row_lines
+from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT = 0, 1, 2, 3
 log = logging.getLogger("jlcplace")
@@ -145,26 +146,36 @@ def _finish(args, run, notes=()) -> int:
     return run.exit_code(args.fail_on)
 
 
+def _codeless_hint(run, bom) -> list[str]:
+    """A hint when most rows lack a code and no BOM was given: the codes may live in the BOM only."""
+    if bom is not None:
+        return []
+    n = sum(1 for r in run.results if r.row is not None and "the board part has no LCSC code" in r.messages)
+    rows = sum(1 for r in run.results if r.row is not None)
+    if rows and 2 * n > rows:
+        return [(f"jlcplace: {n} of {plural(rows, 'row')} have no LCSC code on the board: pass --bom BOM.csv (JLC "
+                 f"assembles from it) or --lcsc-field NAME")]
+    return []
+
+
 def cmd_check(args) -> int:
     _stdout_once(args)
     board = _board(args)
     rows = _rows(args.cpl, args.units)
     bom = _bom(args.bom)
-    if bom is not None:
-        apply_bom_codes(board, bom)
-    resolved = resolve(board, _client(args), _db(args), snap=args.snap)
+    overrides = apply_bom_codes(board, bom) if bom is not None else []
+    resolved = resolve(board, _client(args), _db(args), snap=args.snap, bom_rows=bom)
     run = check(board, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
     if bom is not None:
-        run.bom_messages = check_bom(board, bom, rows)
-    return _finish(args, run)
+        run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
+    return _finish(args, run, _codeless_hint(run, bom))
 
 
 def cmd_cpl(args) -> int:
     _stdout_once(args)
     board = _board(args)
     bom = _bom(args.bom)
-    if bom is not None:
-        apply_bom_codes(board, bom)
+    overrides = apply_bom_codes(board, bom) if bom is not None else []
     resolved = resolve(board, _client(args), _db(args), snap=args.snap, use_fallback=True)
     rows, _ = rows_for_board(board, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
     out = Path(args.output)
@@ -176,7 +187,7 @@ def cmd_cpl(args) -> int:
         run = check(board, written, resolved, reading=args.reading, bom_rows=bom)
         run.cpl_path, run.row_lines = str(out), row_lines(tmp, run.results)
         if bom is not None:
-            run.bom_messages = check_bom(board, bom, written)
+            run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, written)
         red = run.worst() == RED
         if red and not args.force:
             note = f"jlcplace: {out} not written: the rows above are red (--force writes it anyway)"
@@ -212,6 +223,7 @@ def cmd_fit(args) -> int:
     out = sys.stderr if args.json == "-" else sys.stdout
     ees: dict = {}
     data, verdicts = [], []
+    stored_by: dict[tuple, tuple] = {}         # (code, ee key, KiCad key) -> (ref, correction) stored in this run
     w = max((len(p.ref) for p in parts), default=0)
     for part in parts:
         if part.lcsc not in ees:
@@ -221,11 +233,18 @@ def cmd_fit(args) -> int:
         if isinstance(ee, EEFootprint):
             corr = fit_part(part, ee, snap=args.snap)
             if db is not None:
-                try:
-                    db.upsert(part.lcsc, corr, footprint=part.footprint, ee_title=ee.title)
-                    stored = "stored"
-                except ValueError as e:
-                    stored = f"not stored: {e}"
+                key = (part.lcsc, corr.ee_key, corr.kicad_hash)
+                first = stored_by.setdefault(key, (part.ref, corr))
+                if first[0] != part.ref and describe(first[1]) != describe(corr):
+                    # one entry per (code, footprints, pin names): a second part that fits otherwise must not replace
+                    # the first one's correction behind its back
+                    stored = f"not stored: {first[0]} has the same code and footprint and fits {describe(first[1])}"
+                else:
+                    try:
+                        db.upsert(part.lcsc, corr, footprint=part.footprint, ee_title=ee.title)
+                        stored = "stored"
+                    except ValueError as e:
+                        stored = f"not stored: {e}"
         else:
             corr = fallback(part, ee)
         verdicts.append(corr.verdict)
@@ -239,7 +258,7 @@ def cmd_fit(args) -> int:
                   file=out)
     if not args.quiet:
         counts = {v: verdicts.count(v) for v in (RED, YELLOW, GREEN)}
-        print(f"{len(parts)} parts: {counts[RED]} red, {counts[YELLOW]} yellow, {counts[GREEN]} green"
+        print(f"{plural(len(parts), 'part')}: {counts[RED]} red, {counts[YELLOW]} yellow, {counts[GREEN]} green"
               + (f"; database {args.db}" if db is not None else ""), file=out)
     if args.json:
         _write(args.json, json.dumps({"tool": report.TOOL, "board": board.path, "fits": data}, indent=1) + "\n")
@@ -275,7 +294,8 @@ def cmd_fetch(args) -> int:
         else:
             got += 1
             print(f"{code}: {res.title}, {len(res.pads)} pads ({how})")
-    print(f"{len(codes)} codes: {got} footprints, {missing} not found, {failed} failed; cache {client.cache_dir}")
+    print(f"{plural(len(codes), 'code')}: {plural(got, 'footprint')}, {missing} not found, {failed} failed; "
+          f"cache {client.cache_dir}")
     return EXIT_RED if failed else EXIT_OK
 
 
@@ -294,7 +314,7 @@ def cmd_confirm(args) -> int:
             raise BadInput(f"{ref} has no LCSC code")
         ee = lookup_ee(client, part.lcsc)
         key = ee_key(ee) if isinstance(ee, EEFootprint) else ""
-        h = geom.pad_hash(part.copper_pads())
+        h = kicad_hash(part)
         try:
             if args.rot is not None:
                 typed = Correction(rot=norm_angle(args.rot), dx=args.dx, dy=args.dy, method="manual", status="manual",
@@ -354,7 +374,8 @@ def _show_ref(args) -> dict:
     d: dict = {"ref": part.ref, "lcsc": part.lcsc, "lcsc_field": part.lcsc_field, "value": part.value,
                "footprint": part.footprint, "layer": part.layer, "x": part.x, "y": part.y, "angle": part.angle,
                "flags": [n for n in ("dnp", "exclude_pos", "exclude_bom", "board_only", "tht") if getattr(part, n)],
-               "copper_pads": len(part.copper_pads()), "pad_hash": geom.pad_hash(part.copper_pads())}
+               "copper_pads": len(part.copper_pads()), "pad_hash": geom.pad_hash(part.copper_pads()),
+               "kicad_hash": kicad_hash(part)}
     if not part.lcsc:
         return d
     ee = lookup_ee(_client(args), part.lcsc)
