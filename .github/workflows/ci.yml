@@ -187,6 +187,9 @@ jobs:
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
+          # cairosvg renders the overlay PNGs: the image has no browser, but KiCad brings the cairo library
+          /opt/venv/bin/python -m pip install cairosvg
+          /opt/venv/bin/python -c "import cairosvg"
           /opt/venv/bin/python -c "import pcbnew, jlcplace; print('pcbnew', pcbnew.Version(), 'jlcplace', jlcplace.__version__)"
           echo /opt/venv/bin >> "$GITHUB_PATH"
           kicad-cli version

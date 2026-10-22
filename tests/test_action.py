@@ -509,6 +509,27 @@ def test_the_fetch_step_adds_the_boms_codes_and_survives_a_failed_fetch(tmp_path
     assert "::warning title=jlcplace::not every EasyEDA record could be fetched (is EasyEDA down" in res.stdout
 
 
+def test_the_fetch_step_reads_codes_a_windows_python_ends_with_crlf(tmp_path):
+    """Python on a Windows runner ends its lines with \\r\\n: bash must not pass the \\r on to fetch, neither as an
+    empty argument (no BOM) nor on the last code."""
+    need_bash()
+    fake, log = fake_jlcplace(tmp_path)
+    crlf = tmp_path / "crlf-python"
+    crlf.write_text(f'#!/usr/bin/env bash\nset -o pipefail\n"{posix(sys.executable)}" "$@" | sed \'s/$/\\r/\'\n',
+                    encoding="utf-8", newline="\n")
+    crlf.chmod(0o755)
+    r = Runner(tmp_path)
+    (r.workspace / "b-BOM.csv").write_text("Comment,Designator,Footprint,LCSC\nx,R1,0402,C25744\ny,U1,SOT,C7519\n",
+                                           encoding="utf-8")
+    done = {"install": {"outputs": {"python": posix(crlf), "jlcplace": posix(fake)}}}
+    fetched = Path(f"{log}.fetch")
+    for bom, codes in (("b-BOM.csv", ["C25744", "C7519"]), ("", [])):
+        res = r.run({"board": "b.kicad_pcb", "cpl": "c.csv", "bom": bom}, only="fetch", done=done)
+        assert res.code == 0, res.stderr
+        args = fetched.read_text(encoding="utf-8", newline="").split("\n")[:-1]
+        assert args == ["fetch", "--cache", f"{r.temp}/jlcplace-easyeda", "b.kicad_pcb", *codes], (bom, args)
+
+
 def test_the_inline_scripts_ignore_modules_in_the_callers_workspace(tmp_path):
     """The steps run Python scripts from stdin in the caller's workspace, where Python looks for modules first: a
     jlcplace.py or json.py at the root of the calling repository must not shadow the real ones (python -I)."""

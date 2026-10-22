@@ -172,7 +172,8 @@ runs:
             codes = set()
         print(" ".join(sorted(codes)))
         EOF
-        read -r -a codes < "$RUNNER_TEMP/jlcplace-codes.txt"
+        # \r too: Python on a Windows runner ends its line with \r\n, and bash would keep the \r on the last code
+        IFS=$' \t\r\n' read -r -a codes < "$RUNNER_TEMP/jlcplace-codes.txt"
         set +e
         "$JLCPLACE" fetch --cache "$CACHE" "$BOARD" "${codes[@]}"
         code=$?

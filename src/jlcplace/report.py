@@ -1302,6 +1302,10 @@ _SHELLS = tuple(f"chromium_headless_shell-*/chrome-*/{name}{exe}"
 _CHROMIUMS = ("chromium-*/chrome-*/chrome", "chromium-*/chrome-*/chrome.exe",
               "chromium-*/chrome-mac*/Chromium.app/Contents/MacOS/Chromium")
 _ON_PATH = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "chrome-headless-shell")
+_MAC_APPS = ("Google Chrome.app/Contents/MacOS/Google Chrome", "Chromium.app/Contents/MacOS/Chromium",
+             "Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+_WIN_APPS = ("Google/Chrome/Application/chrome.exe", "Chromium/Application/chrome.exe",
+             "Microsoft/Edge/Application/msedge.exe")
 
 
 def _playwright(patterns) -> str:
@@ -1322,9 +1326,25 @@ def _playwright(patterns) -> str:
     return str(max(hits, key=version)) if hits else ""
 
 
+def _installed(mac_roots=None) -> str:
+    """A Chrome, Chromium or Edge installed where macOS and Windows put them, which is not on PATH there."""
+    if mac_roots is None:
+        mac_roots = [Path("/Applications")]
+        try:
+            mac_roots.append(Path.home() / "Applications")
+        except RuntimeError:                      # no home directory to be found
+            pass
+    hits = [Path(r) / app for r in mac_roots for app in _MAC_APPS]
+    hits += [Path(base) / app for base in (os.environ.get(v, "") for v in ("ProgramFiles", "ProgramFiles(x86)",
+                                                                           "LOCALAPPDATA")) if base
+             for app in _WIN_APPS]
+    return next((str(q) for q in hits if q.is_file()), "")
+
+
 def png_renderer() -> str:
     """What svg_to_png renders with: "cairosvg" when it imports, else a headless Chromium: $JLCPLACE_CHROMIUM, a
-    headless shell Playwright installed, a Chrome or Chromium on PATH, Playwright's full Chromium; "" for none."""
+    headless shell Playwright installed, a Chrome or Chromium on PATH, one installed where macOS and Windows put it
+    (Edge too), Playwright's full Chromium; "" for none."""
     try:
         import cairosvg  # noqa: F401
         return "cairosvg"
@@ -1332,7 +1352,7 @@ def png_renderer() -> str:
         pass
     if os.environ.get("JLCPLACE_CHROMIUM"):
         return os.environ["JLCPLACE_CHROMIUM"]
-    return (_playwright(_SHELLS) or next((p for p in map(shutil.which, _ON_PATH) if p), "")
+    return (_playwright(_SHELLS) or next((p for p in map(shutil.which, _ON_PATH) if p), "") or _installed()
             or _playwright(_CHROMIUMS))
 
 
@@ -1354,9 +1374,10 @@ def svg_to_png(svg, png, *, timeout: float = 120.0) -> str:
     with tempfile.TemporaryDirectory() as profile:
         # --no-sandbox, as Playwright launches Chromium: the page is this file (no script, no network), and CI
         # containers run as root or without user namespaces, where the sandbox cannot start
+        # --use-mock-keychain: a Chrome on macOS must not ask for the login keychain (other systems ignore it)
         cmd = [how, "--headless", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
-               "--force-device-scale-factor=1", f"--window-size={w},{h}", f"--user-data-dir={profile}",
-               f"--screenshot={png.resolve()}", svg.resolve().as_uri()]
+               "--use-mock-keychain", "--force-device-scale-factor=1", f"--window-size={w},{h}",
+               f"--user-data-dir={profile}", f"--screenshot={png.resolve()}", svg.resolve().as_uri()]
         try:
             p = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
                                check=False)

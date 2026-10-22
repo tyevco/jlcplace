@@ -356,6 +356,31 @@ def png_size(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", data[16:24])
 
 
+def test_a_browser_installed_where_macos_and_windows_put_it_is_found(tmp_path, monkeypatch):
+    """Chrome and Edge are rarely on PATH on macOS and Windows: png_renderer looks where they install."""
+    for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        monkeypatch.delenv(v, raising=False)
+    apps = tmp_path / "Applications"
+    assert report._installed(mac_roots=[apps]) == ""
+    chrome = apps / "Google Chrome.app/Contents/MacOS/Google Chrome"
+    chrome.parent.mkdir(parents=True)
+    chrome.write_bytes(b"")
+    assert report._installed(mac_roots=[apps]) == str(chrome)
+    chrome.unlink()
+    edge = tmp_path / "x86/Microsoft/Edge/Application/msedge.exe"
+    edge.parent.mkdir(parents=True)
+    edge.write_bytes(b"")
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "x86"))
+    assert report._installed(mac_roots=[apps]) == str(edge)
+
+    monkeypatch.setitem(sys.modules, "cairosvg", None)     # importing it fails
+    monkeypatch.delenv("JLCPLACE_CHROMIUM", raising=False)
+    monkeypatch.setattr(report, "_playwright", lambda patterns: "")
+    monkeypatch.setattr(report.shutil, "which", lambda name: None)
+    monkeypatch.setattr(report, "_installed", lambda: str(edge))
+    assert report.png_renderer() == str(edge)
+
+
 def test_png_when_a_renderer_is_at_hand(tmp_path):
     if not report.png_renderer():
         pytest.skip("no PNG renderer (cairosvg or a headless Chromium) is on this machine")
