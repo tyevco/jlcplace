@@ -4,6 +4,8 @@ Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards. jlcplace p
 exactly where each CPL row tells JLC to put it, and reports which KiCad pad and net every EasyEDA pad lands on. It
 works on a CPL from any tool, and it can write the CPL itself.
 
+Documentation: [tyevco.github.io/jlcplace](https://tyevco.github.io/jlcplace/)
+
 ```
 $ jlcplace check board.kicad_pcb board-CPL.csv
 jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
@@ -145,9 +147,10 @@ characters as `\xNN`, the JUnit file holds no character XML forbids, the CSV che
 formula (`'=...`), and the Markdown checklist escapes Markdown.
 
 The HTML report has top and bottom views of the board and a card for every part. KiCad copper pads are filled and
-numbered. The EasyEDA pads are outlined where JLC will put them. On the part cards they are blue on their own pin,
-amber on another pin and red off copper; on the board views they take their row's verdict colour, and red and yellow
-parts are labelled above them (each view has its own legend; the big "+" on a board view is the CPL origin). The
+numbered. The EasyEDA pads are outlined where JLC will put them. On the part cards they are blue on a KiCad pad of
+the same number, amber on a pad of another number and red off copper; on the board views they take the colour of
+their row's verdict (blue for a green row), and red and yellow parts are labelled above them (each view has its own
+legend; the big "+" on a board view is the CPL origin). The
 bottom is drawn seen from below, as JLC's preview shows it. The header names the board and the CPL, not their paths.
 Above the board views and above the part cards the report declares the source of the outlines, the JLCEDA/EasyEDA
 Official Library, with links to https://lceda.cn/ and https://easyeda.com, as the records' licence asks.
@@ -203,9 +206,9 @@ turned 180 degrees: every pad lands on copper, but on the wrong pins.
 
 **The bottom-side caveat.** JLC does not document how it reads a bottom-side rotation. The reading jlcplace uses,
 `jlc-2022` (180 - theta + rot, viewed from below), is the one every open tool uses. It also matches the JLC
-preview data that the z2amiller fork of jlccheck recorded. Nothing offline can prove which reading the factory uses,
-so every bottom row is also placed under the three other possible readings. Parts whose pins would move under any of
-them go on the preview checklist. `--reading` selects another reading if JLC ever changes.
+preview data recorded in the z2amiller fork of kicad-jlcpcb-tools. Nothing offline can prove which reading the
+factory uses, so every bottom row is also placed under the three other possible readings. Parts whose pins would move
+under any of them go on the preview checklist. `--reading` selects another reading if JLC ever changes.
 
 ## The correction database
 
@@ -252,7 +255,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "jlcplace @ git+https://github.com/tyevco/jlcplace@v0.1.0"    # a release tag or commit SHA
+      - run: pip install "jlcplace @ git+https://github.com/tyevco/jlcplace@975d8dc4358587dd88aff66d35695356e27b2db8"   # a commit SHA
       # EasyEDA records: never upload them, or an HTML report (it draws EasyEDA pad outlines), as an artifact of a
       # public repository; the JUnit and JSON outputs hold derived data only.
       - uses: actions/cache@v4
@@ -267,7 +270,8 @@ jobs:
           --db jlcplace-db --github-annotations --junit cpl.xml
 ```
 
-Pin the install to a release tag or a commit SHA, so that a new jlcplace does not change the verdicts under you.
+Pin the install to a commit SHA, so that a new jlcplace does not change the verdicts under you. jlcplace has no
+release tag yet; the recipe pins a commit of `main`, so replace it with the one you tested with.
 `fetch` downloads the codes on the board; it takes LCSC codes too, for parts whose BOM names another code
 (`jlcplace fetch hardware/board.kicad_pcb C7519`).
 Without KiCad on the runner, the board is read with the S-expression reader. Pass `--fail-on yellow` to make yellow
