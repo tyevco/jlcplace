@@ -144,7 +144,14 @@ def _write(path: str, text: str) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, text)
     except OSError as e:
-        raise BadInput(f"{path}: cannot write: {e.strerror or e}") from None
+        raise BadInput(f"{path}: cannot write: {_why(e)}") from None
+
+
+def _why(e: OSError) -> str:
+    """An OSError said plainly: a directory on the path that is a file is "not a directory" (mkdir says it exists)."""
+    if isinstance(e, (FileExistsError, NotADirectoryError)):
+        return "a directory on its path is a file (not a directory)"
+    return str(e.strerror or e)
 
 
 def _color(stream) -> bool:
@@ -163,9 +170,10 @@ def _stdout_once(args) -> None:
         raise BadInput("--json - and --github-annotations both write to stdout; give --json a file")
 
 
-def _finish(args, run, notes=(), outline=None) -> int:
+def _finish(args, run, notes=(), outline=None, errors=()) -> int:
     """Print the summary (to stderr when --json - takes stdout), write the requested reports, return the exit code.
-    Under -q the run's findings are still printed: they make every row wrong."""
+    Under -q the run's findings are still printed: they make every row wrong. `errors`: outputs that could not be
+    written already (--fixed-cpl): the others are written all the same, then it is bad input."""
     out = sys.stderr if args.json == "-" else sys.stdout
     if not args.quiet:
         out.write(report.summary(run, color=_color(out)))
@@ -181,7 +189,7 @@ def _finish(args, run, notes=(), outline=None) -> int:
                (args.report, lambda: report.html(run)), (args.junit, lambda: report.junit(run, fail_on=args.fail_on)),
                (args.checklist, lambda: report.checklist_csv(run) if args.checklist.lower().endswith(".csv")
                 else report.checklist_markdown(run))]
-    failed = []
+    failed = list(errors)
     for path, text in outputs:
         if path:
             try:
@@ -314,8 +322,14 @@ def cmd_check(args) -> int:
     hints = _judge_origin(args, run, board, gerbers, found)
     k = len(found)                             # after the Gerbers' findings, before the origin's: the offset tells
     run.findings[k:k] = _units_finding(args, rows, run.offset)      # whether the file was in mm all along
-    fixed = [_fixed_cpl(args, run, resolved, bom)] if args.fixed_cpl else []
-    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + _misses_note(client), _outline(gerbers))
+    fixed, errors = [], []
+    if args.fixed_cpl:
+        try:
+            fixed = [_fixed_cpl(args, run, resolved, bom)]
+        except BadInput as e:                  # the summary and the other outputs are written first, then exit 3
+            errors.append(str(e))
+    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + _misses_note(client), _outline(gerbers),
+                   errors)
 
 
 def _fixed_cpl(args, run, resolved, bom) -> str:
@@ -332,7 +346,7 @@ def _fixed_cpl(args, run, resolved, bom) -> str:
         Path(args.fixed_cpl).parent.mkdir(parents=True, exist_ok=True)
         write_cpl(args.fixed_cpl, rows)
     except OSError as e:
-        raise BadInput(f"--fixed-cpl {args.fixed_cpl}: cannot write: {e.strerror or e}") from None
+        raise BadInput(f"--fixed-cpl {args.fixed_cpl}: cannot write: {_why(e)}") from None
     again = check(run.board, rows, resolved, reading=run.reading, bom_rows=bom).counts()
     how = (f"moved by ({round(-off.dx, 3) + 0.0:+.3f}, {round(-off.dy, 3) + 0.0:+.3f}) mm"
            if off.scale == 1.0 and off.y_up else "in mm" if off.y_up else "with Mid Y negated")

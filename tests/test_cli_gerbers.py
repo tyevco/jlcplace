@@ -260,6 +260,18 @@ def test_fixed_cpl_without_the_gerbers_says_which_origin_it_assumed(made, capsys
     assert "(4 rows in mm)" in out and "not checked" not in out, out
 
 
+def test_a_fixed_cpl_that_cannot_be_written_leaves_the_other_outputs_written(made, capsys):
+    """Exit 3 when one output cannot be written, but the others still are: a --fixed-cpl path under a file is said
+    plainly, after the summary, the JSON and the JUnit a CI job reads."""
+    e = made
+    (e.tmp / "afile").write_text("", encoding="utf-8")
+    code, out, err = run(capsys, "check", e.board, e.out, "--gerbers", e.page, *offline(e), "--fixed-cpl",
+                         e.tmp / "afile" / "f.csv", "--json", e.tmp / "r.json", "--junit", e.tmp / "r.xml")
+    assert code == 3 and (e.tmp / "r.json").is_file() and (e.tmp / "r.xml").is_file(), out + err
+    assert "4 results: 4 red" in out and f"--fixed-cpl {e.tmp / 'afile' / 'f.csv'}: cannot write: a directory on " \
+        "its path is a file (not a directory)" in err, err
+
+
 def test_kicads_page_origin_cpl_over_page_origin_gerbers_is_consistent(made, capsys):
     """KiCad's position file and Gerbers both from the page origin: one origin, nothing to say about it."""
     e = made
