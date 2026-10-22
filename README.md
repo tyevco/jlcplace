@@ -122,6 +122,32 @@ footprint makes it stale.
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
 
+## Use it from Claude Code
+
+This repository is also a Claude Code plugin marketplace. In Claude Code:
+
+```text
+/plugin marketplace add tyevco/jlcplace
+/plugin install jlcplace@jlcplace
+```
+
+Or in one step (Claude Code 2.1.275 or later): `/plugin install jlcplace --marketplace tyevco/jlcplace`. To update,
+run `claude plugin marketplace update jlcplace`, then `claude plugin update jlcplace@jlcplace`, and restart.
+
+The plugin's skills make Claude use jlcplace for the KiCad to JLCPCB assembly hand-off:
+
+* **check-jlc-placement**: check a CPL from any tool against the board and explain every red and yellow row.
+* **write-jlc-cpl**: write a corrected CPL with `jlcplace cpl`, and record numbering decisions.
+* **prepare-jlc-order**: Gerbers, drill files and CPL from one origin, a BOM with LCSC codes, the check, and a
+  pre-upload checklist (with kicad-cli, or KiCad's dialogs).
+* **diagnose-jlc-misplacement**: an order or preview with parts shifted, turned, reversed or on the wrong pins:
+  origin, units, Y axis, EasyEDA angles and origins, the bottom side, polarity or pinout.
+* **review-jlc-preview**: walk JLC's placement preview with the checklist and record the results with
+  `jlcplace confirm`.
+
+Claude installs the jlcplace CLI when it is missing, if you agree. It asks before anything downloads EasyEDA records.
+See [plugins/jlcplace/README.md](plugins/jlcplace/README.md).
+
 ## Results
 
 Every CPL row gets a verdict:
