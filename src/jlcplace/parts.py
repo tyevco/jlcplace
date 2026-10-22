@@ -175,7 +175,9 @@ class PinDiff:
     """An EasyEDA pad whose pin name disagrees with the pin function of the KiCad pad it lands on.
     kind: "swapped"  the EasyEDA name is the function of another KiCad pad, on another net, and the KiCad function the
                      name of another EasyEDA pad: the names are permuted, and the part's pin sits on the net meant for
-                     another of its pins (a MOSFET's S on the board's D);
+                     another of its pins (a MOSFET's S on the board's D); or the KiCad pad says nothing (NC, ~) and no
+                     EasyEDA pin of that function reaches the net of the KiCad pads that have it (an LM358's VCC on a
+                     single op-amp's NC pad: the part is unpowered);
           "same net" the EasyEDA name is the function of a KiCad pad on the net it lands on: harmless;
           "differs"  neither: the libraries name the pins differently (VIN / IN+, B/C/E against G/S/D)."""
     ee_number: str
@@ -190,13 +192,23 @@ def pin(number, name, net=None) -> Pin:
 
 
 def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]:
-    """The pads whose names disagree (compare_names < 0) through a placement, in the order of `pairs`: (EasyEDA Pin,
+    """The pads whose names disagree (compare_names < 0), or whose named pin lands on a pad whose function says
+    nothing while its function's net goes without, through a placement, in the order of `pairs`: (EasyEDA Pin,
     KiCad Pin) for every EasyEDA pad on copper. `ee_pins` and `kicad_pins` are every Pin of each side (the KiCad ones
     with their nets), where a name is looked for on the other pads."""
     ee_pins, kicad_pins = list(ee_pins), list(kicad_pins)
     out = []
     for e, k in pairs:
-        if compare_names(e.tokens, k.tokens) >= 0:
+        c = compare_names(e.tokens, k.tokens)
+        if c == 0 and e.tokens and not k.tokens:
+            # a named pin on a pad whose function says nothing: harmful when its function's net, on other pads, gets
+            # no EasyEDA pin of that function (up to a unit index: unit 2's input beside unit 1's is no loss)
+            homes = {q.net for q in kicad_pins if compare_names(e.tokens, q.tokens) > 0}
+            if homes and k.net not in homes and not any(q.net in homes for f, q in pairs
+                                                        if f.tokens and compare_names(f.tokens, e.tokens) >= 0):
+                out.append(PinDiff(e.number, e.name, k.number, k.name, "swapped"))
+            continue
+        if c >= 0:
             continue
         homes = [q.net for q in kicad_pins if compare_names(e.tokens, q.tokens) > 0]
         if k.net in homes:

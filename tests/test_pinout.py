@@ -454,6 +454,22 @@ def test_an_op_amp_on_the_symbol_of_the_other_sot23_5_pinout_is_red():
     assert "pad 3 is VIN+ on the LCSC part, - on the board" in msgs[0]
 
 
+def test_a_named_pin_on_a_pad_that_says_nothing_is_red_when_its_net_goes_without():
+    """A dual LM358 (1OUT ... 2OUT, VCC) on a single op-amp's SOIC-8 symbol (NC, -, +, V-, NC, ~, V+, NC): its VCC sits
+    on an NC pad and the board's V+ gets its 2OUT, so the part is unpowered. The NC and ~ pads say nothing, but VCC
+    has a home on the board that no VCC of the LCSC part reaches: red pinout. Unit 2's inputs on the NC pads are no
+    loss (unit 1's reach the inputs), and a second GND on an NC pad beside the one on GND is none either."""
+    single = soic(("NC", "-", "+", "V-", "NC", "~", "V+", "NC"))
+    fit, row, status, msgs = judged(*part_and_record(single, named(single, (
+        "1OUT", "1IN-", "1IN+", "GND", "2IN+", "2IN-", "2OUT", "VCC"))))
+    assert (fit, row, status) == (RED, RED, "pinout"), msgs
+    assert "pad 8 is VCC on the LCSC part, NC on the board" in msgs[0] and "2IN" not in msgs[0], msgs
+    sensor = soic(("VDD", "SDA", "SCL", "GND", "NC", "INT", "ADDR", "NC"))
+    fit, row, status, msgs = judged(*part_and_record(sensor, named(sensor, (
+        "VDD", "SDA", "SCL", "GND", "GND", "INT", "ADDR", "NC"))))
+    assert (fit, row, status) == (GREEN, GREEN, "ok") and not msgs, msgs
+
+
 def test_a_few_names_spelled_otherwise_are_a_message_not_a_verdict():
     """One name of five differs (ALERT against INT), the rest agree: a message, no yellow and no checklist item; most
     names differing (a bipolar transistor's B/E/C where the symbol is a MOSFET's G/D/S) stays yellow."""

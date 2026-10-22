@@ -260,8 +260,10 @@ def pinout_text(diffs, n=4) -> str   # "pad 2 is S on the LCSC part, D on the bo
 * `pin_diffs`: the pads where `compare_names` < 0, in the order of `pairs`. "swapped": the EasyEDA name is the
   function of another KiCad pad on another net and the KiCad function the name of another EasyEDA pad (the names are
   permuted: a pin sits on the net meant for another); "same net": a KiCad pad with the EasyEDA name is on the net the
-  pad lands on (harmless); "differs": everything else (B/E/C against G/D/S). Names equal up to a trailing index
-  compare as unknown, so they are never diffs.
+  pad lands on (harmless); "differs": everything else (B/E/C against G/D/S). Also "swapped": a named EasyEDA pin on a
+  pad whose function says nothing (NC, ~) while the KiCad pads of its function are on other nets that no EasyEDA pin
+  of that function (equal up to an index: unit 2's input beside unit 1's) reaches (a dual LM358's VCC on a single
+  op-amp's NC pad). Names equal up to a trailing index compare as unknown, so they are never diffs.
 * `ee_key` replaces `EEFootprint.key()` (uuid:updateTime) as the key corrections are stored and looked up under:
   updateTime also moves when EasyEDA edits only a record's metadata, which would make every verified correction
   stale. `kicad_hash` keys the KiCad side: the fit decides polarity and orientation by pin names too, so parts whose
@@ -308,12 +310,12 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
      separates ("ambiguous"); a polar two-terminal part whose names and numbers disagree and no + mark settles it,
      or whose + mark contradicts the numbers (or the names) that are its only other evidence; the mirror wins (only
      a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
-     far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA
-     names are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S wires it
-     better (permutes no names and agrees with more of them, as check's `_pinout` asks; not for a non-polar
-     two-terminal part, nor a polar one whose drawn + the member puts on KiCad's positive pad): reason "pinout differs from the symbol: pad N is X on the LCSC part, Y on the board; ...: no
-     placement that lands every pad puts the pins on their own functions, so the part is wired wrong whatever the
-     rotation; check the LCSC part's pinout against the symbol".
+     far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA names
+     are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S wires it better
+     (permutes no names and agrees with more of them, as check's `_pinout` asks; not for a non-polar two-terminal part,
+     nor a polar one whose drawn + the member puts on KiCad's positive pad): reason "pinout differs from the symbol: pad
+     N is X on the LCSC part, Y on the board; ...: no placement that lands every pad puts the pins on their own
+     functions, so the part is wired wrong whatever the rotation; check the LCSC part's pinout against the symbol".
    Angles within `snap` of a multiple of 90 are snapped and the translation refitted. `dx, dy` (4 decimals) = the
    EasyEDA origin in the library frame. Pairs for the number fit and translation hypotheses use copper centres
    (a custom / polygon KiCad pad's outline box centre, an EasyEDA polygon pad's point-list box centre: SOT-89's tab

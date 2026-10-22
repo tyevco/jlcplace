@@ -795,7 +795,7 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         verdict = YELLOW if verdict == GREEN else verdict
         reasons.append(why)
 
-    diffs = f.pin_diffs(chosen) if chosen.names_bad else []
+    diffs = f.pin_diffs(chosen) if chosen.names_bad or chosen.names_ok else []    # a pin stranded on an NC pad too
     swapped = [d for d in diffs if d.kind == "swapped"]
     plus_ok = mark is not None and f.mark_ok(chosen, mark)
     if swapped and not nonpolar and not plus_ok and not any(
