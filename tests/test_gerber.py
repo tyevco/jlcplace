@@ -304,6 +304,15 @@ def test_x2_attributes_x1_comments_and_scopes():
     ("b-Edge_Cuts.gbr", "Profile,NP"), ("b-In2_Cu.gbr", "Copper,Inr"), ("copper_top.gbr", "Copper,L1,Top"),
     ("solderpaste_bottom.gbr", "Paste,Bot"), ("Gerber_TopPasteMaskLayer.gbr", "Paste,Top"),
     ("profile.gbr", "Profile,NP"), ("b-Top_layer.gbr", "Copper,L1,Top"), ("readme.gbr", ""),
+    # a project's name says nothing: KiCad's drawing layers are drawings, its copper and outline what they are
+    ("front-panel-circuit-F_Courtyard.gbr", "Other,Drawing"), ("front-panel-circuit-User_1.gbr", "Other,Drawing"),
+    ("usb-backpack-cutter-B_Fab.gbr", "Other,Drawing"), ("robot-arm-2layer-F_Fab.gbr", "Other,Drawing"),
+    ("edge-lit-sign-B_Courtyard.gbr", "Other,Drawing"), ("ledger-B_Fab.gbr", "Other,Drawing"),
+    ("outline-test-F_Adhesive.gba", "Other,Drawing"), ("milling-jig-User_Drawings.gbr", "Other,Drawing"),
+    ("b-Margin.gbr", "Other,Drawing"), ("b-Eco1_User.gbr", "Other,Drawing"),
+    ("front-panel-circuit-F_Cu.gbr", "Copper,L1,Top"), ("edge-lit-sign-Edge_Cuts.gbr", "Profile,NP"),
+    ("usb-backpack-cutter-B_Paste.gbr", "Paste,Bot"), ("circuit-top.gbr", ""),
+    ("robot-notes.gbr", ""), ("cutter-front.gbr", ""), ("top_cu.gbr", "Copper,L1,Top"),
 ])
 def test_layer_functions_from_file_names(name, function):
     """X1 sets say what a file is by its name only: Protel extensions, Eagle's, KiCad's layer names."""

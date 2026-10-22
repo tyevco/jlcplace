@@ -1003,6 +1003,10 @@ _EXT = {".gtl": "Copper,L1,Top", ".gbl": "Copper,Bot", ".gtp": "Paste,Top", ".gb
         ".smb": "Soldermask,Bot", ".spt": "Paste,Top", ".spb": "Paste,Bot", ".sst": "Legend,Top",
         ".ssb": "Legend,Bot", ".oln": "Profile,NP", ".out": "Profile,NP"}
 _NAME_RULES = [            # (regular expression on the lower-case stem, function), first match wins
+    # KiCad's layer names end the stem and say what a file is, whatever the project's name says ("circuit" holds
+    # "cu", "robot" "bot"): its drawing layers first, then copper, paste, mask, silk and the outline
+    (r"(^|[-_. ])[fb][._](fab|courtyard|crtyd|adhesive|adhes)$", "Other,Drawing"),
+    (r"(^|[-_. ])(user[._]\w+|(dwgs|cmts|eco\d)[._]user|margin)$", "Other,Drawing"),
     (r"(^|[-_. ])f[._]cu$", "Copper,L1,Top"), (r"(^|[-_. ])b[._]cu$", "Copper,Bot"),
     (r"(^|[-_. ])in\d+[._]cu$", "Copper,Inr"),
     (r"(^|[-_. ])f[._]paste$", "Paste,Top"), (r"(^|[-_. ])b[._]paste$", "Paste,Bot"),
@@ -1016,8 +1020,11 @@ _NAME_RULES = [            # (regular expression on the lower-case stem, functio
     (r"(silk|legend|overlay).*(top|front)|(top|front).*(silk|legend|overlay)", "Legend,Top"),
     (r"(silk|legend|overlay).*(bot|back)|(bot|back).*(silk|legend|overlay)", "Legend,Bot"),
     (r"outline|profile|edge|dimension|milling|boardshape", "Profile,NP"),
-    (r"(copper|signal|layer|cu).*(top|front)|(top|front).*(copper|signal|layer|cu)|^top$", "Copper,L1,Top"),
-    (r"(copper|signal|layer|cu).*(bot|back)|(bot|back).*(copper|signal|layer|cu)|^bottom$", "Copper,Bot"),
+    # cu only as a word of its own (not in "circuit", "cutter"), bot not inside a word ("robot")
+    (r"(copper|signal|layer|(?<![a-z])cu(?![a-z])).*(top|front)|(top|front).*(copper|signal|layer|(?<![a-z])cu(?![a-z]))"
+     r"|^top$", "Copper,L1,Top"),
+    (r"(copper|signal|layer|(?<![a-z])cu(?![a-z])).*((?<![a-z])bot|back)"
+     r"|((?<![a-z])bot|back).*(copper|signal|layer|(?<![a-z])cu(?![a-z]))|^bottom$", "Copper,Bot"),
 ]
 
 
