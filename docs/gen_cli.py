@@ -67,13 +67,27 @@ def _help(action: argparse.Action, parser: argparse.ArgumentParser) -> str:
     return _cell(text)
 
 
+def _usage(name: str, sub: argparse.ArgumentParser) -> str:
+    """argparse's own usage text wraps differently on each Python version; this one is the same everywhere."""
+    words = []
+    for a in sub._actions:
+        if a.option_strings or a.help is argparse.SUPPRESS:
+            continue
+        meta = a.metavar or a.dest.upper()
+        words.append(f"{meta} [{meta} ...]" if a.nargs == "+" else meta)
+    required = [a for a in sub._actions if a.option_strings and a.required]
+    flags = " ".join(f"{a.option_strings[-1]} "
+                     f"{a.metavar or ('{' + ','.join(map(str, a.choices)) + '}' if a.choices else a.dest.upper())}"
+                     for a in required)
+    return " ".join(w for w in (f"jlcplace {name}", flags, "[options]", *words) if w)
+
+
 def _section(name: str, sub: argparse.ArgumentParser, summary: str) -> list[str]:
     summary = _cell(summary)
     lines = [f"## jlcplace {name}", "", (summary[:1].upper() + summary[1:].rstrip(".") + ".") if summary else "", ""]
     if sub.description and sub.description.strip() != summary.strip():
         lines += [sub.description.strip(), ""]
-    usage = "\n".join(l[len("usage: "):] if l.startswith(" " * len("usage: ")) else l.removeprefix("usage: ")
-                      for l in sub.format_usage().rstrip().splitlines())
+    usage = _usage(name, sub)
     lines += ["```text", usage, "```", ""]
     for group in sub._action_groups:
         rows = [a for a in group._group_actions

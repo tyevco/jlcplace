@@ -649,12 +649,18 @@ def build_parser() -> argparse.ArgumentParser:
     ee = argparse.ArgumentParser(add_help=False)
     g = ee.add_argument_group("EasyEDA records")
     g.add_argument("--cache", default=None, metavar="DIR", help=f"record cache (default {default_cache_dir()})")
-    m = g.add_mutually_exclusive_group()
-    m.add_argument("--online", action="store_true",
-                   help="download the records the cache lacks from the EasyEDA API (rate-limited; default: only "
-                        "cached records, which `jlcplace fetch` downloads)")
-    m.add_argument("--offline", action="store_true", help="only cached records (the default)")
     g.add_argument("--snap", type=float, default=0.5, metavar="DEG", help=argparse.SUPPRESS)
+
+    def network(s):
+        """--online/--offline, added to each command's own "EasyEDA records" group: before Python 3.13, argparse
+        moved a mutually exclusive group inherited through parents= out of its argument group in --help."""
+        grp = next(a for a in s._action_groups if a.title == "EasyEDA records")
+        m = grp.add_mutually_exclusive_group()
+        m.add_argument("--online", action="store_true",
+                       help="download the records the cache lacks from the EasyEDA API (rate-limited; default: only "
+                            "cached records, which `jlcplace fetch` downloads)")
+        m.add_argument("--offline", action="store_true", help="only cached records (the default)")
+        return s
 
     db = argparse.ArgumentParser(add_help=False)
     db.add_argument("--db", metavar="DIR", help="correction database directory (one JSON file per LCSC code)")
@@ -682,28 +688,31 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true", default=False, help="log what the EasyEDA client does")
     sub = p.add_subparsers(dest="command", required=True, parser_class=_Parser)
 
-    s = sub.add_parser("check", parents=[board, ee, db, reading, out], help="simulate a CPL against the board",
+    s = network(sub.add_parser("check", parents=[board, ee, db, reading, out],
+                               help="simulate a CPL against the board",
                        description="Simulate every CPL row with JLC's EasyEDA footprint and report where its "
-                                   "pads land.")
+                                   "pads land."))
     s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
     s.add_argument("cpl", metavar="CPL", help="the CPL to check: from any tool (CSV/TSV, or KiCad's .pos)")
     s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
                    help="unit of bare numbers in the CPL (KiCad's CSV position file does not say; default mm)")
     s.set_defaults(func=cmd_check)
 
-    s = sub.add_parser("cpl", parents=[board, ee, db, reading, out], help="write a corrected CPL and check it",
+    s = network(sub.add_parser("cpl", parents=[board, ee, db, reading, out],
+                               help="write a corrected CPL and check it",
                        description="Write the CPL JLC needs (corrections from --db, else fitted), check the written "
-                                   "file, and refuse to keep it when a row is red.")
+                                   "file, and refuse to keep it when a row is red."))
     s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
     s.add_argument("-o", "--output", required=True, metavar="CPL", help="where to write the CPL")
     s.add_argument("--force", action="store_true", help="write the CPL even when rows are red (exit code still 2)")
     s.set_defaults(func=cmd_cpl)
 
-    s = sub.add_parser("fit", parents=[board, ee, db], help="fit corrections (store them with --db)")
+    s = network(sub.add_parser("fit", parents=[board, ee, db], help="fit corrections (store them with --db)"))
     s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
     s.add_argument("--ref", action="append", metavar="REF", help="only these parts (repeatable)")
     s.add_argument("--json", metavar="PATH", help="write the fits as JSON ('-' for stdout)")
-    s.add_argument("--fail-on", default=RED, choices=(RED, YELLOW), help="exit 1 on a yellow fit too (default: red only)")
+    s.add_argument("--fail-on", default=RED, choices=(RED, YELLOW),
+                   help="exit 1 on a yellow fit too (default: red only)")
     s.add_argument("-q", "--quiet", action="store_true", help="no terminal summary")
     s.set_defaults(func=cmd_fit)
 
@@ -715,14 +724,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-interval", type=float, default=0.7, metavar="S", help="seconds between requests")
     s.set_defaults(func=cmd_fetch)
 
-    s = sub.add_parser("confirm", parents=[board, ee, reading], help="record a verification in the database",
+    s = network(sub.add_parser("confirm", parents=[board, ee, reading], help="record a verification in the database",
                        description="Record that a part's placement was checked: manual (datasheet), preview (JLC's "
                                    "placement preview) or board (the assembled board). What was checked is the row "
                                    "of the CPL that was uploaded (--cpl, needed for preview and board), moved by the "
                                    "keys pressed in the preview; its correction is stored when it differs from the "
-                                   "database's. Fits and stores a correction first when the database has none.")
+                                   "database's. Fits and stores a correction first when the database has none."))
     s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
-    s.add_argument("--ref", action="append", required=True, metavar="REF", help="the part that was checked (repeatable)")
+    s.add_argument("--ref", action="append", required=True, metavar="REF",
+                   help="the part that was checked (repeatable)")
     s.add_argument("--cpl", metavar="CPL",
                    help="the CPL that was uploaded to JLC (what was checked; the presses are relative to its rows)")
     s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
@@ -741,7 +751,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--dy", type=float, default=0.0, help="... in mm (with --rot and --dx)")
     s.set_defaults(func=cmd_confirm)
 
-    s = sub.add_parser("show", parents=[board, ee, db, reading], help="show what jlcplace knows about a code or part")
+    s = network(sub.add_parser("show", parents=[board, ee, db, reading],
+                               help="show what jlcplace knows about a code or part"))
     s.add_argument("target", metavar="CODE|BOARD", help="an LCSC code, or a board with --ref")
     s.add_argument("--ref", metavar="REF", help="with BOARD: the part to show")
     s.add_argument("--json", metavar="PATH", help="write it as JSON ('-' for stdout)")
