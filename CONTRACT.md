@@ -258,8 +258,9 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
   or None off copper), natural order. With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm /
   0.5 deg gets a message; further than max(0.15 mm, a quarter of the smallest pad it lands on) or 2 deg (up to 45)
-  from a correction that is not red, with every pad on copper, it is yellow, status "offset", the message first; a
-  row matching a verified correction's expected row is VERIFIED.
+  from a correction that is not red, with every pad on copper, it is yellow, status "offset", the message first, and
+  so is a row a quarter turn (45 to 135 deg) from it whose pads all land as the correction puts them (alike lands:
+  one land, whose long pad would lie across it); a row matching a verified correction's expected row is VERIFIED.
 * `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
   JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. A reference that more than one part
   JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
