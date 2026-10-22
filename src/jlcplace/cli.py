@@ -17,6 +17,7 @@ database file that cannot be read, bad options); 4 an internal error (a bug), ne
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import math
@@ -780,6 +781,11 @@ def _tolerant_streams():
             pass
 
 
+def _stdout_gone(e: OSError) -> bool:
+    """The reader of stdout went away: EPIPE, or on Windows EINVAL from a write to a closed pipe."""
+    return isinstance(e, BrokenPipeError) or (os.name == "nt" and e.errno == errno.EINVAL and not e.filename)
+
+
 def _quiet_stdout():
     """After a broken pipe, point stdout at devnull so the interpreter's final flush does not raise again."""
     try:
@@ -803,17 +809,19 @@ def main(argv=None) -> int:
         log.propagate = False
     log.setLevel(logging.INFO if args.verbose else logging.WARNING)
     try:
-        return args.func(args)
+        code = args.func(args)
+        sys.stdout.flush()                     # a buffered pipe raises BrokenPipeError here, not at interpreter exit
+        return code
     except (BadInput, EEError, DBError) as e:       # DBError: a database file that cannot be read or written
         print(printable(f"jlcplace: {e}"), file=sys.stderr)
         return EXIT_INPUT
     except KeyboardInterrupt:
         print("jlcplace: interrupted", file=sys.stderr)
         return EXIT_INTERRUPTED
-    except BrokenPipeError:                    # the reader (e.g. `head`) went away: not bad input, say nothing
-        _quiet_stdout()
-        return EXIT_BROKEN_PIPE
-    except OSError as e:                       # inputs are BadInput already: an output or the cache
+    except OSError as e:                       # inputs are BadInput already: an output, the cache or stdout
+        if _stdout_gone(e):                    # the reader (e.g. `head`) went away: not bad input, say nothing
+            _quiet_stdout()
+            return EXIT_BROKEN_PIPE
         print(printable(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}"), file=sys.stderr)
         return EXIT_INPUT
     except Exception as e:  # noqa: BLE001 - a crash must not exit 1, the code that means "yellow"
