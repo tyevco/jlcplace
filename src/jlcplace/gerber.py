@@ -59,8 +59,9 @@ OUTLINE_TOL = 0.1
 BELONGS = 0.5
 #: total size read from a .zip (uncompressed: a zip bomb is bad input) or a directory
 MAX_ZIP = 512 * 1024 * 1024
-#: what one untrusted file may expand to (step and repeat, blocks, macros turn a few bytes into millions of objects):
-#: objects and outline vertices per file, vertices of one macro primitive (also moire rings) and of one aperture
+#: what untrusted files may expand to (step and repeat, blocks, macros and arcs turn a few bytes into millions of
+#: objects): objects and outline vertices (apertures and arcs' samples included) per set (or file), vertices of one
+#: macro primitive (also moire rings), of one aperture, and of one arc
 MAX_OBJECTS = 1_000_000
 MAX_VERTICES = 10_000_000
 MAX_PRIMITIVE = 4096
@@ -131,11 +132,16 @@ class GDraw:
     pin: str = ""
     net: str = ""
 
-    def points(self) -> list[tuple[float, float]]:
-        """The centre line: its two ends, arcs sampled (their extreme points included)."""
+    def points(self, most: int = MAX_PRIMITIVE) -> list[tuple[float, float]]:
+        """The centre line: its two ends, arcs sampled (their extreme points included, at most `most` chords)."""
         if not self.arc:
             return [(self.x1, self.y1), (self.x2, self.y2)]
-        return [(self.x1, self.y1)] + _arc_points((self.x1, self.y1), (self.x2, self.y2), self.arc[:2], self.arc[2])
+        return [(self.x1, self.y1)] + _arc_points((self.x1, self.y1), (self.x2, self.y2), self.arc[:2], self.arc[2],
+                                                  most=most)
+
+    def extent(self) -> list[tuple[float, float]]:
+        """The points that bound the centre line: its ends and an arc's axis extremes (nothing sampled)."""
+        return self.points(most=1)
 
 
 @dataclass
@@ -168,7 +174,7 @@ class GerberLayer:
         """(xmin, ymin, xmax, ymax) of every object: pad outlines and stroke centre lines."""
         pts = [q for p in self.flashes + self.regions for q in ((p.x - p.w / 2, p.y - p.h / 2),
                                                                  (p.x + p.w / 2, p.y + p.h / 2))]
-        pts += [q for d in self.draws for q in d.points()]
+        pts += [q for d in self.draws for q in d.extent()]
         return _box(pts)
 
 
@@ -283,9 +289,9 @@ def _hull(p: np.ndarray) -> np.ndarray:
     return np.asarray(half(pts) + half(pts[::-1]), float)
 
 
-def _arc_points(s, e, c, ccw: bool, full: bool = False) -> list[tuple[float, float]]:
+def _arc_points(s, e, c, ccw: bool, full: bool = False, most: int = MAX_PRIMITIVE) -> list[tuple[float, float]]:
     """Points after s along the arc about c from s to e (counter-clockwise when ccw, gerber frame), e included,
-    every axis extreme the arc passes included, chords within _ARC_ERR."""
+    every axis extreme the arc passes included, chords within _ARC_ERR (at most `most` of them: coarser)."""
     r = math.hypot(s[0] - c[0], s[1] - c[1])
     a0 = math.atan2(s[1] - c[1], s[0] - c[0])
     a1 = math.atan2(e[1] - c[1], e[0] - c[0])
@@ -293,7 +299,7 @@ def _arc_points(s, e, c, ccw: bool, full: bool = False) -> list[tuple[float, flo
     if full or abs(sweep) < 1e-12 and math.hypot(e[0] - s[0], e[1] - s[1]) < 1e-9:
         sweep = 2 * math.pi if ccw else -2 * math.pi
     step = 2 * math.acos(max(-1.0, 1 - _ARC_ERR / r)) if r > _ARC_ERR else math.pi / 2
-    n = min(MAX_PRIMITIVE, max(1, math.ceil(abs(sweep) / min(step, math.pi / 8))))   # a huge radius: coarser
+    n = min(most, max(1, math.ceil(abs(sweep) / min(step, math.pi / 8))))   # a huge radius: coarser
     ts = [a0 + sweep * k / n for k in range(1, n)]
     k0, k1 = sorted((a0, a0 + sweep))
     ts += [q * math.pi / 2 for q in range(math.floor(k0 / (math.pi / 2)) + 1, math.ceil(k1 / (math.pi / 2)))]
@@ -506,8 +512,15 @@ def _unescape(s: str) -> str:
     return _ESC.sub(lambda m: chr(int(m.group(1) or m.group(2), 16)), s)
 
 
+class _Budget:
+    """Objects and outline vertices spent of MAX_OBJECTS and MAX_VERTICES: one file's, or a whole set's."""
+
+    def __init__(self):
+        self.objects = self.vertices = 0
+
+
 class _Parser:
-    def __init__(self, name: str):
+    def __init__(self, name: str, budget: _Budget | None = None):
         self.layer = GerberLayer(name=name)
         self.name = name
         self.fmt = None                     # {"X": (int, dec), "Y": ..., "zeros": L|T, "inc": bool}
@@ -528,19 +541,21 @@ class _Parser:
         self.offset = (0.0, 0.0)            # %OF
         self.sf = (1.0, 1.0)                # %SF
         self.block_no = 0
-        self.objects = self.vertices = 0    # spent of MAX_OBJECTS, MAX_VERTICES
+        self.budget = budget or _Budget()   # shared by the files of a set
 
     def fail(self, msg: str):
         raise GerberError(f"{self.name}: block {self.block_no}: {msg}")
 
     def spend(self, objects: int, vertices: int):
-        """Count objects about to be stored against the file's budget: an untrusted file is refused before it
-        expands past MAX_OBJECTS objects or MAX_VERTICES outline vertices (a GerberError, not a MemoryError)."""
-        self.objects += objects
-        self.vertices += vertices
-        if self.objects > MAX_OBJECTS or self.vertices > MAX_VERTICES:
+        """Count objects and vertices about to be stored (apertures, flashes, draws, arcs' samples) against the
+        budget: untrusted files are refused before they expand past MAX_OBJECTS objects or MAX_VERTICES vertices (a
+        GerberError, not a MemoryError)."""
+        b = self.budget
+        b.objects += objects
+        b.vertices += vertices
+        if b.objects > MAX_OBJECTS or b.vertices > MAX_VERTICES:
             self.fail(f"expands to more than {MAX_OBJECTS} objects or {MAX_VERTICES} vertices (step and repeat, "
-                      "blocks or macros): not a plot of a board")
+                      "blocks, macros or arcs; with the set's files before it): not a plot of a board")
 
     # -------------------------------------------------------------------- top level
     def parse(self, text: str) -> GerberLayer:
@@ -671,6 +686,7 @@ class _Parser:
             width = 0.0
         else:
             self.fail(f"aperture D{code} uses the undefined macro {t!r}")
+        self.spend(0, sum(len(p) for _, p in shapes))
         self.aps[code] = _Aperture(template=t, params=tuple(params), shapes=shapes, function=fn, width=width)
 
     def block(self, rest: str):
@@ -807,10 +823,9 @@ class _Parser:
             if self.region is not None:
                 if self.contour is None:
                     self.contour = [start]
-                if arc:
-                    self.contour += _arc_points(start, end, arc[:2], arc[2], full=arc[3])
-                else:
-                    self.contour.append(end)
+                pts = _arc_points(start, end, arc[:2], arc[2], full=arc[3]) if arc else [end]
+                self.spend(0, len(pts))
+                self.contour += pts
             else:
                 self.draw(start, end, arc)
         elif d == 3:
@@ -892,14 +907,16 @@ class _Parser:
         a = self.attrs()
         a["function"] = self.ap.function
         width = self.ap.width * self.scale
-        self.spend(1, 2)
         if arc and arc[3]:                 # a full circle: two half arcs
             c = (arc[0], arc[1])
             m = (2 * c[0] - s[0], 2 * c[1] - s[1])
-            self.target[2].append(GDraw(s[0], s[1], m[0], m[1], width, (c[0], c[1], arc[2]), self.dark, **a))
-            self.target[2].append(GDraw(m[0], m[1], e[0], e[1], width, (c[0], c[1], arc[2]), self.dark, **a))
-            return
-        self.target[2].append(GDraw(s[0], s[1], e[0], e[1], width, arc[:3] if arc else None, self.dark, **a))
+            draws = [GDraw(s[0], s[1], m[0], m[1], width, (c[0], c[1], arc[2]), self.dark, **a),
+                     GDraw(m[0], m[1], e[0], e[1], width, (c[0], c[1], arc[2]), self.dark, **a)]
+        else:
+            draws = [GDraw(s[0], s[1], e[0], e[1], width, arc[:3] if arc else None, self.dark, **a)]
+        for d in draws:                    # a straight stroke that is a pad becomes a capsule (GerberLayer.pads)
+            self.spend(1, 2 if d.arc or not _padlike(d, False) else 2 + 2 * _CIRCLE_N)
+        self.target[2].extend(draws)
 
     def close_contour(self):
         if self.contour and len(self.contour) >= 3:
@@ -915,7 +932,7 @@ class _Parser:
             return
         self.close_contour()
         a = self.attrs()
-        self.spend(len(self.region), sum(map(len, self.region)))
+        self.spend(len(self.region), 0)                # their vertices were spent as the contours grew
         for pts in self.region:
             arr = np.asarray(pts, float)
             pad = _pad_from(arr, kind="region", dark=self.dark, shapes=[(True, arr)], **a)
@@ -957,9 +974,10 @@ def _mapped(o, fn, flip: bool):
     return pad
 
 
-def parse_gerber(text: str, name: str = "") -> GerberLayer:
-    """One Gerber file's text as a GerberLayer (its function from its X2 attributes or, failing that, its name)."""
-    la = _Parser(name).parse(text)
+def parse_gerber(text: str, name: str = "", budget: _Budget | None = None) -> GerberLayer:
+    """One Gerber file's text as a GerberLayer (its function from its X2 attributes or, failing that, its name);
+    `budget` is shared by the files of a set (read_gerbers), else the file's own."""
+    la = _Parser(name, budget).parse(text)
     if not la.function:
         fn = classify(name)
         if fn:
@@ -1125,6 +1143,7 @@ def read_gerbers(path) -> GerberSet:
     else:
         raise FileNotFoundError(f"no such file or directory: {os.fspath(path)}")
     gs = GerberSet(path=os.fspath(path))
+    budget = _Budget()                             # what the set's files expand to, together
     gs.skipped = [(name, "macOS metadata, not a Gerber file") for name, _ in files if _apple(name)]
     files = [(name, data) for name, data in files if not _apple(name)]
     jobs: dict[str, str] = {}
@@ -1154,7 +1173,7 @@ def read_gerbers(path) -> GerberSet:
                 label = "an inner copper" if kind == "copper" else f"a {_KIND_WORDS.get(kind, kind)}"
                 gs.skipped.append((name, f"not read: {label} layer ({fn}), which the check does not use"))
                 continue
-            la = parse_gerber(_decode(data), name)
+            la = parse_gerber(_decode(data), name, budget)
             if la.source in ("", "name") and jobs.get(Path(name).name):
                 la.function, la.source = jobs[Path(name).name], "job"
                 la.kind, la.side = function_kind(la.function)
@@ -1172,7 +1191,8 @@ def read_gerbers(path) -> GerberSet:
 
 def read_gerber_text(texts: dict[str, str]) -> GerberSet:
     """A GerberSet from {file name: Gerber text} (tests, and callers that hold the files in memory)."""
-    return GerberSet(path="", layers=[parse_gerber(t, n) for n, t in texts.items()])
+    budget = _Budget()
+    return GerberSet(path="", layers=[parse_gerber(t, n, budget) for n, t in texts.items()])
 
 
 # ------------------------------------------------------------------------------------------------------- board side

@@ -425,6 +425,54 @@ def test_untrusted_files_cannot_expand_without_bound():
     assert len(one(MM + "%ADD10C,0.5*%%SRX30Y30I1.0J1.0*%D10*X0Y0D03*%SR*%M02*").flashes) == 900
 
 
+def _peak(fn):
+    """(fn(), or the GerberError it raised; the peak of the memory Python allocated meanwhile, in MB)."""
+    import tracemalloc
+    tracemalloc.start()
+    try:
+        out = fn()
+    except gb.GerberError as e:
+        out = e
+    peak = tracemalloc.get_traced_memory()[1] / 1e6
+    tracemalloc.stop()
+    return out, peak
+
+
+def test_the_budget_counts_what_arcs_apertures_pads_and_a_whole_set_expand_to(tmp_path, monkeypatch):
+    """Each of these once got past the budget (or stayed outside it) and took gigabytes from a few kilobytes: a
+    region's arcs (sampled before the region closed), a profile's arcs (sampled for its extent), many apertures of a
+    large macro, strokes that are pads (each a capsule), and a set of files each within its own budget. Each is now
+    a GerberError as soon as the budget is spent (the budget made small here, so that the test stays small)."""
+    monkeypatch.setattr(gb, "MAX_VERTICES", 200_000)
+    region = MM + "%ADD10C,0.1*%D10*G75*G36*X0Y0D02*G03*" + "X0Y0I500000000J0D01*" * 1000 + "G01*G37*M02*"
+    err, peak = _peak(lambda: one(region, "r.gtl"))
+    assert isinstance(err, gb.GerberError) and "expands to more than" in str(err) and peak < 100, peak
+    circles = "".join(f"X{k}000000Y0D02*X{k}000000Y0I500000000J0D01*" for k in range(200))
+    prof = one(MM + "%TF.FileFunction,Profile,NP*%%ADD10C,0.1*%D10*G75*G03*" + circles + "M02*", "p.gm1")
+    box, peak = _peak(prof.bbox)
+    assert box == pytest.approx((0.0, -500.0, 1199.0, 500.0), abs=1e-6) and peak < 5, peak
+    from jlcplace.report import gerber_outline
+    lines, peak = _peak(lambda: gerber_outline(gb.GerberSet("", [prof]), gb.OriginCheck(origin=(0.0, 0.0))))
+    assert len(lines) == 400 and sum(map(len, lines)) < 200_000 and peak < 100, peak
+    monkeypatch.setattr(gb, "MAX_VERTICES", 1_000_000)
+    macro = "%AMBIG*" + "".join(f"5,1,4000,{k},0,1,0*" for k in range(14)) + "%"
+    with pytest.raises(gb.GerberError, match="expands to more than"):
+        one(MM + macro + "".join(f"%ADD{10 + k}BIG*%" for k in range(30)) + "M02*", "a.gtl")
+    monkeypatch.setattr(gb, "MAX_VERTICES", 10_000)
+    with pytest.raises(gb.GerberError, match="expands to more than"):
+        one(MM + "%TA.AperFunction,SMDPad,CuDef*%%ADD10C,0.1*%%TD*%D10*"
+            + "".join(f"X{k}000000Y0D02*X{k}000000Y1000000D01*" for k in range(200)) + "M02*", "s.gtl")
+    monkeypatch.setattr(gb, "MAX_VERTICES", 10_000_000)
+    monkeypatch.setattr(gb, "MAX_OBJECTS", 10_000)
+    z = tmp_path / "sr.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        for k in range(4):                                     # 9900 flashes each: within one file's budget
+            zf.writestr(f"x{k}-F_Cu.gtl", "%TF.FileFunction,Copper,L1,Top*%" + MM
+                        + "%ADD10R,0.1X0.1*%D10*%SRX99Y100I0.2J0.2*%X0Y0D03*%SR*%M02*")
+    with pytest.raises(gb.GerberError, match=r"x1-F_Cu.gtl: .*expands to more than"):
+        gb.read_gerbers(z)
+
+
 def test_only_the_layers_the_check_uses_are_read(tmp_path):
     """Outer copper, paste, the profile and files nothing names are parsed; inner copper, mask, legend and drawings
     (named by their attributes, the job file or their names) are listed as not read, whatever they hold."""

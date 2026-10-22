@@ -947,12 +947,14 @@ def gerber_outline(gerbers, check) -> list[list[tuple[float, float]]] | None:
     """The Gerbers' board outline (the centre lines of their profile layer's strokes) in the board frame, through the
     map gerber.gerber_origin found (check: its OriginCheck); None when the set has no profile layer or the check no
     origin. `gerbers` is a GerberSet or a path gerber.read_gerbers takes."""
-    from .gerber import GerberSet, gerber_to_board, read_gerbers
+    from .gerber import MAX_PRIMITIVE, GerberSet, gerber_to_board, read_gerbers
     gs = gerbers if isinstance(gerbers, GerberSet) else read_gerbers(gerbers)
     if check is None or check.origin is None or gs.outline is None:
         return None
-    return [[gerber_to_board(q, check.origin, check.flip, check.scale) for q in d.points()]
-            for d in gs.outline.draws] or None
+    draws = gs.outline.draws
+    most = max(1, min(MAX_PRIMITIVE, 100_000 // max(1, len(draws))))    # many arcs: each drawn coarser
+    return [[gerber_to_board(q, check.origin, check.flip, check.scale) for q in d.points(most)]
+            for d in draws] or None
 
 
 def _rings(lines, tol: float = 0.01) -> list[list]:

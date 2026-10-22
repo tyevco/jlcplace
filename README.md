@@ -458,8 +458,9 @@ report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON and ch
   (INT1 / INT2, CC1 / CC2, 1IN+ / 2IN+), are not compared, so a swap between them is not seen.
 * `--gerbers` reads the outer copper, paste and profile layers, not the Excellon drill files, and tries plain shifts,
   mirrors, a half turn and the inch / mm mix-ups: a set turned by a quarter turn, or scaled otherwise, is reported as
-  not this board's. Gerber files are untrusted: one that would expand (step and repeat, blocks, macros) past a million
-  objects or ten million vertices is bad input. The common offset needs 60 % of the rows (and 3) displaced alike, and
+  not this board's. Gerber files are untrusted: a set whose files would expand together (step and repeat, blocks,
+  macros, apertures, the points of arcs) past a million objects or ten million vertices is bad input, and so is one
+  that exhausts the memory. The common offset needs 60 % of the rows (and 3) displaced alike, and
   at most 10 % in place; rows wrong each in their own way are judged one by one.
 
 ## Data and licensing

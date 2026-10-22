@@ -88,6 +88,18 @@ def test_gerbers_from_the_cpls_origin_are_clean_and_named_in_the_header(made, ca
     assert "**Origin:** the Gerbers' (0, 0) is this CPL's origin" in (t / "c.md").read_text(encoding="utf-8")
 
 
+def test_gerbers_that_run_out_of_memory_are_bad_input(made, capsys, monkeypatch):
+    """What the expansion budget does not foresee and exhausts the memory is bad input (exit 3) naming --gerbers, not
+    an internal error."""
+    import jlcplace.cli
+
+    def exhausted(path):
+        raise MemoryError()
+    monkeypatch.setattr(jlcplace.cli, "read_gerbers", exhausted)
+    code, out, err = run(capsys, "check", made.board, made.out, "--gerbers", made.aux, *offline(made))
+    assert code == 3 and f"--gerbers {made.aux}: the files expand past this machine's memory" in err, err
+
+
 def test_a_cpl_from_another_origin_than_the_gerbers_is_red_first_with_the_shift_and_the_fix(made, capsys):
     """The most common failure: Gerbers plotted from the page origin, the CPL from the drill/place origin. Every row
     is red, from the Gerbers' origin, as JLC reads them; the first line says why, by how much and what to do."""

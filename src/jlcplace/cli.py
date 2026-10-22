@@ -233,6 +233,9 @@ def _gerbers(args, board, rows=None):
         raise BadInput(f"--gerbers {path}: no such file or directory") from None
     except (OSError, ValueError) as e:         # GerberError is a ValueError naming the file and the block
         raise BadInput(f"--gerbers {path}: {e}") from None
+    except MemoryError:                        # what the expansion budget did not foresee: bad input all the same
+        raise BadInput(f"--gerbers {path}: the files expand past this machine's memory: not a plot of a board") \
+            from None
     chk = gerber_origin(board, gs, edge=report.board_outline(args.board))
     og = jlc_origin(chk)
     if og is not None:
