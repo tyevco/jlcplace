@@ -244,8 +244,10 @@ def pinout_text(diffs, n=4) -> str   # "pad 2 is S on the LCSC part, D on the bo
   where a pad is, not what it is; a regulator's tab is often its output). A name split at '/' also gives its parts
   joined (P0.00/XL1 is P0.00_XL1). Synonyms include VO ~ VOUT, VI ~ VIN, IN ~ VIN, OUT ~ VOUT, Input ~ VIN, Output ~
   VOUT, VSS ~ GND. `compare_names`, for comparing only: ANODE (+) ~ IN+, CATHODE (-) ~ IN-, V+ ~ VDD, V- / VEE ~ GND,
-  R- ~ RK (an RGB LED's cathodes); names equal up to an index agree when only one side numbers it (DP1 / D+, 1IN+ /
-  +) and are unknown when both do, differently (CC1 / CC2, 1IN+ / 2IN+); G against GND is unknown. `kicad_hash`
+  R- ~ RK (an RGB LED's cathodes); an op-amp's signed inputs VIN+, +IN, IN1+, +IN1, INA+ (units A-D are 1-4) read as
+  1IN+ (IN+ without a unit), split supplies VCC+ / VS+ / +VS as VDD and VCC- / VS- / -VS as GND (a plain VIN stays a
+  regulator's input); names equal up to an index agree when only one side numbers it (DP1 / D+, 1IN+ / +) and are
+  unknown when both do, differently (CC1 / CC2, 1IN+ / 2IN+); G against GND is unknown. `kicad_hash`
   keeps the tokens the database keys were made with (location names as GND, no joined parts), so they do not move.
 * `kicad_positive_pad`: from the pin functions or pad numbers (A, K, +, -), else KiCad's library convention for its
   own diode / LED (pad 1 = cathode) and polarised capacitor (pad 1 = +) libraries. `ee_positive_pad`: the pad a

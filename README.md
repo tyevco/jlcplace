@@ -317,10 +317,10 @@ the KiCad pin functions of the pads they land on. Names that are a permutation o
 another pin's function) with no placement known to wire it better (one that permutes no names and agrees with more of
 them) are red, status `pinout`, in the fit and in the check, whatever the correction says: no rotation wires that part
 right. Other name differences are yellow when most of the names disagree, else a message. The two libraries' spellings
-are read as one: Input / VI, Output / VO, VCC / V+, GND / VSS / V-, 1IN+ / + (an op-amp's input), R- / RK, DP1 / D+
-(an index only one side has), P0.00_XL1 / P0.00/XL1; G against GND (a gate, or a crystal's ground) is not compared,
-and names that say where a pad is, not what it is (TAB, EP, PAD, THERMAL: a regulator's tab is often its output), say
-nothing. Names swapped between pads of one net, and a two-terminal part's names (its polarity, decided by the + mark
+are read as one: Input / VI, Output / VO, VCC / V+, GND / VSS / V-, 1IN+ / IN1+ / INA+ / VIN+ / +IN / + (an op-amp's
+input), VCC+ / VS+ / V+ and VCC- / -VS / V- (split supplies), R- / RK, DP1 / D+ (an index only one side has),
+P0.00_XL1 / P0.00/XL1; G against GND (a gate, or a crystal's ground) is not compared, and names that say where a pad
+is, not what it is (TAB, EP, PAD, THERMAL: a regulator's tab is often its output), say nothing. Names swapped between pads of one net, and a two-terminal part's names (its polarity, decided by the + mark
 and the pad numbers), are not a pinout.
 
 **The bottom-side caveat.** JLC does not document how it reads a bottom-side rotation. The reading jlcplace uses,

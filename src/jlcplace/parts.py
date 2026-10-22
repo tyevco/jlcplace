@@ -118,13 +118,34 @@ def _split(t: str) -> tuple[str, str]:
     return _alike(stem), f"{m.group(1)}.{m.group(3)}" if m.group(1) or m.group(3) else ""
 
 
+#: an op-amp's input with its sign before or after it, V and a unit (number, or A-D) optional: VIN+, +IN, IN1+, INA-
+_OPAMP_INPUT = re.compile(r"([+-])V?IN([A-D]|\d+)?|V?IN([A-D]|\d+)?([+-])")
+#: a split supply's rail: VCC+, VS+, +VS, VDD+ (positive), VCC-, VS-, -VS (negative)
+_SIGNED_SUPPLY = re.compile(r"([+-])V(?:CC|DD|S)|V(?:CC|DD|S)([+-])")
+
+
+def _signed(t: str) -> str:
+    """An op-amp input or a split supply as compared: VIN+, +IN, IN1+ (unit 1), INA+ (unit A = 1) as [unit]IN+; VCC+,
+    VS+, +VS as VDD and VCC-, VS-, -VS as GND, as V+ and V- are. A plain VIN (a regulator's input) stays."""
+    m = _OPAMP_INPUT.fullmatch(t)
+    if m:
+        unit = m.group(2) or m.group(3) or ""
+        return f"{'ABCD'.index(unit) + 1 if unit in ('A', 'B', 'C', 'D') else unit}IN{m.group(1) or m.group(4)}"
+    m = _SIGNED_SUPPLY.fullmatch(t)
+    if m:
+        return "VDD" if (m.group(1) or m.group(2)) == "+" else "GND"
+    return t
+
+
 def compare_names(a: frozenset, b: frozenset) -> int:
     """+1 agree, -1 disagree, 0 unknown: a side uninformative; equal up to an index both sides number differently
     (CC1 vs CC2, P1.01 vs P1.03, 1IN+ vs 2IN+), which is how libraries differ on symmetric connectors and units; or
     G against GND (a gate, or KiCad's crystal ground). Equal up to an index only one side has agree (DP1 vs D+: a
-    USB-C's D+ of port 1; 1IN+ vs +: an op-amp's input of unit 1)."""
+    USB-C's D+ of port 1; 1IN+ vs +: an op-amp's input of unit 1). An op-amp's inputs and supplies compare in one
+    spelling (_signed: VIN+, IN1+ and INA+ are 1IN+ or IN+, VCC+ is V+)."""
     if not a or not b:
         return 0
+    a, b = frozenset(map(_signed, a)), frozenset(map(_signed, b))
     ca, cb = {_alike(t) for t in a}, {_alike(t) for t in b}
     if ca & cb:
         return 1

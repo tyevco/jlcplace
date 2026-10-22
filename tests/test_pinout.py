@@ -75,6 +75,19 @@ def test_pin_diffs_tell_a_permutation_from_other_names():
         "pad 2 (EasyEDA pad 4) is VOUT on the LCSC part, VI on the board"
 
 
+def test_op_amp_inputs_and_split_supplies_read_in_every_spelling():
+    """EasyEDA's op-amp records spell their inputs VIN+, +IN, IN1+ or INA+ and their supplies VCC+ / VCC-, VS+ / -VS;
+    KiCad's symbols say + / - and V+ / V-. Unit indices still tell units apart; a plain VIN is a regulator's input."""
+    def c(a, b):
+        return compare_names(name_tokens(a), name_tokens(b))
+    for a, b in (("VIN+", "+"), ("VIN-", "-"), ("+IN", "+"), ("-IN", "-"), ("IN1+", "+"), ("+IN1", "+"),
+                 ("INA+", "+"), ("INB-", "2IN-"), ("IN1-", "1IN-"), ("VCC+", "V+"), ("VS+", "V+"), ("+VS", "VDD"),
+                 ("VCC-", "V-"), ("VS-", "V-"), ("-VS", "V-"), ("VCC-/GND", "V-")):
+        assert c(a, b) == 1, (a, b)
+    assert c("IN1+", "IN2+") == 0 and c("INA+", "1IN+") == 1 and c("INB+", "1IN+") == 0
+    assert c("VIN+", "-") == -1 and c("VCC+", "V-") == -1 and c("VIN", "+") == -1 and c("VIN", "VI") == 1
+
+
 # ------------------------------------------------------------------------------------------------------- fit
 
 def test_a_permuted_pinout_is_red_in_the_fit():
@@ -343,6 +356,33 @@ LM358_KICAD = [(str(k + 1), -1.905 + 1.27 * (k % 4) if k < 4 else 1.905 - 1.27 *
                 1.95, name, f"N{k + 1}") for k, name in enumerate(("~", "-", "+", "V-", "+", "-", "~", "V+"))]
 LM358_EE = [(n, x, y, w, h, name) for (n, x, y, w, h, _, _), name in zip(LM358_KICAD, (
     "1OUT", "1IN-", "1IN+", "GND", "2IN+", "2IN-", "2OUT", "VCC"))]
+# an MCP6001T-I/OT (EasyEDA: VOUT, VSS, VIN+, VIN-, VDD) in SOT-23-5, on KiCad's MCP6001-OT (~, V-, +, -, V+) and on
+# its MCP6001U / LMV321 symbol (+, V-, -, ~, V+): the classic SOT-23-5 op-amp mix-up
+SOT235 = [("1", -1.1, -0.95), ("2", -1.1, 0.0), ("3", -1.1, 0.95), ("4", 1.1, 0.95), ("5", 1.1, -0.95)]
+MCP6001_EE = [(n, x, y, 0.6, 1.0, name) for (n, x, y), name in zip(SOT235, ("VOUT", "VSS", "VIN+", "VIN-", "VDD"))]
+
+
+def sot235(names):
+    return [(n, x, y, 0.6, 1.0, name, f"N{n}") for (n, x, y), name in zip(SOT235, names)]
+
+
+def soic(names):
+    """A SOIC's pads (pad 1 bottom left, counter-clockwise), each on its own net, with these pin functions."""
+    h = len(names) // 2
+    return [(str(k + 1), 1.27 * ((k if k < h else 2 * h - 1 - k) - (h - 1) / 2), 2.7 if k < h else -2.7, 0.6, 1.95,
+             name, f"N{k + 1}") for k, name in enumerate(names)]
+
+
+def named(kicad, names):
+    return [(n, x, y, w, h, name) for (n, x, y, w, h, _, _), name in zip(kicad, names)]
+
+
+# a TL074 or LM324 (EasyEDA: OUT1, IN1-, IN1+, VCC+, ..., VCC-) on KiCad's TL074 / LM324, and an NE5532 (VCC-/GND)
+QUAD_KICAD = soic(("~", "-", "+", "V+", "+", "-", "~", "~", "-", "+", "V-", "+", "-", "~"))
+QUAD_EE = named(QUAD_KICAD, ("OUT1", "IN1-", "IN1+", "VCC+", "IN2+", "IN2-", "OUT2", "OUT3", "IN3-", "IN3+", "VCC-",
+                             "IN4+", "IN4-", "OUT4"))
+NE5532_KICAD = soic(("~", "-", "+", "V-", "+", "-", "~", "V+"))
+NE5532_EE = named(NE5532_KICAD, ("OUT1", "IN1-", "IN1+", "VCC-/GND", "IN2+", "IN2-", "OUT2", "VCC+"))
 # the signal pins of a USB-C receptacle: EasyEDA's DP1 / DN1 / DP2 / DN2 against KiCad's D+ / D-
 USBC = [("B8", "SBU2", "SBU2"), ("A5", "CC1", "CC1"), ("B7", "D-", "DM"), ("A6", "D+", "DP"), ("A7", "D-", "DM"),
         ("B6", "D+", "DP"), ("A8", "SBU1", "SBU1"), ("B5", "CC2", "CC2")]
@@ -353,8 +393,11 @@ USBC_EE = [(n, -1.75 + 0.5 * k, -2.47, 0.3, 1.3, {"D+": "DP", "D-": "DN"}.get(na
 
 
 @pytest.mark.parametrize("kicad, ee, a, b", [(TO252_KICAD, TO252_EE, "1", "3"), (LM358_KICAD, LM358_EE, "4", "8"),
-                                             (USBC_KICAD, USBC_EE, "A6", "A7")],
-                         ids=["regulator VI/VO", "op-amp supplies", "USB-C D+/D-"])
+                                             (USBC_KICAD, USBC_EE, "A6", "A7"), (QUAD_KICAD, QUAD_EE, "2", "3"),
+                                             (NE5532_KICAD, NE5532_EE, "4", "8"),
+                                             (sot235(("~", "V-", "+", "-", "V+")), MCP6001_EE, "3", "4")],
+                         ids=["regulator VI/VO", "op-amp supplies", "USB-C D+/D-", "TL074 IN1-/IN1+",
+                              "NE5532 VCC+/VCC-", "MCP6001 VIN+/VIN-"])
 def test_a_permutation_spelled_otherwise_by_the_two_libraries_is_red(kicad, ee, a, b):
     """The libraries spell the pins differently (Input / VI, GND / V-, VCC / V+, DP1 / D+), which says nothing: the
     right board is green. With two of the board's pins swapped (their nets follow their names), the LCSC part sits
@@ -363,6 +406,15 @@ def test_a_permutation_spelled_otherwise_by_the_two_libraries_is_red(kicad, ee, 
     assert row == GREEN and fit != RED, msgs
     fit, row, status, msgs = judged(*part_and_record(swap_names(kicad, a, b), ee))
     assert (fit, row, status) == (RED, RED, "pinout"), msgs
+
+
+def test_an_op_amp_on_the_symbol_of_the_other_sot23_5_pinout_is_red():
+    """An MCP6001T-I/OT (VOUT, VSS, VIN+, VIN-, VDD) on KiCad's MCP6001U symbol (+, V-, -, ~, V+): its output drives
+    the board's + input and its + input sits on the - net. No placement of a SOT-23-5 helps: red pinout, not the
+    green 'names differ' message the right board would get."""
+    fit, row, status, msgs = judged(*part_and_record(sot235(("+", "V-", "-", "~", "V+")), MCP6001_EE))
+    assert (fit, row, status) == (RED, RED, "pinout"), msgs
+    assert "pad 3 is VIN+ on the LCSC part, - on the board" in msgs[0]
 
 
 def test_a_few_names_spelled_otherwise_are_a_message_not_a_verdict():
@@ -401,7 +453,9 @@ def test_a_few_names_spelled_otherwise_are_a_message_not_a_verdict():
      [(n, x, y, 0.6, 1.0, name) for n, x, y, name in (("1", -1.1, -0.95, "IN+"), ("2", -1.1, 0.0, "VSS"),
                                                       ("3", -1.1, 0.95, "IN-"), ("4", 1.1, 0.95, "OUT"),
                                                       ("5", 1.1, -0.95, "VDD"))]),
-], ids=["RGB LED", "crystal", "nRF52", "LMV321"])
+    # the MCP6001, TL074 / LM324 and NE5532 spellings on KiCad's own symbols
+    (sot235(("~", "V-", "+", "-", "V+")), MCP6001_EE), (QUAD_KICAD, QUAD_EE), (NE5532_KICAD, NE5532_EE),
+], ids=["RGB LED", "crystal", "nRF52", "LMV321", "MCP6001", "TL074", "NE5532"])
 def test_correct_parts_whose_libraries_spell_pins_otherwise_stay_green(kicad, ee):
     """No noise: the libraries' vocabularies differ ('-' for K, G for GND, '_' for '/', V+ for VDD) on parts that are
     wired right; their rows stay green, with no checklist item asking for the pinout."""
