@@ -1,0 +1,13 @@
+{
+  "name": "jlcplace",
+  "version": "0.1.0",
+  "description": "Check and correct KiCad pick-and-place (CPL) files and prepare JLCPCB assembly orders with the jlcplace CLI",
+  "author": {
+    "name": "tyevco",
+    "url": "https://github.com/tyevco"
+  },
+  "homepage": "https://github.com/tyevco/jlcplace/tree/main/plugins/jlcplace",
+  "repository": "https://github.com/tyevco/jlcplace",
+  "license": "MIT",
+  "keywords": ["kicad", "jlcpcb", "pcb", "pick-and-place", "cpl", "assembly", "electronics", "easyeda"]
+}
