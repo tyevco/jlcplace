@@ -4,6 +4,8 @@ Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards. jlcplace p
 exactly where each CPL row tells JLC to put it, and reports which KiCad pad and net every EasyEDA pad lands on. It
 works on a CPL from any tool, and it can write the CPL itself.
 
+Documentation: [tyevco.github.io/jlcplace](https://tyevco.github.io/jlcplace/)
+
 ```
 $ jlcplace check board.kicad_pcb board-CPL.csv
 jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
