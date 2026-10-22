@@ -189,6 +189,31 @@ def test_a_permuted_pinout_is_red_in_the_check(stored):
     assert all(lnd.kicad_number == lnd.ee_number for lnd in res.landings)
 
 
+SOT236 = [("1", -1.1375, -0.95), ("2", -1.1375, 0.0), ("3", -1.1375, 0.95), ("4", 1.1375, 0.95), ("5", 1.1375, 0.0),
+          ("6", 1.1375, -0.95)]
+
+
+def test_a_row_by_pad_numbers_is_red_when_no_placement_wires_the_part_right():
+    """A SOT-23-6 whose LCSC pinout is permuted under both placements that land its pads (half a turn puts 4 names
+    right and swaps FB and GND; 0 deg puts none right): the fit is red. A CPL row from another tool that places it
+    by its pad numbers is red too, never yellow "another placement puts them on their own functions": none does."""
+    kicad = ("SW", "GND", "FB", "EN", "VIN", "BST")
+    pads = [Pad(n, x, y, 1.325, 0.6, net=f"/{name}", pin_name=name) for (n, x, y), name in zip(SOT236, kicad)]
+    part = Part("U3", TOP, 120.0, 80.0, 0.0, footprint="Package_TO_SOT_SMD:SOT-23-6", lcsc="C7722", pads=pads)
+    ee = EEFootprint("C7722", "SOT-23-6", pads=[EEPad(n, x, y, 1.325, 0.6) for n, x, y in SOT236],
+                     pin_names={"1": "EN", "2": "VIN", "3": "BST", "4": "SW", "5": "FB", "6": "GND"})
+    c = fit_part(part, ee)
+    assert c.verdict == RED and has(c, "pinout differs from the symbol"), c.reasons
+    numbers = row_for(part, Correction(0.0))
+    for corr in (c, None):
+        res = check_row(part, numbers, ee, ORIGIN, corr=corr)
+        assert (res.status, res.verdict) == ("pinout", RED), res.messages
+        assert not any("another placement puts them" in m for m in res.messages), res.messages
+    from jlcplace.model import Board
+    run = check(Board("t.kicad_pcb", ORIGIN, [part]), [numbers], {"U3": Resolved(part, ee, c, "fit")})
+    assert run.exit_code() == 2
+
+
 def test_names_that_differ_without_a_permutation_make_the_row_yellow():
     """A bipolar transistor (B/E/C) where the symbol is a MOSFET (G/D/S): the names say nothing about the placement,
     but the part may well be the wrong one. Yellow in the fit (as before) and now in the row."""
@@ -258,6 +283,117 @@ def test_a_stored_pinout_correction_keeps_the_row_red_without_the_record():
     res = run.results[0]
     assert res.verdict == RED and res.messages[0].startswith("red because the stored auto correction is red: pinout "
                                                              "differs from the symbol"), res.messages
+
+
+# ------------------------------------------------------------------------------------------------------- vocabularies
+
+def part_and_record(kicad, ee, ref="U1"):
+    """A KiCad part, kicad = [(number, x, y, w, h, pin function, net)], and an EasyEDA record, ee = [(number, x, y,
+    w, h, pin name)]: the two libraries' spellings of one part (hand-made: no EasyEDA data in the repository)."""
+    pads = [Pad(n, x, y, w, h, net=net, pin_name=name) for n, x, y, w, h, name, net in kicad]
+    part = Part(ref, TOP, 120.0, 80.0, 0.0, footprint="Test:Test", lcsc="C1", pads=pads)
+    rec = EEFootprint("C1", "TEST", pads=[EEPad(n, x, y, w, h) for n, x, y, w, h, _ in ee],
+                      pin_names={n: name for n, _, _, _, _, name in ee})
+    return part, rec
+
+
+def judged(part, ee):
+    """(fit verdict, row verdict, row status, row messages) of jlcplace's own row."""
+    c = fit_part(part, ee)
+    res = check_row(part, row_for(part, c), ee, ORIGIN, corr=c)
+    return c.verdict, res.verdict, res.status, res.messages
+
+
+def swap_names(spec, a, b):
+    """The KiCad side with the functions (and nets: the schematic wires by name) of pads a and b exchanged."""
+    out = [list(q) for q in spec]
+    ia, ib = (next(i for i, q in enumerate(out) if q[0] == n) for n in (a, b))
+    out[ia][5:], out[ib][5:] = out[ib][5:], out[ia][5:]
+    return [tuple(q) for q in out]
+
+
+# a SOT-223 LDO on KiCad's SOT-223-3_TabPin2 (the tab is pad 2, VO): EasyEDA numbers the tab 4 and names it TAB;
+# EasyEDA's footprint is drawn half a turn from KiCad's
+SOT223_KICAD = [("1", -3.15, -2.3, 2.0, 1.5, "GND", "GND"), ("2", -3.15, 0.0, 2.0, 1.5, "VO", "+3V3"),
+                ("3", -3.15, 2.3, 2.0, 1.5, "VI", "+5V"), ("2", 3.15, 0.0, 2.0, 3.8, "VO", "+3V3")]
+SOT223_EE = [("1", 3.15, 2.3, 2.0, 1.5, "GND"), ("2", 3.15, 0.0, 2.0, 1.5, "Out"), ("3", 3.15, -2.3, 2.0, 1.5, "In"),
+             ("4", -3.15, 0.0, 2.0, 3.8, "TAB")]
+# a TO-263 1086 LDO whose tab (EasyEDA pad 4, "EP") is its output, on KiCad's TO-263-3_TabPin2 with LM1084 names
+TO263_KICAD = [("1", 5.13, 2.54, 4.5, 1.5, "GND", "GND"), ("2", 5.13, 0.0, 4.5, 1.5, "VO", "+3V3"),
+               ("3", 5.13, -2.54, 4.5, 1.5, "VI", "+5V"), ("2", -5.13, 0.0, 10.0, 10.8, "VO", "+3V3")]
+TO263_EE = [("1", -5.13, -2.54, 4.5, 1.5, "GND"), ("2", -5.13, 0.0, 4.5, 1.5, "Vout"),
+            ("3", -5.13, 2.54, 4.5, 1.5, "Vin"), ("4", 5.13, 0.0, 10.0, 10.8, "EP")]
+
+
+@pytest.mark.parametrize("kicad, ee", [(SOT223_KICAD, SOT223_EE), (TO263_KICAD, TO263_EE)], ids=["SOT-223", "TO-263"])
+def test_a_tab_named_by_where_it_is_is_not_a_ground(kicad, ee):
+    """TAB, EP, PAD, EPAD and THERMAL say where a pad is, not what it is: a regulator's tab is often its output. A
+    correct board is not red (as before the pinout check), and the CPL is written."""
+    fit, row, status, msgs = judged(*part_and_record(kicad, ee))
+    assert fit != RED and row == GREEN and status == "ok", msgs
+
+
+# a TO-252 regulator, EasyEDA's names spelled out (Input, Output) against KiCad's VI, VO
+TO252_KICAD = [("1", 3.3, 2.28, 2.8, 1.3, "VI", "VIN"), ("3", 3.3, -2.28, 2.8, 1.3, "VO", "VOUT"),
+               ("2", -3.3, 0.0, 6.5, 6.0, "GND", "GND")]
+TO252_EE = [("1", -3.3, -2.28, 2.8, 1.3, "Input"), ("3", -3.3, 2.28, 2.8, 1.3, "Output"),
+            ("2", 3.3, 0.0, 6.5, 6.0, "GND")]
+# an LM358 in SOIC-8: EasyEDA's 1OUT, 1IN-, 1IN+, GND, ... against KiCad's ~, -, +, V-, ...
+LM358_KICAD = [(str(k + 1), -1.905 + 1.27 * (k % 4) if k < 4 else 1.905 - 1.27 * (k - 4), 2.7 if k < 4 else -2.7, 0.6,
+                1.95, name, f"N{k + 1}") for k, name in enumerate(("~", "-", "+", "V-", "+", "-", "~", "V+"))]
+LM358_EE = [(n, x, y, w, h, name) for (n, x, y, w, h, _, _), name in zip(LM358_KICAD, (
+    "1OUT", "1IN-", "1IN+", "GND", "2IN+", "2IN-", "2OUT", "VCC"))]
+# the signal pins of a USB-C receptacle: EasyEDA's DP1 / DN1 / DP2 / DN2 against KiCad's D+ / D-
+USBC = [("B8", "SBU2", "SBU2"), ("A5", "CC1", "CC1"), ("B7", "D-", "DM"), ("A6", "D+", "DP"), ("A7", "D-", "DM"),
+        ("B6", "D+", "DP"), ("A8", "SBU1", "SBU1"), ("B5", "CC2", "CC2")]
+USBC_KICAD = [(n, -1.75 + 0.5 * k, -2.47, 0.3, 1.3, name, net) for k, (n, name, net) in enumerate(USBC)]
+USBC_EE = [(n, -1.75 + 0.5 * k, -2.47, 0.3, 1.3, {"D+": "DP", "D-": "DN"}.get(name, name)
+            + ("1" if name[0] == "D" and n[0] == "A" else "2" if name[0] == "D" else ""))
+           for k, (n, name, _) in enumerate(USBC)]
+
+
+@pytest.mark.parametrize("kicad, ee, a, b", [(TO252_KICAD, TO252_EE, "1", "3"), (LM358_KICAD, LM358_EE, "4", "8"),
+                                             (USBC_KICAD, USBC_EE, "A6", "A7")],
+                         ids=["regulator VI/VO", "op-amp supplies", "USB-C D+/D-"])
+def test_a_permutation_spelled_otherwise_by_the_two_libraries_is_red(kicad, ee, a, b):
+    """The libraries spell the pins differently (Input / VI, GND / V-, VCC / V+, DP1 / D+), which says nothing: the
+    right board is green. With two of the board's pins swapped (their nets follow their names), the LCSC part sits
+    on the wrong nets: red pinout, never the same yellow as the right board."""
+    fit, row, status, msgs = judged(*part_and_record(kicad, ee))
+    assert row == GREEN and fit != RED, msgs
+    fit, row, status, msgs = judged(*part_and_record(swap_names(kicad, a, b), ee))
+    assert (fit, row, status) == (RED, RED, "pinout"), msgs
+
+
+@pytest.mark.parametrize("kicad, ee", [
+    # KiCad's LED_RGB names (A, RK, GK, BK) against EasyEDA's (+, R-, G-, B-)
+    ([("1", 0.33, -0.52, 0.36, 0.69, "A", "VDD"), ("2", 0.33, 0.52, 0.36, 0.69, "RK", "R"),
+      ("3", -0.33, 0.52, 0.36, 0.69, "GK", "G"), ("4", -0.33, -0.52, 0.36, 0.69, "BK", "B")],
+     [("1", 0.33, -0.52, 0.36, 0.69, "+"), ("2", 0.33, 0.52, 0.36, 0.69, "R-"), ("3", -0.33, 0.52, 0.36, 0.69, "G-"),
+      ("4", -0.33, -0.52, 0.36, 0.69, "B-")]),
+    # a crystal with ground pins: KiCad's Crystal_GND24 calls them G
+    ([("1", -1.1, 0.85, 1.4, 1.2, "1", "X1"), ("2", 1.1, 0.85, 1.4, 1.2, "G", "GND"),
+      ("3", 1.1, -0.85, 1.4, 1.2, "3", "X2"), ("4", -1.1, -0.85, 1.4, 1.2, "G", "GND")],
+     [("1", -1.1, 0.85, 1.4, 1.2, "OSC1"), ("2", 1.1, 0.85, 1.4, 1.2, "GND"), ("3", 1.1, -0.85, 1.4, 1.2, "OSC2"),
+      ("4", -1.1, -0.85, 1.4, 1.2, "GND")]),
+    # an nRF52's names, '_' in EasyEDA where KiCad has '/'
+    ([(str(k + 1), -1.0 + 0.5 * k, 0.0, 0.25, 0.8, name.replace("_", "/"), f"N{k}") for k, name in enumerate(
+        ("P0.00_XL1", "P0.01_XL2", "P0.02_AIN0", "P0.03_AIN1", "VDD"))],
+     [(str(k + 1), -1.0 + 0.5 * k, 0.0, 0.25, 0.8, name) for k, name in enumerate(
+         ("P0.00_XL1", "P0.01_XL2", "P0.02_AIN0", "P0.03_AIN1", "VDD"))]),
+    # an LMV321: IN+ / VSS / IN- / OUT / VDD against KiCad's + / V- / - / ~ / V+
+    ([(n, x, y, 0.6, 1.0, name, f"N{n}") for n, x, y, name in (("1", -1.1, -0.95, "+"), ("2", -1.1, 0.0, "V-"),
+                                                             ("3", -1.1, 0.95, "-"), ("4", 1.1, 0.95, "~"),
+                                                             ("5", 1.1, -0.95, "V+"))],
+     [(n, x, y, 0.6, 1.0, name) for n, x, y, name in (("1", -1.1, -0.95, "IN+"), ("2", -1.1, 0.0, "VSS"),
+                                                      ("3", -1.1, 0.95, "IN-"), ("4", 1.1, 0.95, "OUT"),
+                                                      ("5", 1.1, -0.95, "VDD"))]),
+], ids=["RGB LED", "crystal", "nRF52", "LMV321"])
+def test_correct_parts_whose_libraries_spell_pins_otherwise_stay_green(kicad, ee):
+    """No noise: the libraries' vocabularies differ ('-' for K, G for GND, '_' for '/', V+ for VDD) on parts that are
+    wired right; their rows stay green, with no checklist item asking for the pinout."""
+    fit, row, status, msgs = judged(*part_and_record(kicad, ee))
+    assert row == GREEN and status == "ok" and not any("pinout" in m for m in msgs), msgs
 
 
 # ------------------------------------------------------------------------------------------------------- real records

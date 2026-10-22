@@ -27,7 +27,7 @@ from jlcplace import gerber as gb
 from jlcplace.board import load_board
 from jlcplace.convention import board_to_cpl, library_to_board
 from jlcplace.cpl import read_cpl
-from jlcplace.model import BOTTOM, TOP, Board, CplRow, Pad, Part
+from jlcplace.model import BOTTOM, RED, TOP, YELLOW, Board, CplRow, Pad, Part
 
 DIAL = Path(os.environ.get("JLCPLACE_DIAL_ME_SPINNER", "/home/user/dial-me-spinner")) / "hardware"
 JLC = Path(os.environ.get("JLCPLACE_TEST_EASYEDA", "/tmp/claude-0/-home-user-dial-me-spinner/"
@@ -357,6 +357,80 @@ def test_directories_zips_job_files_and_other_files(tmp_path):
         gb.read_gerbers(tmp_path / "absent")
 
 
+def _patched_zip(path: Path, src: Path, *, flags: int = 0, method: int | None = None) -> Path:
+    """A copy of zip `src` whose members' central directory entries carry other flag bits or another compression
+    method: what an encrypted zip (bit 0) or a Deflate64 one (method 9, Windows Explorer and 7-Zip) says."""
+    data = bytearray(src.read_bytes())
+    i = data.find(b"PK\x01\x02")
+    while i >= 0:
+        data[i + 8:i + 10] = (int.from_bytes(data[i + 8:i + 10], "little") | flags).to_bytes(2, "little")
+        if method is not None:
+            data[i + 10:i + 12] = method.to_bytes(2, "little")
+        i = data.find(b"PK\x01\x02", i + 4)
+    path.write_bytes(bytes(data))
+    return path
+
+
+def test_a_zip_that_cannot_be_read_is_a_gerber_error(tmp_path):
+    """An encrypted zip, or one compressed with a method Python cannot read (Deflate64), names the file and why: bad
+    input, not a crash."""
+    z = tmp_path / "set.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("gerbers/b-F_Cu.gtl", "%TF.FileFunction,Copper,L1,Top*%" + MM + "%ADD10C,1*%D10*X0Y0D03*")
+    for name, kw, why in (("enc.zip", {"flags": 1}, "encrypted"), ("d64.zip", {"method": 9}, "not supported")):
+        with pytest.raises(gb.GerberError, match=rf"{name}: gerbers/b-F_Cu.gtl: cannot be read \(.*{why}"):
+            gb.read_gerbers(_patched_zip(tmp_path / name, z, **kw))
+
+
+def test_untrusted_files_cannot_expand_without_bound():
+    """A few bytes of step and repeat, macro primitives with a huge vertex or ring count, an outline that names
+    more points than it gives, nested blocks: each would take gigabytes; each is a GerberError at once."""
+    blocks = MM + "%ADD10C,0.5*%%ABD11*%D10*" + "".join(f"X{k}000000Y0D03*" for k in range(20)) + "%AB*%"
+    for n in range(12, 17):                        # each block flashes the one before 20 times: 20^6 flashes
+        blocks += f"%ABD{n}*%D{n - 1}*" + "".join(f"X0Y{k}000000D03*" for k in range(20)) + "%AB*%"
+    cases = {"sr": (MM + "%ADD10C,0.5*%%SRX3000Y3000I1.0J1.0*%D10*X0Y0D03*%SR*%M02*", "expands to more than"),
+             "poly": (MM + "%AMBIG*5,1,$1,0,0,1,0*%%ADD10BIG,50000000*%D10*X0Y0D03*M02*", "polygon of 50000000"),
+             "P": (MM + "%ADD10P,1X50000000*%D10*X0Y0D03*M02*", "polygon of 5e"),
+             "outline": (MM + "%AMOUT*4,1,$1,0,0,0,0*%%ADD10OUT,300000000*%D10*X0Y0D03*M02*", "outline of 300000000"),
+             "moire": (MM + "%AMMO*6,0,0,1,0,0,100000000,0,0,0*%%ADD10MO*%D10*X0Y0D03*M02*", "moire of 1e"),
+             "blocks": (blocks + "D16*X0Y0D03*M02*", "expands to more than")}
+    for name, (text, why) in cases.items():
+        with pytest.raises(gb.GerberError, match=why):
+            one(text, f"{name}.gtl")
+    # a large but real step and repeat (a panel of 30 x 30) still reads
+    assert len(one(MM + "%ADD10C,0.5*%%SRX30Y30I1.0J1.0*%D10*X0Y0D03*%SR*%M02*").flashes) == 900
+
+
+def test_only_the_layers_the_check_uses_are_read(tmp_path):
+    """Outer copper, paste, the profile and files nothing names are parsed; inner copper, mask, legend and drawings
+    (named by their attributes, the job file or their names) are listed as not read, whatever they hold."""
+    bomb = "%SRX3000Y3000I1.0J1.0*%D10*X0Y0D03*%SR*%M02*"            # never parsed: it would be refused
+    files = {"b-F_Cu.gtl": "%TF.FileFunction,Copper,L1,Top*%" + MM + "%ADD10C,1*%D10*X0Y0D03*",
+             "b-In1_Cu.g1": "%TF.FileFunction,Copper,L2,Inr*%" + MM + "%ADD10C,1*%" + bomb,
+             "b-F_Silkscreen.gto": MM + "%ADD10C,1*%" + bomb, "b-F_Mask.gts": "G04 #@! TF.FileFunction,Soldermask,Top*\n"
+             + MM + "%ADD10C,1*%" + bomb, "odd.gbr": MM + "%ADD10C,1*%D10*X0Y0D03*",
+             "x.gbr": MM + "%ADD10C,1*%" + bomb,
+             "b-job.gbrjob": '{"FilesAttributes": [{"Path": "x.gbr", "FileFunction": "AssemblyDrawing,Top"}]}'}
+    for n, t in files.items():
+        (tmp_path / n).write_text(t, encoding="utf-8")
+    gs = gb.read_gerbers(tmp_path)
+    assert [(la.name, la.kind) for la in gs.layers] == [("b-F_Cu.gtl", "copper"), ("odd.gbr", "other")]
+    skipped = dict(gs.skipped)
+    assert skipped["b-In1_Cu.g1"] == "not read: an inner copper layer (Copper,L2,Inr), which the check does not use"
+    assert skipped["b-F_Mask.gts"].startswith("not read: a mask layer (Soldermask,Top)")
+    assert skipped["b-F_Silkscreen.gto"].startswith("not read: a legend layer") and "x.gbr" in skipped
+
+
+def test_a_directory_whose_gerbers_are_in_a_subdirectory_names_it(tmp_path):
+    (tmp_path / "fab" / "gerbers").mkdir(parents=True)
+    (tmp_path / "fab" / "gerbers" / "b-F_Cu.gtl").write_text(MM + "%ADD10C,1*%D10*X0Y0D03*", encoding="utf-8")
+    (tmp_path / "fab" / "readme.txt").write_text("ordered 2026-10-01", encoding="utf-8")
+    gs = gb.read_gerbers(tmp_path / "fab")
+    assert not gs.layers and dict(gs.skipped)["gerbers/"] == "a directory of Gerber files: pass it as the path"
+    res = gb.gerber_origin(synthetic_board(), gs)
+    assert res.messages == ["no Gerber files were read: the Gerbers are in gerbers/ (pass it as the path)"]
+
+
 # --------------------------------------------------------------------------------------------------- synthetic boards
 
 def synthetic_board(seed: int = 7, origin=(37.5, 112.25)) -> Board:
@@ -387,27 +461,38 @@ def synthetic_board(seed: int = 7, origin=(37.5, 112.25)) -> Board:
 
 
 def write_set(board: Board, origin, *, flip=(1, -1), scale=1.0, unit="MM", x2=True, drop=0.0, extra=0, seed=3,
-              move=None, paste=True) -> gb.GerberSet:
+              move=None, paste=True, pads=None, nets=False, stem="syn", paste_origin=None) -> gb.GerberSet:
     """A KiCad-like Gerber set of the board plotted from `origin`: g = scale . F . (b - origin), F = diag(flip);
     `unit` is what the files say (coordinates are written in mm whatever it says, to make a scaled set); `drop` a
-    fraction of the pads left out, `extra` vias and fiducials added; `move` = {ref: (dx, dy)} moves parts first."""
+    fraction of the pads left out, `extra` vias and fiducials added; `move` = {ref: (dx, dy)} moves parts first;
+    `pads` the BoardPads to plot (default gb.board_pads(board)); `nets` adds TO.N; `stem` names the files;
+    `paste_origin` plots the paste from another origin."""
+    return gb.read_gerber_text(set_texts(board, origin, flip=flip, scale=scale, unit=unit, x2=x2, drop=drop,
+                                         extra=extra, seed=seed, move=move, paste=paste, pads=pads, nets=nets,
+                                         stem=stem, paste_origin=paste_origin))
+
+
+def set_texts(board: Board, origin, *, flip=(1, -1), scale=1.0, unit="MM", x2=True, drop=0.0, extra=0, seed=3,
+              move=None, paste=True, pads=None, nets=False, stem="syn", paste_origin=None) -> dict[str, str]:
+    """write_set's files, {name: text}."""
     rng = random.Random(seed)
     texts = {}
     for side, ext in ((TOP, "F"), (BOTTOM, "B")):
         for layer in ("Cu", "Paste") if paste else ("Cu",):
+            at = paste_origin if layer == "Paste" and paste_origin is not None else origin
             out = [f"%TF.FileFunction,{'Copper,L1,Top' if side == TOP else 'Copper,L2,Bot'}*%" if layer == "Cu"
                    else f"%TF.FileFunction,Paste,{'Top' if side == TOP else 'Bot'}*%", "%FSLAX46Y46*%",
                    f"%MO{unit}*%", "%TA.AperFunction,SMDPad,CuDef*%" if layer == "Cu" else "", "%ADD10C,0.400000*%",
                    "%TD*%", "%TA.AperFunction,ViaPad*%", "%ADD11C,0.600000*%", "%TD*%", "D10*"]
-            for bp in gb.board_pads(board):
+            for bp in gb.board_pads(board) if pads is None else pads:
                 if bp.side not in (side, "both") or (layer == "Paste" and bp.kind == "tht") or rng.random() < drop:
                     continue
                 bx, by = bp.x, bp.y
                 if move and bp.ref in move:
                     bx, by = bx + move[bp.ref][0], by + move[bp.ref][1]
-                g = (scale * flip[0] * (bx - origin[0]), scale * flip[1] * (by - origin[1]))
+                g = (scale * flip[0] * (bx - at[0]), scale * flip[1] * (by - at[1]))
                 if x2 and layer == "Cu":
-                    out.append(f"%TO.P,{bp.ref},{bp.number}*%")
+                    out.append(f"%TO.P,{bp.ref},{bp.number}*%" + (f"%TO.N,{bp.net}*%" if nets and bp.net else ""))
                 out.append(f"X{round(g[0] * 1e6)}Y{round(g[1] * 1e6)}D03*")
                 if x2 and layer == "Cu":
                     out.append("%TD*%")
@@ -416,8 +501,16 @@ def write_set(board: Board, origin, *, flip=(1, -1), scale=1.0, unit="MM", x2=Tr
                 for _ in range(extra):
                     out.append(f"X{round(rng.uniform(-200, 200) * 1e6)}Y{round(rng.uniform(-200, 200) * 1e6)}D03*")
             out.append("M02*")
-            texts[f"syn-{ext}_{layer}.gbr"] = "\n".join(out)
-    return gb.read_gerber_text(texts)
+            texts[f"{stem}-{ext}_{layer}.gbr"] = "\n".join(out)
+    return texts
+
+
+def profile(box, origin, name: str = "syn-Edge_Cuts.gbr") -> dict[str, str]:
+    """A KiCad-like profile layer: the board-frame rectangle box = (x0, y0, x1, y1) plotted from `origin`."""
+    x0, y0, x1, y1 = box
+    pts = [board_to_cpl(q, origin) for q in ((x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0))]
+    return {name: "%TF.FileFunction,Profile,NP*%" + MM + "%ADD10C,0.100000*%D10*" + "".join(
+        f"X{round(x * 1e6)}Y{round(y * 1e6)}D0{2 if k == 0 else 1}*" for k, (x, y) in enumerate(pts)) + "M02*"}
 
 
 def test_board_pads_are_the_convention_s_board_frame():
@@ -476,6 +569,34 @@ def test_voting_survives_missing_pads_fiducials_vias_and_other_copper():
     assert res.origin == pytest.approx((3.0, 4.0), abs=1e-6)
 
 
+def led_matrix(n: int, pitch: float, origin, package: str = "D3.0mm") -> Board:
+    """n x n LEDs at one pitch from (105, 105), a periodic layout: KiCad's THT LED_D3.0mm, or SMD 0603 and
+    WS2812B-5050 lands."""
+    pads = {"D3.0mm": [Pad("1", 0, 0, 1.8, 1.8, kind="tht"), Pad("2", 2.54, 0, 1.8, 1.8, shape="circle", kind="tht")],
+            "0603": [Pad("1", -0.7875, 0, 0.875, 0.95), Pad("2", 0.7875, 0, 0.875, 0.95)],
+            "5050": [Pad(str(k + 1), x, y, 1.5, 1.0) for k, (x, y) in enumerate(
+                ((-2.45, -1.6), (-2.45, 1.6), (2.45, 1.6), (2.45, -1.6)))]}[package]
+    parts = [Part(f"D{r * n + c + 1}", TOP, 105 + pitch * c, 105 + pitch * r, 0.0, pads=[Pad(**vars(p)) for p in pads])
+             for r in range(n) for c in range(n)]
+    return Board(path="matrix.kicad_pcb", origin=origin, parts=parts, source="test", origin_kind="aux")
+
+
+@pytest.mark.parametrize("n, pitch, origin, package", [
+    (16, 5.08, (100.0, 100.0), "D3.0mm"), (24, 5.08, (50.0, 150.0), "D3.0mm"), (24, 5.08, (100.0, 190.0), "D3.0mm"),
+    (24, 7.62, (100.0, 100.0), "D3.0mm"), (16, 5.08, (100.0, 100.0), "0603"), (24, 5.08, (50.0, 150.0), "0603"),
+    (16, 10.0, (100.0, 190.0), "5050"), (24, 10.0, (100.0, 100.0), "5050")])
+def test_voting_finds_a_round_origin_on_a_periodic_layout(n, pitch, origin, package):
+    """A periodic layout plotted from a round origin with no pin attributes (kicad-cli --no-netlist): the true
+    translation lies on a vote-cell boundary, so its votes split over up to four cells, while a translation one pitch
+    off collects one cell's worth. The origin is the one that matches every pad, never one a pitch away."""
+    board = led_matrix(n, pitch, origin, package)
+    res = gb.gerber_origin(board, write_set(board, origin, x2=False))
+    assert res.origin == pytest.approx(origin, abs=1e-6) and res.method == "pad-voting"
+    assert res.matched == res.board_pads and res.verdict == "matches" and not res.stale and res.ok
+    page = gb.gerber_origin(board, write_set(board, (0.0, 0.0), x2=False))   # the page origin is round too
+    assert page.origin == pytest.approx((0.0, 0.0), abs=1e-6) and page.named == "absolute"
+
+
 @pytest.mark.parametrize("x2", [True, False])
 def test_mirrored_and_scaled_sets_are_found(x2):
     """A set whose y axis is not inverted, one mirrored left to right, one turned half a turn, and sets whose
@@ -497,33 +618,161 @@ def test_mirrored_and_scaled_sets_are_found(x2):
     assert "25.4 times too small" in res.messages[-1]
 
 
-def test_a_set_without_one_side_is_incomplete_not_stale():
-    """Bottom files left out of the set: the top is checked, and the missing side is named instead of calling the
-    Gerbers older than the board."""
+def test_pads_on_the_far_copper_are_compared_on_the_side_the_gerbers_plot_them():
+    """A bottom edge-mount connector whose pads 6-9 are on the top copper and paste (KiCad's DSUB EdgeMount
+    footprints): fresh Gerbers have them on the top, and are not stale."""
+    board = synthetic_board()
+    pads = [Pad(str(n + 1), -5.54 + 2.77 * n, -1.5, 1.0, 3.0, cu=BOTTOM) for n in range(5)]
+    pads += [Pad(str(n + 6), -4.155 + 2.77 * n, -1.5, 1.0, 3.0, copper=False, cu=TOP) for n in range(4)]
+    j = Part("J99", BOTTOM, 70.0, 100.0, 90.0, pads=pads)
+    board.parts.append(j)
+    plot = [p for p in gb.board_pads(board) if p.ref != "J99"]
+    plot += [gb.BoardPad("J99", p.number, p.cu, *library_to_board(j, (p.x, p.y)), 1.0, 1.0) for p in pads]
+    assert [(p.side, p.copper) for p in gb.board_pads(board) if p.ref == "J99"] == [(BOTTOM, True)] * 5 + [
+        (TOP, True)] * 4
+    for x2 in (True, False):
+        res = gb.gerber_origin(board, write_set(board, board.origin, pads=plot, x2=x2))
+        assert res.ok and not res.extra and not res.missing and res.matched == res.board_pads, res.messages
+
+
+def test_a_set_without_one_side_is_red_and_one_without_its_paste_yellow():
+    """Bottom files left out of the set: the top is checked (not stale), and the missing side is a problem of its
+    own, red, naming the side and the files read: JLC could not make the bottom. A side with copper but no paste is
+    yellow: its SMD pads would get no paste."""
     board = synthetic_board()
     gs = write_set(board, board.origin)
     gs.layers = [la for la in gs.layers if la.side == TOP]
     res = gb.gerber_origin(board, gs)
     assert res.verdict == "matches" and res.belongs and not res.stale and res.coverage == 1.0
-    assert res.smd_pads == sum(1 for p in gb.board_pads(board) if p.side == TOP and p.kind == "smd")
-    assert "no bottom copper or paste layer" in res.messages[-1]
+    assert res.compared == sum(1 for p in gb.board_pads(board) if p.side in (TOP, "both"))
+    bottom = sum(1 for p in gb.board_pads(board) if p.side == BOTTOM and p.kind == "smd")
+    assert res.problems == [(RED, BOTTOM, f"the Gerbers have no bottom copper or paste layer: the board's {bottom} "
+                                         "bottom SMD pads are on no layer of the set (read: syn-F_Cu.gbr, "
+                                         "syn-F_Paste.gbr)")]
+    gs = write_set(board, board.origin)
+    gs.layers = [la for la in gs.layers if (la.kind, la.side) != ("paste", BOTTOM)]
+    res = gb.gerber_origin(board, gs)
+    assert res.ok and res.problems == [(YELLOW, BOTTOM, f"the Gerbers have no bottom paste layer: the board's "
+                                                        f"{bottom} bottom SMD pads would get no solder paste")]
 
 
-def test_stale_and_foreign_gerbers():
+def tht_board(n: int = 12, seed: int = 5, keep: int | None = None) -> Board:
+    """Plated through-hole headers only (no SMD pad); `keep` of them where seed 5 puts them, the rest elsewhere."""
+    rng, other = random.Random(seed), random.Random(seed + 1)
+    parts = []
+    for i in range(n):
+        x, y = rng.uniform(20, 120), rng.uniform(60, 140)
+        if keep is not None and i >= keep:
+            x, y = other.uniform(20, 120), other.uniform(60, 140)
+        parts.append(Part(f"J{i}", TOP, x, y, rng.choice([0, 90]), pads=[
+            Pad(str(k + 1), 0, k * 2.54, 1.7, 1.7, shape="circle", kind="tht", cu="both") for k in range(6)]))
+    return Board(path="tht.kicad_pcb", origin=(30.0, 150.0), parts=parts, source="test", origin_kind="aux")
+
+
+@pytest.mark.parametrize("x2", [True, False])
+def test_plated_through_hole_pads_count_for_the_coverage(x2):
+    """A board without SMD pads: another board's Gerbers that share most of its headers, and Gerbers plotted before
+    a header moved, are not this board's as it is; its plated pads with no Gerber pad are named."""
+    board = tht_board()
+    res = gb.gerber_origin(board, write_set(board, board.origin, x2=x2))
+    assert res.ok and res.compared == 72 and res.coverage == 1.0
+    res = gb.gerber_origin(board, write_set(tht_board(keep=8), board.origin, x2=x2))
+    assert not res.ok and res.stale and res.coverage == pytest.approx(48 / 72)
+    assert sorted({m.split(":")[0] for m in res.missing}) == ["J10", "J11", "J8", "J9"]
+    res = gb.gerber_origin(board, write_set(board, board.origin, x2=x2, move={"J3": (20.0, 0.0)}))
+    assert res.stale and sorted(res.missing) == [f"J3:{k}" for k in range(1, 7)]
+    assert "6 of 72 board pads have no Gerber pad at their place (J3:1" in res.messages[-1]
+
+
+def test_pin_attributes_that_name_another_pad_or_net_make_the_set_stale():
+    """Parts of one footprint swapped after plotting: every pad still has a Gerber pad, but the Gerbers' pin
+    attributes put R2's pins on the board's R1 (the copper routes the old nets). A net changed alike."""
     board = synthetic_board()
-    o = board.origin
-    res = gb.gerber_origin(board, write_set(board, o, move={"R4": (0.5, 0.0), "Q2": (0.0, -1.0)}))
-    assert res.verdict == "matches" and res.belongs and res.stale and not res.ok
-    assert sorted({m.split(":")[0] for m in res.missing}) == ["Q2", "R4"]
-    assert len(res.extra) == 2 + 10                                       # their paste pads, where they were
-    assert "older than the board" in res.messages[-1] and "12 of 242 board SMD pads" in res.messages[-1]
-    assert "Q2:1" in res.messages[-1] and "12 Gerber paste pads lie on no board pad" in res.messages[-1]
-    other = synthetic_board(seed=99)
-    res = gb.gerber_origin(board, write_set(other, o, x2=False))
-    assert res.origin is None and res.verdict == "unknown" and not res.belongs
-    assert "are these the board's Gerbers?" in res.messages[-1]
-    res = gb.gerber_origin(board, write_set(other, o, x2=True))          # refs alike, pads elsewhere
-    assert "pin attributes do not fit the board" in res.messages[0] and res.verdict == "unknown"
+    for part in board.parts:
+        for pad in part.pads:
+            pad.net = f"N-{part.ref}-{pad.number}"
+    twin = synthetic_board()
+    rs = [p for p in twin.parts if p.ref.startswith("R")]
+    a, b = next((p, q) for p in rs for q in rs if p.ref < q.ref and p.layer == q.layer)
+    (a.x, a.y, a.angle), (b.x, b.y, b.angle) = (b.x, b.y, b.angle), (a.x, a.y, a.angle)
+    for part in twin.parts:
+        for pad in part.pads:
+            pad.net = f"N-{part.ref}-{pad.number}"
+    res = gb.gerber_origin(board, write_set(board, board.origin, nets=True))
+    assert res.ok and not res.mismatched
+    res = gb.gerber_origin(board, write_set(twin, board.origin, nets=True))
+    assert res.matched == res.board_pads and not res.missing and res.stale and not res.ok
+    assert f"{a.ref}:1 is where the Gerbers have {b.ref}:1" in res.mismatched and len(res.mismatched) == 4
+    assert "the Gerbers' pin attributes name other pads than the board's at their place (4 pads: " \
+           f"{res.mismatched[0]}" in res.messages[-1]
+    twin = synthetic_board()
+    for part in twin.parts:
+        for pad in part.pads:
+            pad.net = f"N-{part.ref}-{pad.number}"
+    twin.part("U1").pads[0].net = "OLD"
+    res = gb.gerber_origin(board, write_set(twin, board.origin, nets=True))
+    assert res.stale and res.mismatched == ["U1:1 is on net OLD in the Gerbers, N-U1-1 on the board"]
+
+
+def test_two_plots_in_one_set_are_a_problem():
+    """KiCad never deletes an old plot: a folder holding a renamed project's old plot beside the new one has two of
+    every layer, and JLC may build from either, though nothing in the old one is extra."""
+    board = synthetic_board()
+    old = synthetic_board()
+    old.parts = [p for p in old.parts if p.ref != "R4"]
+    texts = {**set_texts(board, board.origin), **set_texts(old, board.origin, stem="old")}
+    res = gb.gerber_origin(board, gb.read_gerber_text(texts))
+    assert not res.stale and res.problems == [(RED, "", "the Gerbers hold more than one plot (2 top copper layers: "
+                                                        "old-F_Cu.gbr, syn-F_Cu.gbr; 2 top paste layers: "
+                                                        "old-F_Paste.gbr, syn-F_Paste.gbr; 2 bottom copper layers: "
+                                                        "old-B_Cu.gbr, syn-B_Cu.gbr; 2 bottom paste layers: "
+                                                        "old-B_Paste.gbr, syn-B_Paste.gbr): JLC may make the board "
+                                                        "from either; send one plot")]
+
+
+def test_an_outline_plotted_from_another_origin_is_a_problem():
+    """The profile layer from another origin than the copper: JLC's preview judges the parts against it."""
+    board = synthetic_board()
+    edge = [[(15.0, 55.0), (125.0, 55.0), (125.0, 145.0), (15.0, 145.0), (15.0, 55.0)]]
+    box = (15.0, 55.0, 125.0, 145.0)
+    for at, want in ((board.origin, []), ((0.0, 0.0), [(RED, "", "the board outline (syn-Edge_Cuts.gbr) was plotted "
+                                                       "from another origin than the copper, board (0, 0) (the page "
+                                                       "origin): it lies (+37.500, -112.250) mm off the board's "
+                                                       "Edge.Cuts; plot every layer from one origin")])):
+        gs = gb.read_gerber_text({**set_texts(board, board.origin), **profile(box, at)})
+        assert gb.gerber_origin(board, gs, edge=edge).problems == want
+        without = gb.gerber_origin(board, gs).problems          # a snapshot: no Edge.Cuts, the pads must be inside
+        assert without == ([] if not want else [(RED, "", "the board outline (syn-Edge_Cuts.gbr) lies away from the "
+                                                          "copper: 0% of the board's pads are inside it; plot every "
+                                                          "layer from one origin")])
+    gs = gb.read_gerber_text({**set_texts(board, board.origin), **profile((15.0, 55.0, 105.0, 145.0), board.origin)})
+    assert gb.gerber_origin(board, gs, edge=edge).problems == [(RED, "", "the board outline (syn-Edge_Cuts.gbr) is "
+                                                                         "not the board's Edge.Cuts: 90 x 90 mm "
+                                                                         "against 110 x 90 mm")]
+
+
+def test_messages_say_what_the_set_lacks_or_mixes():
+    """Copper files whose names say nothing (KiCad's French demos: Dessus, Dessous) are named, an empty paste layer
+    is not 'not named'; paste plotted from another origin than the copper is not 'older'; pin attributes that fit
+    only scaled (a coordinate format off by 10) say the scale."""
+    board = tht_board()
+    texts = {n.replace("syn-F_Cu", "Dessus").replace("syn-B_Cu", "Dessous"): t.replace(
+        "%TF.FileFunction,Copper,L1,Top*%", "").replace("%TF.FileFunction,Copper,L2,Bot*%", "")
+        for n, t in set_texts(board, board.origin, x2=False).items()}
+    res = gb.gerber_origin(board, gb.read_gerber_text(texts))
+    assert res.messages == ["the Gerbers have no copper or paste pads to compare (top copper: none; bottom copper: "
+                            "none; top paste: syn-F_Paste.gbr (0 pads); bottom paste: syn-B_Paste.gbr (0 pads); not "
+                            "named as a layer, with pads: Dessous.gbr (72 flashes), Dessus.gbr (72 flashes): name "
+                            "copper and paste files as KiCad does (-F_Cu, -B_Paste) or plot them with X2 attributes)"]
+    board = synthetic_board()
+    res = gb.gerber_origin(board, write_set(board, (0.0, 0.0), paste_origin=board.origin))
+    assert res.origin == pytest.approx((0.0, 0.0), abs=1e-6) and res.stale
+    assert res.messages[-1].startswith("the paste layers (syn-B_Paste.gbr, syn-F_Paste.gbr) were plotted from "
+                                       "another origin than the copper, board (37.5, 112.25) (the drill/place file "
+                                       "origin): plot every layer from one origin")
+    res = gb.gerber_origin(board, write_set(board, board.origin, scale=10.0))
+    assert res.origin is None and "the pin attributes fit the board scaled by 10 (" in res.messages[-1]
+    assert "a coordinate format (FS) that does not match the data?" in res.messages[-1]
 
 
 @pytest.mark.parametrize("x2", [True, False])
@@ -645,6 +894,10 @@ def test_released_gerbers_mirrored_and_with_the_wrong_unit(tmp_path):
         assert (res.flip, res.scale) == (("y", 1.0) if case == "mirrored" else ("none", pytest.approx(25.4)))
 
 
+RENAMED = {"tinytapeout-demo": ["J18:1 is on net GND in the Gerbers, unconnected-(J18-Pad1) on the board",
+                                 "J16:1 is on net out7 in the Gerbers, unconnected-(J16-Pad1) on the board"]}
+
+
 @pytest.mark.parametrize("board_path, gerbers, origin, cpl", THIRD_PARTY)
 def test_gerber_sets_other_tools_wrote(board_path, gerbers, origin, cpl):
     """Sets made by other tools and other KiCad versions: the origin they were plotted from, their layers named by
@@ -657,7 +910,9 @@ def test_gerber_sets_other_tools_wrote(board_path, gerbers, origin, cpl):
     assert {la.source for la in gs.layers if la.kind in ("copper", "paste")} <= {"x2", "comment"}
     res = gb.gerber_origin(board, gs)
     assert res.origin == pytest.approx(origin, abs=1e-3) and res.verdict == "matches", res.messages
-    assert res.coverage == 1.0 and res.belongs and not res.stale
+    assert res.coverage == 1.0 and res.belongs and not res.missing and not res.extra
+    # KiCad's tiny_tapeout demo changed after its fab outputs were plotted: two pins it now leaves unconnected
+    assert res.mismatched == RENAMED.get(board_path.stem, []) and res.stale == bool(res.mismatched)
     if cpl:
         rows = [r for r in read_cpl(cpl) if board.part(r.ref)]
         far = max(math.dist(board_to_cpl((board.part(r.ref).x, board.part(r.ref).y), res.origin), (r.x, r.y))

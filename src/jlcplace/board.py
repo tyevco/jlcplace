@@ -235,11 +235,17 @@ def _pcbnew_pad(pcbnew, pad, part: Part) -> Pad:
             for ch in chains:
                 rings.append([board_to_library(part, _mm2(ch.CPoint(k))) for k in range(ch.PointCount())])
         poly = _bridge(_clean_rings(rings))
+    cu = _outer(pad.IsOnLayer(pcbnew.F_Cu), pad.IsOnLayer(pcbnew.B_Cu)) if kind != "npth" else ""
     return Pad(number=pad.GetNumber(), x=rel.x / 1e6 + 0.0, y=s * rel.y / 1e6 + 0.0, w=size.x / 1e6, h=size.y / 1e6,
                angle=norm_angle(s * a), shape=shape, kind=kind,
                copper=kind == "tht" or (kind in ("smd", "connect") and on_side), net=pad.GetNetname(),
                pin_name=pad.GetPinFunction(), pin_type=pad.GetPinType(),
-               rr=pad.GetRoundRectRadiusRatio(layer) if shape in ("roundrect", "chamfered") else 0.0, poly=poly)
+               rr=pad.GetRoundRectRadiusRatio(layer) if shape in ("roundrect", "chamfered") else 0.0, poly=poly, cu=cu)
+
+
+def _outer(front: bool, back: bool) -> str:
+    """model.Pad.cu: the outer copper a pad has on the board as placed (a flipped footprint's layers are flipped)."""
+    return "both" if front and back else TOP if front else BOTTOM if back else ""
 
 
 # ------------------------------------------------------------------------------------------------------- S-expressions
@@ -454,10 +460,12 @@ def _sexpr_pad(c, part: Part, theta: float, nets: dict, err: float) -> Pad:
                            (_atoms(_kid(_kid(geo, "options") or [], "anchor")) or ["rect"])[0],
                            _kid(geo, "primitives") or [], err)
         poly = _bridge(_clean_rings([[_stored_to_library(u, lx, ly, psi, bottom) for u in r] for r in rings]))
+    both = bool(layers & {"*.Cu", "F&B.Cu"})
+    cu = _outer(both or "F.Cu" in layers, both or "B.Cu" in layers) if kind != "npth" else ""
     return Pad(number=number, x=lx, y=ly, w=w, h=h, angle=psi, shape=shape, kind=kind,
                copper=kind == "tht" or (kind in ("smd", "connect") and on_side), net=netname,
                pin_name=(_atoms(_kid(c, "pinfunction")) or [""])[0], pin_type=(_atoms(_kid(c, "pintype")) or [""])[0],
-               rr=rr, poly=poly)
+               rr=rr, poly=poly, cu=cu)
 
 
 def _stored_to_library(u, lx, ly, psi, bottom):

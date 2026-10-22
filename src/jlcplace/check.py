@@ -441,17 +441,24 @@ def _pinout(part: Part, ee: EEFootprint, placed, corr: Correction | None, as_cor
         return "", ("EasyEDA pin names on KiCad pads of other functions, on their own nets: " + pinout_text(diffs)
                     if diffs else ""), False
 
-    def score(ps) -> int:
-        return sum(compare_names(e.tokens, k.tokens) for e, k in ps)
+    def wires(c: Correction) -> bool:
+        """The placement library = R(rot) . ee + d lands every EasyEDA pad and permutes no pin names."""
+        through = []
+        for e, ep in zip(_ee_pads(ee), ee_pins):
+            p = _land(pads, ee_to_library(c, (e.x, e.y)), e.number)[0]
+            if p is None:
+                return False
+            through.append((ep, kicad[id(p)]))
+        return not any(d.kind == "swapped" for d in pin_diffs(through, ee_pins, kicad.values()))
 
-    # a two-terminal part's half turn always lands its pads the other way round: its names are its polarity
+    # a placement known to wire the part right: the correction's own, or one of its alternatives; a two-terminal
+    # part's half turn always lands its pads the other way round (its names are its polarity)
     better = polar2
     if corr is not None and not better:
-        own = [(ep, kicad[id(p)]) for e, ep in zip(_ee_pads(ee), ee_pins)
-               for p in [_land(pads, ee_to_library(corr, (e.x, e.y)), e.number)[0]] if p is not None]
-        better = (not corr.mirror and score(own) > score(pairs)) or any(
-            isinstance(a, dict) and not a.get("mirror") and a.get("names", -math.inf) > score(pairs)
-            for a in corr.alternatives)
+        known = ([corr] if not corr.mirror else []) + [
+            Correction(rot=a["rot"], dx=a["dx"], dy=a["dy"]) for a in corr.alternatives
+            if isinstance(a, dict) and not a.get("mirror") and all(k in a for k in ("rot", "dx", "dy"))]
+        better = any(wires(c) for c in known)
     e_pos, k_pos = ee_positive_pad(ee), kicad_positive_pad(part)
     on_pos = [norm_number(k.number) == k_pos[0] for e, k in pairs if norm_number(e.number) == e_pos] if k_pos else []
     if polar2 and on_pos and all(on_pos):

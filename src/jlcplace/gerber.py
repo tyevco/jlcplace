@@ -36,13 +36,14 @@ import math
 import os
 import re
 import zipfile
-from dataclasses import dataclass, field
+import zlib
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
 from .geom import pad_outline, point_in_polygon
-from .model import BOTTOM, TOP, Board, CplRow
+from .model import BOTTOM, RED, TOP, YELLOW, Board, CplRow
 
 #: board pads and Gerber pads closer than this (board mm) are the same pad
 MATCH_TOL = 0.02
@@ -52,10 +53,18 @@ ORIGIN_TOL = 0.01
 #: a board with fewer), land on Gerber pads
 MIN_FRACTION = 0.3
 MIN_MATCHED = 3
+#: the profile layer's box this close to the board's Edge.Cuts box (mm) is the board outline, from the same origin
+OUTLINE_TOL = 0.1
 #: Gerbers belong to the board when at least this fraction of its SMD pads have a Gerber pad at their place
 BELONGS = 0.5
-#: total uncompressed size read from a .zip (a zip bomb is bad input)
+#: total size read from a .zip (uncompressed: a zip bomb is bad input) or a directory
 MAX_ZIP = 512 * 1024 * 1024
+#: what one untrusted file may expand to (step and repeat, blocks, macros turn a few bytes into millions of objects):
+#: objects and outline vertices per file, vertices of one macro primitive (also moire rings) and of one aperture
+MAX_OBJECTS = 1_000_000
+MAX_VERTICES = 10_000_000
+MAX_PRIMITIVE = 4096
+MAX_APERTURE = 65536
 
 INCH = 25.4
 FLIPS = {"none": (1.0, -1.0), "y": (1.0, 1.0), "x": (-1.0, -1.0), "xy": (-1.0, 1.0)}
@@ -221,7 +230,7 @@ def _pad_from(poly, **kw) -> GPad:
     a = np.asarray(poly, float).reshape(-1, 2)
     x0, y0, x1, y1 = a[:, 0].min(), a[:, 1].min(), a[:, 0].max(), a[:, 1].max()
     return GPad(x=float(x0 + x1) / 2.0, y=float(y0 + y1) / 2.0, w=float(x1 - x0), h=float(y1 - y0),
-                poly=[(float(u), float(v)) for u, v in a], **kw)
+                poly=list(map(tuple, a.tolist())), **kw)
 
 
 # ------------------------------------------------------------------------------------------------------- geometry
@@ -284,7 +293,7 @@ def _arc_points(s, e, c, ccw: bool, full: bool = False) -> list[tuple[float, flo
     if full or abs(sweep) < 1e-12 and math.hypot(e[0] - s[0], e[1] - s[1]) < 1e-9:
         sweep = 2 * math.pi if ccw else -2 * math.pi
     step = 2 * math.acos(max(-1.0, 1 - _ARC_ERR / r)) if r > _ARC_ERR else math.pi / 2
-    n = max(1, math.ceil(abs(sweep) / min(step, math.pi / 8)))
+    n = min(MAX_PRIMITIVE, max(1, math.ceil(abs(sweep) / min(step, math.pi / 8))))   # a huge radius: coarser
     ts = [a0 + sweep * k / n for k in range(1, n)]
     k0, k1 = sorted((a0, a0 + sweep))
     ts += [q * math.pi / 2 for q in range(math.floor(k0 / (math.pi / 2)) + 1, math.ceil(k1 / (math.pi / 2)))]
@@ -399,15 +408,21 @@ def _macro_shapes(body: list[str], params: list[float]) -> list[tuple[bool, np.n
                                               arg(5))))
         elif code == 4:                                    # outline: exposure, n, x0, y0, ... xn, yn, rot
             n = int(round(arg(1)))
+            if not 0 < n <= min(MAX_PRIMITIVE, (len(a) - 2) // 2 - 1):
+                raise ValueError(f"an outline of {n} vertices with {max(0, len(a) - 3) // 2} points given")
             pts = np.array([[arg(2 + 2 * k), arg(3 + 2 * k)] for k in range(n + 1)], float)
             if len(pts) > 1 and np.allclose(pts[0], pts[-1]):
                 pts = pts[:-1]
             out.append((arg(0) > 0.5, _rotate(pts, arg(4 + 2 * n))))
         elif code == 5:                                    # polygon: exposure, n, x, y, diameter, rot
             n = max(3, int(round(arg(1))))
+            if n > MAX_PRIMITIVE:
+                raise ValueError(f"a polygon of {n} vertices")
             out.append((arg(0) > 0.5, _rotate(_circle(arg(2), arg(3), arg(4) / 2, n), arg(5))))
         elif code == 6:                                    # moire: x, y, D, ring, gap, rings, cross w, cross L, rot
             cx, cy, D, th, gap, nr, cw, cl, rot = (arg(i) for i in range(9))
+            if nr > MAX_PRIMITIVE:
+                raise ValueError(f"a moire of {nr:g} rings")
             r = D / 2
             for _ in range(max(0, int(round(nr)))):
                 if r <= 0:
@@ -473,6 +488,8 @@ def _standard_shapes(t: str, a: list[float]) -> list[tuple[bool, np.ndarray]]:
     if t == "O":
         return [(True, _obround(a[0], a[1]))] + hole(2)
     if t == "P":
+        if len(a) > 1 and a[1] > MAX_PRIMITIVE:
+            raise ValueError(f"a polygon of {a[1]:g} vertices")
         return [(True, _rotate(_circle(0.0, 0.0, a[0] / 2, max(3, int(round(a[1])))), a[2] if len(a) > 2 else 0.0))
                 ] + hole(3)
     raise KeyError(t)
@@ -511,9 +528,19 @@ class _Parser:
         self.offset = (0.0, 0.0)            # %OF
         self.sf = (1.0, 1.0)                # %SF
         self.block_no = 0
+        self.objects = self.vertices = 0    # spent of MAX_OBJECTS, MAX_VERTICES
 
     def fail(self, msg: str):
         raise GerberError(f"{self.name}: block {self.block_no}: {msg}")
+
+    def spend(self, objects: int, vertices: int):
+        """Count objects about to be stored against the file's budget: an untrusted file is refused before it
+        expands past MAX_OBJECTS objects or MAX_VERTICES outline vertices (a GerberError, not a MemoryError)."""
+        self.objects += objects
+        self.vertices += vertices
+        if self.objects > MAX_OBJECTS or self.vertices > MAX_VERTICES:
+            self.fail(f"expands to more than {MAX_OBJECTS} objects or {MAX_VERTICES} vertices (step and repeat, "
+                      "blocks or macros): not a plot of a board")
 
     # -------------------------------------------------------------------- top level
     def parse(self, text: str) -> GerberLayer:
@@ -639,6 +666,8 @@ class _Parser:
             width = lengths[0] if t in ("C", "P") else min(lengths[0], lengths[1])
         elif t in self.macros:
             shapes = [(d, p * u) for d, p in _macro_shapes(self.macros[t], params)]
+            if sum(len(p) for _, p in shapes) > MAX_APERTURE:
+                self.fail(f"aperture D{code} ({t}) has more than {MAX_APERTURE} vertices")
             width = 0.0
         else:
             self.fail(f"aperture D{code} uses the undefined macro {t!r}")
@@ -674,8 +703,10 @@ class _Parser:
     def close_sr(self):
         nx, ny, di, dj, marks = self.sr
         self.sr = None
-        for lst, mark in zip(self.target, marks):
-            base = lst[mark:]
+        bases = [lst[mark:] for lst, mark in zip(self.target, marks)]
+        self.spend((nx * ny - 1) * sum(map(len, bases)),
+                   (nx * ny - 1) * sum(len(o.poly) if isinstance(o, GPad) else 2 for b in bases for o in b))
+        for lst, base in zip(self.target, bases):
             for ix in range(nx):
                 for iy in range(ny):
                     if ix or iy:
@@ -830,6 +861,7 @@ class _Parser:
         a = self.attrs()
         a["function"] = ap.function
         pin_name = self.to.get("P", "").split(",")
+        self.spend(1, len(poly))
         pad = _pad_from(poly + np.asarray(at), kind="flash", aperture=ap.template, params=ap.params,
                         at=(float(at[0]), float(at[1])), dark=self.dark, shapes=shapes, **a)
         pad.pin_name = pin_name[2] if len(pin_name) > 2 else ""
@@ -846,6 +878,7 @@ class _Parser:
                 q[:, 1] = -q[:, 1]
             return _rotate(q * scale, rot) + np.asarray(at)
         flip = mirror in ("X", "Y")
+        self.spend(sum(map(len, ap.block)), sum(len(o.poly) if isinstance(o, GPad) else 2 for b in ap.block for o in b))
         for lst, objs in zip(self.target, ap.block):
             for o in objs:
                 o = _mapped(o, fn, flip)
@@ -859,6 +892,7 @@ class _Parser:
         a = self.attrs()
         a["function"] = self.ap.function
         width = self.ap.width * self.scale
+        self.spend(1, 2)
         if arc and arc[3]:                 # a full circle: two half arcs
             c = (arc[0], arc[1])
             m = (2 * c[0] - s[0], 2 * c[1] - s[1])
@@ -881,6 +915,7 @@ class _Parser:
             return
         self.close_contour()
         a = self.attrs()
+        self.spend(len(self.region), sum(map(len, self.region)))
         for pts in self.region:
             arr = np.asarray(pts, float)
             pad = _pad_from(arr, kind="region", dark=self.dark, shapes=[(True, arr)], **a)
@@ -889,7 +924,13 @@ class _Parser:
 
 
 def _moved(o, dx: float, dy: float):
-    return _mapped(o, lambda p: np.asarray(p, float).reshape(-1, 2) + (dx, dy), False)
+    """A copy of a GPad or GDraw moved by (dx, dy) (step and repeat: often hundreds of thousands of copies)."""
+    if isinstance(o, GDraw):
+        return replace(o, x1=o.x1 + dx, y1=o.y1 + dy, x2=o.x2 + dx, y2=o.y2 + dy,
+                       arc=(o.arc[0] + dx, o.arc[1] + dy, o.arc[2]) if o.arc else None)
+    return replace(o, x=o.x + dx, y=o.y + dy, poly=[(u + dx, v + dy) for u, v in o.poly],
+                   at=(o.at[0] + dx, o.at[1] + dy) if o.at else None,
+                   shapes=o.shapes if o.at else [(d, p + (dx, dy)) for d, p in o.shapes])
 
 
 def _mapped(o, fn, flip: bool):
@@ -1020,35 +1061,66 @@ def _what(name: str, data: bytes) -> str:
     return "other"
 
 
+_FUNCTION = re.compile(rb"(?:%TF\.FileFunction,|G04 #@! TF\.FileFunction,)([^*%]*)\*")
+#: the layers the check reads (others are listed as not read: parsing them costs time and is untrusted work)
+_KIND_WORDS = {"copper": "copper", "mask": "mask", "legend": "legend", "drillmap": "drill map",
+               "component": "component", "other": "drawing or other", "drill": "drill"}
+
+
+def _used(kind: str, side: str) -> bool:
+    return kind in ("copper", "paste") and side != "inner" or kind == "profile"
+
+
+def _head(f: Path) -> bytes:
+    with f.open("rb") as fh:
+        return fh.read(65536)
+
+
+def _read_zip(p: Path) -> list[tuple[str, bytes]]:
+    files = []
+    try:
+        with zipfile.ZipFile(p) as z:
+            infos = [i for i in z.infolist() if not i.is_dir()]
+            if sum(i.file_size for i in infos) > MAX_ZIP:
+                raise GerberError(f"{p.name}: more than {MAX_ZIP >> 20} MB uncompressed")
+            for i in sorted(infos, key=lambda i: i.filename):
+                try:
+                    files.append((i.filename, z.read(i)))
+                except (RuntimeError, NotImplementedError, zlib.error, EOFError, zipfile.BadZipFile) as e:
+                    # encrypted, Deflate64 (Windows Explorer, 7-Zip), corrupt
+                    raise GerberError(f"{p.name}: {i.filename}: cannot be read ({e})") from None
+    except zipfile.BadZipFile as e:
+        raise GerberError(f"{p.name}: not a zip file ({e})") from None
+    return files
+
+
 def read_gerbers(path) -> GerberSet:
     """The Gerber files of a directory (its files, not its subdirectories), of a .zip (every member), or one file.
     Files that are not Gerber (Excellon drill files, the job file, documents) are listed in `skipped`; a .gbrjob
-    job file names the functions of files that carry no X2 attributes. GerberError for a file that cannot be read
-    as Gerber."""
+    job file names the functions of files that carry no X2 attributes. Only the layers the check uses are parsed:
+    outer copper, paste, the profile, and files whose function nothing names; the others (inner copper, mask,
+    legend, drawings: named by their own TF.FileFunction or G04 #@! comment, the job file, or their name) are
+    listed in `skipped` unread. A directory that holds no Gerber files names its subdirectories that do.
+    GerberError for a file that cannot be read as Gerber, or a zip that cannot be read."""
     p = Path(path)
     files: list[tuple[str, bytes]] = []
+    subdirs: list[Path] = []
     if p.is_dir():
-        for q in sorted(p.iterdir()):
-            if q.is_file():
-                files.append((q.name, q.read_bytes()))
+        entries = sorted(p.iterdir())
+        subdirs = [q for q in entries if q.is_dir()]
+        if sum(q.stat().st_size for q in entries if q.is_file()) > MAX_ZIP:
+            raise GerberError(f"{p.name}: more than {MAX_ZIP >> 20} MB of files")
+        files = [(q.name, q.read_bytes()) for q in entries if q.is_file()]
     elif p.suffix.lower() == ".zip":
-        try:
-            with zipfile.ZipFile(p) as z:
-                infos = [i for i in z.infolist() if not i.is_dir()]
-                if sum(i.file_size for i in infos) > MAX_ZIP:
-                    raise GerberError(f"{p.name}: more than {MAX_ZIP >> 20} MB uncompressed")
-                for i in sorted(infos, key=lambda i: i.filename):
-                    files.append((i.filename, z.read(i)))
-        except zipfile.BadZipFile as e:
-            raise GerberError(f"{p.name}: not a zip file ({e})") from None
+        files = _read_zip(p)
     elif p.is_file():
         files.append((p.name, p.read_bytes()))
     else:
         raise FileNotFoundError(f"no such file or directory: {os.fspath(path)}")
     gs = GerberSet(path=os.fspath(path))
     jobs: dict[str, str] = {}
-    for name, data in files:
-        what = _what(name, data)
+    kinds = [_what(name, data) for name, data in files]
+    for (name, data), what in zip(files, kinds):
         if what == "job":
             try:
                 job = json.loads(_decode(data))
@@ -1056,17 +1128,29 @@ def read_gerbers(path) -> GerberSet:
                     jobs[Path(f.get("Path", "")).name] = f.get("FileFunction", "")
             except (ValueError, AttributeError, TypeError):
                 pass
+    for (name, data), what in zip(files, kinds):
+        if what == "job":
             gs.skipped.append((name, "Gerber job file"))
         elif what == "gerber":
-            gs.layers.append(parse_gerber(_decode(data), name))
+            m = _FUNCTION.search(data[:65536])
+            fn = _unescape(m.group(1).decode("latin-1")).strip() if m else jobs.get(Path(name).name) or classify(name)
+            kind, side = function_kind(fn)
+            if fn and not _used(kind, side):
+                label = "an inner copper" if kind == "copper" else f"a {_KIND_WORDS.get(kind, kind)}"
+                gs.skipped.append((name, f"not read: {label} layer ({fn}), which the check does not use"))
+                continue
+            la = parse_gerber(_decode(data), name)
+            if la.source in ("", "name") and jobs.get(Path(name).name):
+                la.function, la.source = jobs[Path(name).name], "job"
+                la.kind, la.side = function_kind(la.function)
+            gs.layers.append(la)
         else:
             gs.skipped.append((name, {"excellon": "Excellon drill file", "archive": "archive: pass it as the path",
                                       "other": "not a Gerber file"}[what]))
-    for la in gs.layers:
-        base = Path(la.name).name
-        if la.source in ("", "name") and jobs.get(base):
-            la.function, la.source = jobs[base], "job"
-            la.kind, la.side = function_kind(la.function)
+    if not gs.layers:
+        for q in subdirs:
+            if any(_what(f.name, _head(f)) == "gerber" for f in sorted(q.iterdir()) if f.is_file()):
+                gs.skipped.append((f"{q.name}/", "a directory of Gerber files: pass it as the path"))
     return gs
 
 
@@ -1088,27 +1172,31 @@ class BoardPad:
     w: float                       # bounding box size along the board axes
     h: float
     kind: str = "smd"              # model.Pad.kind
-    copper: bool = True            # model.Pad.copper: False for paste-only apertures
+    copper: bool = True            # has outer copper (model.Pad.copper or .cu): False for paste-only apertures
+    net: str = ""
 
 
 def board_pads(board: Board, *, apertures: bool = False) -> list[BoardPad]:
-    """Every footprint's copper pads (DNP parts too: KiCad plots their pads), with paste-only apertures when asked.
-    The outline is model.Pad.poly, else geom.pad_outline, mapped as convention.library_to_board does."""
+    """Every footprint's copper pads (DNP parts too: KiCad plots their pads) on the outer copper they have
+    (model.Pad.cu: an edge connector's pads on the far side of its part are there), with paste-only apertures (on
+    the part's side) when asked. The outline is model.Pad.poly, else geom.pad_outline, mapped as
+    convention.library_to_board does."""
     out = []
     for part in board.parts:
         bottom = part.layer == BOTTOM
         t = math.radians(part.angle)
         c, s = math.cos(t), math.sin(t)
         for pad in part.pads:
-            if not pad.copper and not (apertures and pad.kind == "smd"):
+            copper = pad.kind != "npth" and (pad.copper or bool(pad.cu))
+            if not copper and not (apertures and pad.kind == "smd"):
                 continue
             pts = np.asarray(pad.poly if pad.poly else pad_outline(pad), float)
             lx, ly = pts[:, 0], -pts[:, 1] if bottom else pts[:, 1]
             bx, by = part.x + lx * c + ly * s, part.y - lx * s + ly * c      # P + R(theta) . D . l
             x0, x1, y0, y1 = bx.min(), bx.max(), by.min(), by.max()
-            side = "both" if pad.kind == "tht" else (BOTTOM if bottom else TOP)
+            side = (pad.cu if copper and pad.cu else "both" if pad.kind == "tht" else BOTTOM if bottom else TOP)
             out.append(BoardPad(part.ref, pad.number, side, float(x0 + x1) / 2, float(y0 + y1) / 2,
-                                float(x1 - x0), float(y1 - y0), pad.kind, pad.copper))
+                                float(x1 - x0), float(y1 - y0), pad.kind, copper, pad.net))
     return out
 
 
@@ -1217,10 +1305,14 @@ def _refine(sides, flip, s, t, tol):
     return np.asarray(t, float), len(np.unique(ids)), rms
 
 
-def _vote(sides: list[_Side], flip: str, s: float, tol: float, anchors: int = 48, cell: float = 0.1):
-    """Candidate translations t for g = s F b + t, best first: every pair of an anchor board pad and a Gerber pad of
-    its side votes for t = g - s F b, once per anchor and cell of size `cell` (gerber units, as tol); the cells with
-    the most votes (their 3 x 3 neighbourhoods summed) are refined by matching every pad."""
+def _vote(sides: list[_Side], flip: str, s: float, tol: float, anchors: int = 48, cell: float = 0.1, extra=()):
+    """Candidate translations t for g = s F b + t, best first (the most board pads matched, then the least rms):
+    every pair of an anchor board pad and a Gerber pad of its side votes for t = g - s F b, once per anchor and cell
+    of size `cell` (gerber units, as tol). A cell scores the votes of its 3 x 3 neighbourhood: a round origin puts t
+    on a cell boundary, where rounding noise splits its votes over up to four cells, and on a periodic layout a t
+    one pitch off, which misses only the edge pads, would otherwise collect more in one cell. The 8 best cells two
+    or more cells apart, and the `extra` translations (the board's named origins), are refined by matching every
+    pad."""
     keys, diffs = [], []
     for si, sd in enumerate(sides):
         if not len(sd.B) or not len(sd.G):
@@ -1237,19 +1329,23 @@ def _vote(sides: list[_Side], flip: str, s: float, tol: float, anchors: int = 48
         diffs.append(D.reshape(-1, 2))
     if not keys:
         return []
-    allk = np.concatenate(keys)
-    uk, cnt = np.unique(allk, return_counts=True)
-    votes = dict(zip(uk.tolist(), cnt.tolist()))
-    top = uk[np.argsort(-cnt, kind="stable")[:24]]
-    scored = []
-    for k in top.tolist():
-        n = sum(votes.get(k + dx * (1 << 21) + dy, 0) for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+    uk, cnt = np.unique(np.concatenate(keys), return_counts=True)
+    near = np.zeros(len(uk), dtype=np.int64)              # every cell's 3 x 3 neighbourhood sum
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            q = uk + dx * (1 << 21) + dy
+            i = np.minimum(np.searchsorted(uk, q), len(uk) - 1)
+            near += np.where(uk[i] == q, cnt[i], 0)
+    picked: list[tuple[int, int]] = []
+    for k in uk[np.argsort(-near, kind="stable")].tolist():
         kx, ky = k // (1 << 21) - (1 << 20), k % (1 << 21) - (1 << 20)
-        scored.append((n, ((kx + 0.5) * cell, (ky + 0.5) * cell)))
-    scored.sort(key=lambda v: -v[0])
+        if all(max(abs(kx - px), abs(ky - py)) > 2 for px, py in picked):   # one candidate per peak
+            picked.append((kx, ky))
+            if len(picked) == 8:
+                break
     out, seen = [], []
-    for _n, t0 in scored[:8]:
-        t, m, rms = _refine(sides, flip, s, np.asarray(t0), tol)
+    for t0 in [((kx + 0.5) * cell, (ky + 0.5) * cell) for kx, ky in picked] + [tuple(t) for t in extra]:
+        t, m, rms = _refine(sides, flip, s, np.asarray(t0, float), tol)
         if any(np.hypot(*(t - u)) < tol for u in seen):
             continue
         seen.append(t)
@@ -1302,12 +1398,18 @@ class OriginCheck:
     verdict: str = "unknown"       # matches | does-not-match | unknown
     shift: tuple[float, float] | None = None   # cpl frame: add to every row's Mid X, Mid Y to put it on the
                                                # Gerbers' origin
-    smd_pads: int = 0              # board SMD pads the coverage counts
-    coverage: float = 0.0          # fraction of them with a Gerber copper or paste pad at their place
-    missing: list[str] = field(default_factory=list)          # "R5:1", board SMD pads with none
+    compared: int = 0              # board pads the coverage counts (SMD, plated, connect: on a side with layers)
+    coverage: float = 0.0          # fraction of them with a Gerber pad at their place on every side compared
+    missing: list[str] = field(default_factory=list)          # "R5:1", board pads with none
     extra: list[tuple[float, float]] = field(default_factory=list)   # Gerber paste pads (board frame) on no board pad
+    mismatched: list[str] = field(default_factory=list)       # Gerber pads whose TO.P / TO.N name another pad or net
+    extra_origin: tuple[float, float] | None = None   # board point whole paste layers of extra pads were plotted from
+    named_extra: str = ""          # the board origin that is
+    extra_layers: list[str] = field(default_factory=list)     # those paste layers
     belongs: bool = False          # coverage >= BELONGS: the Gerbers are this board's
-    stale: bool = False            # this board's, but pads moved, came or went since they were plotted
+    stale: bool = False            # this board's, but pads moved, came or went (or were renamed) since plotted
+    problems: list[tuple[str, str, str]] = field(default_factory=list)   # (verdict, side or "", message): the set
+                                   # lacks a side's layers, holds two plots, or its outline is from another origin
     messages: list[str] = field(default_factory=list)
 
     @property
@@ -1332,10 +1434,12 @@ def board_to_gerber(b, origin, flip: str = "none", scale: float = 1.0) -> tuple[
 
 
 def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: str | None = None,
-                  tol: float = MATCH_TOL) -> OriginCheck:
+                  tol: float = MATCH_TOL, edge=None) -> OriginCheck:
     """Find the board point that is the Gerbers' (0, 0), compare it with the CPL origin (default board.origin), and
-    check that the Gerbers are this board's (the fraction of its SMD pads with a Gerber copper or paste pad at their
-    place; pads that are missing, or paste pads on no board pad, make the set stale).
+    check that the Gerbers are this board's as it is (_coverage: the fraction of its pads with a Gerber pad at their
+    place; pads that are missing, paste pads on no board pad, or pin attributes that name another pad, make the set
+    stale) and whole (`problems`: a side without its layers, two plots in one set, the outline plotted from another
+    origin than the copper: compared with `edge`, the board's Edge.Cuts as board-frame polylines, when given).
 
     The map g = s F b + t is fitted from (reference, pin) pairs when the copper layers carry TO.P attributes and at
     least half the pairs agree on it (method x2-pins), else by translation voting between the board's pads and the
@@ -1356,11 +1460,16 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
         G = np.array([(p.x, p.y) for p in gs.pads(side)], float).reshape(-1, 2)
         sides.append(_Side(B, G, idx))
     res.gerber_pads = sum(len(sd.G) for sd in sides)
-    if not res.gerber_pads:
-        res.messages.append("the Gerbers have no copper or paste pads to compare (no layer is named as copper or "
-                            "paste: " + ", ".join(la.name for la in gs.layers) + ")" if gs.layers else
-                            "no Gerber files were read")
+    if not gs.layers:
+        dirs = [n for n, why in gs.skipped if why.startswith("a directory of Gerber files")]
+        res.messages.append("no Gerber files were read" + (f": the Gerbers are in {', '.join(dirs)} (pass it as the "
+                                                           "path)" if dirs else ""))
         return res
+    if not res.gerber_pads:
+        res.messages.append("the Gerbers have no copper or paste pads to compare (" + _layers_said(gs) + ")")
+        res.problems = _duplicates(gs)             # the message says what is missing
+        return res
+    res.problems = _duplicates(gs) + _sides(board, gs)
     if not res.board_pads:
         res.messages.append("the board has no copper pads to compare with the Gerbers")
         return res
@@ -1368,6 +1477,7 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
     need = max(least, math.ceil(MIN_FRACTION * res.board_pads))
 
     best = None                    # (board pads matched, rms, flip, s, t, method, pin pairs that agree)
+    scaled = ""                    # the pin attributes fit only at another scale: says which
     if gs.x2_pins:
         PB, PG = _pin_pairs(bp, gs)
         if len(PB) >= least:
@@ -1386,11 +1496,16 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
             else:
                 res.messages.append(f"the Gerbers' pin attributes do not fit the board ({n} of {len(PB)} pins agree):"
                                     " matched by pad positions instead")
+                scaled = _similar(PB, PG, tol)
+    named = board_origins(board)
+    named.setdefault(res.cpl_origin_kind, c)
     if best is None:
         found = []
         for s in SCALES:
             for flip in FLIPS:
-                cands = _vote(sides, flip, s, tol * s, cell=0.1 * s)
+                # the board's own origins are candidates too: an origin is usually one of them
+                cands = _vote(sides, flip, s, tol * s, cell=0.1 * s,
+                              extra=[-_map(np.asarray(o, float), flip, s) for o in named.values()])
                 if cands:
                     m, rms, t = cands[0]
                     found.append((m, rms, flip, s, t))
@@ -1405,8 +1520,8 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
     if best is None or best[0] < need:
         n = best[0] if best else 0
         res.matched = n
-        res.messages.append(f"the Gerbers' pads do not match the board's ({n} of {res.board_pads} pads at most): are "
-                            "these the board's Gerbers?")
+        res.messages.append(f"the Gerbers' pads do not match the board's ({n} of {res.board_pads} pads at most): "
+                            + (scaled or "are these the board's Gerbers?") + _unnamed_note(gs))
         res.messages += _coverage(res, board, gs, None, "none", 1.0, tol)
         return res
     m, rms, flip, s, t, method, pairs = best
@@ -1414,54 +1529,246 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
     o = (round(float(-t[0] / (s * fx)), 9) + 0.0, round(float(-t[1] / (s * fy)), 9) + 0.0)   # no -0.0
     res.origin, res.method, res.flip, res.scale = o, method, flip, s
     res.residual, res.matched, res.pin_pairs = rms / s, m, pairs
-    named = board_origins(board)
-    named.setdefault(res.cpl_origin_kind, c)
     for k in [res.cpl_origin_kind, "aux", "absolute", "grid"]:
         if k in named and math.hypot(o[0] - named[k][0], o[1] - named[k][1]) <= ORIGIN_TOL:
             res.named = k
             break
     notes = _coverage(res, board, gs, o, flip, s, tol)
+    if res.extra_origin is not None:
+        res.named_extra = next((k for k in ["aux", "absolute", "grid", res.cpl_origin_kind] if k in named and
+                                math.dist(res.extra_origin, named[k]) <= ORIGIN_TOL), "")
+    res.problems += _outline(gs, o, flip, s, edge, board)
     _verdict(res)
     res.messages += notes
     return res
 
 
 def _coverage(res: OriginCheck, board: Board, gs: GerberSet, o, flip: str, s: float, tol: float) -> list[str]:
-    """The board's SMD pads (and copper-only "connect" pads where the set has copper) on a side the set has layers
-    for, against its copper and paste pads; paste pads on no board pad. A side with no layer is named (the notes
-    returned), not stale."""
+    """The board's pads on each side the set has layers for, against that side's Gerber pads: SMD pads against its
+    copper and paste, plated and connect pads (no paste) against its copper; a plated pad is compared on both sides,
+    and counted once. Paste pads on no board pad, a whole paste layer of them plotted from another origin
+    (`extra_origin`). With pin attributes (TO.P, TO.N), copper pads that name another board pad or net than the one
+    at their place (`mismatched`: parts swapped or nets changed since the plot). A side with no layer is a note (and
+    one of `problems`), not stale."""
     allp = board_pads(board, apertures=True)
-    smd, notes = [], []
+    seen: dict[int, bool] = {}                        # board pad index -> a Gerber pad on every side compared
+    notes, todo = [], []
     for side in (TOP, BOTTOM):
         cu, paste = bool(gs.find("copper", side)), bool(gs.find("paste", side))
-        mine = [p for p in allp if p.copper and p.side == side and (p.kind == "smd" or p.kind == "connect" and cu)]
-        if mine and not (cu or paste):
-            notes.append(f"the Gerbers have no {side} copper or paste layer: the {len(mine)} SMD pads of the {side} "
-                         "side were not checked")
-        elif mine:
-            smd += mine
-    res.smd_pads = len(smd)
+        mine = [i for i, p in enumerate(allp) if p.copper and p.side in (side, "both")
+                and (cu or paste and p.kind == "smd")]
+        if not (cu or paste):
+            n = sum(1 for p in allp if p.copper and p.side == side and p.kind == "smd")
+            if n:
+                notes.append(f"the Gerbers have no {side} copper or paste layer: the {n} SMD pads of the {side} side "
+                             "were not checked")
+        todo.append((side, mine))
+        seen.update((i, True) for i in mine)
+    res.compared = len(seen)
     if o is None:
-        res.missing = [f"{p.ref}:{p.number}" for p in smd]
+        res.missing = [f"{allp[i].ref}:{allp[i].number}" for i in sorted(seen)]
         return notes
     tol_s = tol * s                                   # gerber units
-    for side in (TOP, BOTTOM):
+    for side, mine in todo:
         G = np.array([(p.x, p.y) for p in gs.pads(side)], float).reshape(-1, 2)
-        mine = [p for p in smd if p.side == side]
         if mine:
-            U = np.array([board_to_gerber((p.x, p.y), o, flip, s) for p in mine])
+            U = np.array([board_to_gerber((allp[i].x, allp[i].y), o, flip, s) for i in mine])
             j, _ = _Grid(G, tol_s).nearest(U)
-            res.missing += [f"{p.ref}:{p.number}" for p, k in zip(mine, j) if k < 0]
-        paste = [p for la in gs.find("paste", side) for p in la.pads()]
-        if paste:
-            B = np.array([board_to_gerber((p.x, p.y), o, flip, s) for p in allp if p.side in (side, "both")],
-                         float).reshape(-1, 2)
-            j, _ = _Grid(B, tol_s).nearest(np.array([(p.x, p.y) for p in paste]))
-            res.extra += [gerber_to_board((p.x, p.y), o, flip, s) for p, k in zip(paste, j) if k < 0]
-    res.coverage = 1.0 - len(res.missing) / len(smd) if smd else (1.0 if res.matched else 0.0)
-    res.belongs = res.coverage >= BELONGS if smd else res.matched > 0
-    res.stale = res.belongs and bool(res.missing or res.extra)
+            for i, k in zip(mine, j):
+                seen[i] = seen[i] and k >= 0
+        here = [p for p in allp if p.side in (side, "both")]
+        B = np.array([board_to_gerber((p.x, p.y), o, flip, s) for p in here], float).reshape(-1, 2)
+        grid = _Grid(B, tol_s)
+        for la in gs.find("paste", side):
+            paste = la.pads()
+            if not paste:
+                continue
+            j, _ = grid.nearest(np.array([(p.x, p.y) for p in paste]))
+            off = [gerber_to_board((p.x, p.y), o, flip, s) for p, k in zip(paste, j) if k < 0]
+            res.extra += off
+            if len(off) >= max(MIN_MATCHED, 0.8 * len(paste)):
+                d = _shift_of(np.asarray(off), np.array([(p.x, p.y) for p in here if p.kind == "smd"], float), tol)
+                if d is not None:                     # the layer is a shifted copy of the board's pads
+                    if res.extra_origin is None:
+                        res.extra_origin = (round(o[0] + d[0], 6) + 0.0, round(o[1] + d[1], 6) + 0.0)
+                    res.extra_layers.append(Path(la.name).name)
+        if gs.x2_pins:
+            cu = [i for i, p in enumerate(here) if p.copper]
+            res.mismatched += _renamed([here[i] for i in cu], B[cu], gs.find("copper", side), tol_s)
+    res.missing = [f"{allp[i].ref}:{allp[i].number}" for i in sorted(seen) if not seen[i]]
+    res.coverage = 1.0 - len(res.missing) / len(seen) if seen else 0.0
+    res.belongs = bool(seen) and res.coverage >= BELONGS
+    res.stale = res.belongs and bool(res.missing or res.extra or res.mismatched)
     return notes
+
+
+def _shift_of(E: np.ndarray, B: np.ndarray, tol: float):
+    """The one vector d (board frame) that puts at least 80 % of the points E on points B (within tol), or None:
+    pairs of up to 24 of E and every B vote for d by cells of 0.1 mm."""
+    if not len(E) or not len(B):
+        return None
+    pick = E[np.unique(np.linspace(0, len(E) - 1, min(24, len(E))).round().astype(int))]
+    D = (B[None, :, :] - pick[:, None, :]).reshape(-1, 2)
+    _, inv, counts = np.unique(np.floor(D / 0.1).astype(np.int64), axis=0, return_inverse=True, return_counts=True)
+    grid, best = _Grid(B, tol), None
+    for c in np.argsort(-counts, kind="stable")[:8]:
+        d = np.median(D[inv.ravel() == c], axis=0)
+        n = int((grid.nearest(E + d)[0] >= 0).sum())
+        if best is None or n > best[0]:
+            best = (n, d)
+    return best[1] if best is not None and best[0] >= 0.8 * len(E) else None
+
+
+def _renamed(here: list[BoardPad], B: np.ndarray, layers: list[GerberLayer], tol: float) -> list[str]:
+    """Copper pads whose TO.P names another board pad than any at their place, or whose TO.N another net: the parts
+    were swapped, or the nets changed, after the plot (positions alone cannot tell). `B`: the gerber points of
+    `here`."""
+    out = []
+    grid = _Grid(B, tol)
+    at: dict[tuple[str, str], list[int]] = {}
+    for i, p in enumerate(here):
+        at.setdefault((p.ref, p.number), []).append(i)
+    for la in layers:
+        for g in la.flashes + la.regions:
+            if not (g.dark and g.ref and g.pin):
+                continue
+            same = [here[i] for i in at.get((g.ref, g.pin), []) if math.hypot(*(B[i] - (g.x, g.y))) <= tol]
+            if not same:
+                j = int(grid.nearest(np.array([(g.x, g.y)]))[0][0])
+                if j >= 0:
+                    out.append(f"{here[j].ref}:{here[j].number} is where the Gerbers have {g.ref}:{g.pin}")
+            elif g.net and g.net != "N/C" and all(p.net and p.net != g.net for p in same):
+                out.append(f"{g.ref}:{g.pin} is on net {g.net} in the Gerbers, {same[0].net} on the board")
+    return list(dict.fromkeys(out))
+
+
+def _duplicates(gs: GerberSet) -> list[tuple[str, str, str]]:
+    """More than one outer copper or paste layer of a side (or profile, or job file, as their attributes say): two
+    plots in one set (KiCad never deletes an old plot), and JLC may make the board from either."""
+    groups: dict[str, list[str]] = {f"{side} {kind}": [] for side in (TOP, BOTTOM) for kind in ("copper", "paste")}
+    for la in gs.layers:
+        if la.kind in ("copper", "paste") and la.side in (TOP, BOTTOM):
+            groups.setdefault(f"{la.side} {la.kind}", []).append(la.name)
+        elif la.kind == "profile" and la.source != "name":     # Altium's .gko and .gm1 are both named "profile"
+            groups.setdefault("profile", []).append(la.name)
+    groups["job"] = [n for n, why in gs.skipped if why == "Gerber job file"]
+    dup = [(k, sorted(v)) for k, v in groups.items() if len(v) > 1]
+    if not dup:
+        return []
+    projects = sorted({la.attributes["ProjectId"].split(",")[0] for la in gs.layers if la.attributes.get("ProjectId")})
+    said = "; ".join(f"{len(v)} {k} {'files' if k == 'job' else 'layers'}: {', '.join(v)}" for k, v in dup)
+    return [(RED, "", f"the Gerbers hold more than one plot ({said}"
+             + (f"; projects {', '.join(projects)}" if len(projects) > 1 else "")
+             + "): JLC may make the board from either; send one plot")]
+
+
+def _read(gs: GerberSet, n: int = 12) -> str:
+    names = [la.name for la in gs.layers]
+    return ", ".join(names[:n]) + (f" and {len(names) - n} more" if len(names) > n else "")
+
+
+def _sides(board: Board, gs: GerberSet) -> list[tuple[str, str, str]]:
+    """A side the board has SMD pads on and the set has no copper layer for (red: JLC could not make it; also when it
+    has no paste layer either), or copper but no paste (yellow: its SMD pads would get no paste)."""
+    out = []
+    pads = board_pads(board)
+    for side in (TOP, BOTTOM):
+        smd = sum(1 for p in pads if p.copper and p.side == side and p.kind == "smd")
+        if not smd:
+            continue
+        cu, paste = gs.find("copper", side), gs.find("paste", side)
+        if not cu:
+            out.append((RED, side, f"the Gerbers have no {side} copper{'' if paste else ' or paste'} layer: the board's "
+                                   f"{_count(smd, f'{side} SMD pad')} {'is' if smd == 1 else 'are'} on no layer of "
+                                   f"the set (read: {_read(gs)})"))
+        elif not paste:
+            out.append((YELLOW, side, f"the Gerbers have no {side} paste layer: the board's "
+                                      f"{_count(smd, f'{side} SMD pad')} would get no solder paste"))
+    return out
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _outline(gs: GerberSet, o, flip: str, s: float, edge, board: Board) -> list[tuple[str, str, str]]:
+    """The profile layer through the copper's map against the board's Edge.Cuts (`edge`, board-frame polylines):
+    moved by one vector (plotted from another origin) or another outline. Without `edge` (a snapshot), the board's
+    pads must lie inside it."""
+    prof = gs.outline
+    box = prof.bbox() if prof is not None else None
+    if box is None:
+        return []
+    corners = np.array([gerber_to_board(q, o, flip, s) for q in ((box[0], box[1]), (box[2], box[3]))])
+    lo, hi = corners.min(0), corners.max(0)
+    name = Path(prof.name).name
+    if edge:
+        pts = np.array([q for ln in edge for q in ln], float).reshape(-1, 2)
+        elo, ehi = pts.min(0), pts.max(0)
+        if np.abs(lo - elo).max() <= OUTLINE_TOL and np.abs(hi - ehi).max() <= OUTLINE_TOL:
+            return []
+        if np.abs((hi - lo) - (ehi - elo)).max() > OUTLINE_TOL:
+            return [(RED, "", f"the board outline ({name}) is not the board's Edge.Cuts: {hi[0] - lo[0]:g} x "
+                              f"{hi[1] - lo[1]:g} mm against {ehi[0] - elo[0]:g} x {ehi[1] - elo[1]:g} mm")]
+        d = lo - elo                                   # board frame: where the profile lies, less where it belongs
+        at = (round(o[0] - d[0], 4) + 0.0, round(o[1] - d[1], 4) + 0.0)
+        named = board_origins(board)
+        kind = next((k for k in ("aux", "absolute", "grid") if k in named and math.dist(at, named[k]) <= ORIGIN_TOL), "")
+        dc = board_to_gerber((o[0] + d[0], o[1] + d[1]), o)
+        return [(RED, "", f"the board outline ({name}) was plotted from another origin than the copper, board "
+                          f"({at[0]:g}, {at[1]:g})" + (f" ({_NAMES[kind]})" if kind else "")
+                          + f": it lies ({dc[0]:+.3f}, {dc[1]:+.3f}) mm off the board's Edge.Cuts; plot every layer "
+                          "from one origin")]
+    bp = board_pads(board)
+    if not bp:
+        return []
+    inside = sum(1 for p in bp if lo[0] - 1 <= p.x <= hi[0] + 1 and lo[1] - 1 <= p.y <= hi[1] + 1) / len(bp)
+    if inside >= 0.5:
+        return []
+    return [(RED, "", f"the board outline ({name}) lies away from the copper: {inside:.0%} of the board's pads are "
+                      "inside it; plot every layer from one origin")]
+
+
+def _similar(PB: np.ndarray, PG: np.ndarray, tol: float) -> str:
+    """The pin pairs fitted with any scale (g = k F b + t): when most agree at a k that is not 1 or 25.4, say it (a
+    coordinate format, FS, that does not match the data); else ""."""
+    best = None
+    for flip in FLIPS:
+        U = _map(PB, flip, 1.0)
+        du, dg = U - U.mean(0), PG - PG.mean(0)
+        den = float((du ** 2).sum())
+        if den <= 0:
+            continue
+        k = float((du * dg).sum()) / den
+        if k <= 0:
+            continue
+        t = np.median(PG - k * U, axis=0)
+        n = int((np.hypot(*(PG - k * U - t).T) <= tol * max(1.0, k)).sum())
+        if best is None or n > best[0]:
+            best = (n, k)
+    if best is None or best[0] < max(MIN_MATCHED, len(PB) / 2) or any(abs(best[1] / v - 1) < 1e-3 for v in SCALES):
+        return ""
+    k = best[1]
+    return (f"the pin attributes fit the board scaled by {k:.4g} ({best[0]} of {len(PB)} pins): a coordinate format "
+            "(FS) that does not match the data?")
+
+
+def _layers_said(gs: GerberSet) -> str:
+    """Which files were taken for which layer, and the Gerber files nothing names that hold flashes (a copper layer
+    renamed, as KiCad's French demos do: 'Dessus'), for a set whose pads cannot be compared."""
+    said = [f"{side} {kind}: " + (", ".join(f"{Path(la.name).name} ({len(la.pads())} pads)"
+                                           for la in gs.find(kind, side)) or "none")
+            for kind in ("copper", "paste") for side in (TOP, BOTTOM)]
+    return "; ".join(said) + _unnamed_note(gs, "; ")
+
+
+def _unnamed_note(gs: GerberSet, sep: str = " (") -> str:
+    files = [f"{Path(la.name).name} ({n} flashes)" for la in sorted(gs.layers, key=lambda la: la.name)
+             if la.kind == "other" and not la.function for n in [sum(1 for p in la.flashes if p.dark)] if n]
+    if not files:
+        return ""
+    return (f"{sep}not named as a layer, with pads: " + ", ".join(files) + ": name copper and paste files as KiCad "
+            "does (-F_Cu, -B_Paste) or plot them with X2 attributes" + (")" if sep == " (" else ""))
 
 
 def _fmt(p) -> str:
@@ -1509,16 +1816,30 @@ def _verdict(res: OriginCheck) -> None:
                             + f" ({how})")
     if not res.belongs:
         res.messages.append(f"the Gerbers do not seem to be this board's: only {res.coverage:.0%} of its "
-                            f"{res.smd_pads} SMD pads have a Gerber pad at their place")
+                            f"{res.compared} pads have a Gerber pad at their place" if res.compared else
+                            "the Gerbers have no layer to compare the board's pads with")
     elif res.stale:
         parts = []
         if res.missing:
-            parts.append(f"{len(res.missing)} of {res.smd_pads} board SMD pads have no Gerber pad at their place ("
+            parts.append(f"{len(res.missing)} of {res.compared} board pads have no Gerber pad at their place ("
                          + ", ".join(res.missing[:8]) + (" ..." if len(res.missing) > 8 else "") + ")")
         if res.extra:
             parts.append(f"{len(res.extra)} Gerber paste pads lie on no board pad (first at board "
                          f"{_fmt(res.extra[0])})")
-        res.messages.append("the Gerbers are older than the board, re-plot them: " + "; ".join(parts))
+        if res.mismatched:
+            parts.append(f"the Gerbers' pin attributes name other pads than the board's at their place "
+                         f"({len(res.mismatched)} pads: " + "; ".join(res.mismatched[:4])
+                         + (" ..." if len(res.mismatched) > 4 else "") + ")")
+        if res.extra_origin is not None:
+            x, y = res.extra_origin
+            res.messages.append(f"the paste layers ({', '.join(sorted(res.extra_layers))}) were plotted from another "
+                                f"origin than the copper, board ({x:g}, {y:g})"
+                                + (f" ({_NAMES[res.named_extra]})" if res.named_extra in _NAMES else "")
+                                + ": plot every layer from one origin: " + "; ".join(parts))
+        elif any(m.startswith("the Gerbers hold more than one plot") for _, _, m in res.problems):
+            res.messages.append("the Gerbers hold pads of another plot than the board's: " + "; ".join(parts))
+        else:
+            res.messages.append("the Gerbers are older than the board, re-plot them: " + "; ".join(parts))
 
 
 def shifted_rows(rows: list[CplRow], check: OriginCheck) -> list[CplRow]:

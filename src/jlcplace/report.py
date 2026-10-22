@@ -254,9 +254,9 @@ def _origin_dict(run: Run) -> dict:
     gerbers = None if g is None else {
         "path": run.gerbers_path, "origin": list(g.origin) if g.origin is not None else None, "named": g.named,
         "method": g.method, "flip": g.flip, "scale": g.scale, "residual": g.residual, "matched": g.matched,
-        "board_pads": g.board_pads, "gerber_pads": g.gerber_pads, "pin_pairs": g.pin_pairs, "smd_pads": g.smd_pads,
-        "coverage": g.coverage, "missing": g.missing[:50], "extra": len(g.extra), "belongs": g.belongs,
-        "stale": g.stale, "notes": gerber_notes(g)}
+        "board_pads": g.board_pads, "gerber_pads": g.gerber_pads, "pin_pairs": g.pin_pairs, "compared": g.compared,
+        "coverage": g.coverage, "missing": g.missing[:50], "extra": len(g.extra), "mismatched": g.mismatched[:50],
+        "belongs": g.belongs, "stale": g.stale, "notes": gerber_notes(g)}
     offset = None if off is None else {
         "dx": off.dx, "dy": off.dy, "rows": off.rows, "total": off.total, "origin": list(off.origin),
         "origin_kind": off.origin_kind, "scale": off.scale, "unit": off.unit, "y_up": off.y_up, "refs": off.refs}

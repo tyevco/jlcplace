@@ -219,10 +219,11 @@ def _overlays(args, run, notes, outline) -> None:
                         "install Chrome or Chromium, or set JLCPLACE_CHROMIUM)"), file=sys.stderr)
 
 
-def _gerbers(args, board):
+def _gerbers(args, board, rows=None):
     """--gerbers: (the board with the CPL origin JLC reads the rows from, the Gerbers' origin check, its findings).
     The Gerbers' (0, 0) is the CPL origin when the set is this board's and a plain shift of it; otherwise the board
-    keeps --origin (default aux) and the set's problem is a red finding. Without --gerbers: (board, None, [])."""
+    keeps --origin (default aux) and the set's problem is a red finding. The set's outline is compared with the
+    board's Edge.Cuts; `rows`, the CPL's, say which sides need paste. Without --gerbers: (board, None, [])."""
     path = getattr(args, "gerbers", None)
     if not path:
         return board, None, []
@@ -232,11 +233,11 @@ def _gerbers(args, board):
         raise BadInput(f"--gerbers {path}: no such file or directory") from None
     except (OSError, ValueError) as e:         # GerberError is a ValueError naming the file and the block
         raise BadInput(f"--gerbers {path}: {e}") from None
-    chk = gerber_origin(board, gs)
+    chk = gerber_origin(board, gs, edge=report.board_outline(args.board))
     og = jlc_origin(chk)
     if og is not None:
         board = replace(board, origin=og, origin_kind="gerber")
-    return board, (gs, chk), gerber_findings(chk)
+    return board, (gs, chk), gerber_findings(chk, rows)
 
 
 def _judge_origin(args, run, board, gerbers, found) -> list[str]:
@@ -277,7 +278,7 @@ def cmd_check(args) -> int:
     board = _board(args)
     rows = _rows(args.cpl, args.units)
     bom = _bom(args.bom)
-    jlc, gerbers, found = _gerbers(args, board)
+    jlc, gerbers, found = _gerbers(args, board, rows)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
     resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom)
@@ -908,9 +909,12 @@ def main(argv=None) -> int:
         print(printable(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}"), file=sys.stderr)
         return EXIT_INPUT
     except Exception as e:  # noqa: BLE001 - a crash must not exit 1, the code that means "yellow"
-        traceback.print_exc(file=sys.stderr)
-        print(f"jlcplace: internal error: {type(e).__name__}: {e} (a bug: please report it with the traceback "
-              f"above)", file=sys.stderr)
+        try:
+            traceback.print_exc(file=sys.stderr)
+            print(f"jlcplace: internal error: {type(e).__name__}: {e} (a bug: please report it with the traceback "
+                  f"above)", file=sys.stderr)
+        except Exception:  # noqa: BLE001 - out of memory, stderr gone: saying so must not change the exit code
+            pass
         return EXIT_INTERNAL
 
 

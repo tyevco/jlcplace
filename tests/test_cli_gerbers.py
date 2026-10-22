@@ -127,6 +127,24 @@ def test_a_cpl_from_another_origin_than_the_gerbers_is_red_first_with_the_shift_
     assert code == 2 and out.startswith("jlcplace: red: origin mismatch: JLC lays the CPL"), out
 
 
+def test_a_small_common_offset_is_an_origin_mismatch_when_the_gerbers_fix_the_origin(made, capsys):
+    """The Gerbers' origin is known to a micron: every row 0.2 mm off it is the CPL's origin 0.2 mm off, said as
+    such (the rows alone would look like part problems). Without the Gerbers, or below 0.05 mm, nothing is said."""
+    e = made
+    small = shifted(e.out, e.tmp / "small.csv", 0.2, 0.0)
+    code, out, _ = run(capsys, "check", e.board, small, "--gerbers", e.aux, *offline(e))
+    first = lines(out)[1]
+    assert code == 2 and first.startswith("RED     origin mismatch: JLC lays the CPL over the Gerbers from their (0, 0), "
+                                          "board (100, 100) (the aux (drill/place file) origin), but the CPL was "
+                                          "written from board (99.800, 100.000), none of the board's origins"), out
+    assert "JLC would put every part 0.20 mm off" in first and "shift every row by (-0.200, +0.000) mm" in first
+    code, out, _ = run(capsys, "check", e.board, small, *offline(e))
+    assert "origin mismatch" not in out
+    tiny = shifted(e.out, e.tmp / "tiny.csv", 0.03, 0.0)
+    code, out, _ = run(capsys, "check", e.board, tiny, "--gerbers", e.aux, *offline(e))
+    assert code == 0 and "origin mismatch" not in out, out
+
+
 def test_kicads_page_origin_cpl_over_page_origin_gerbers_is_consistent(made, capsys):
     """KiCad's position file and Gerbers both from the page origin: one origin, nothing to say about it."""
     e = made
@@ -159,7 +177,7 @@ def test_gerbers_that_are_not_this_boards_as_it_is_are_red(made, capsys):
     old = plot(e.board_obj, ORIGIN, e.tmp / "g-old", move={"R1": (1.0, 0.0)})
     code, out, _ = run(capsys, "check", e.board, e.out, "--gerbers", old, *offline(e))
     assert code == 2 and lines(out)[1].startswith("RED     the Gerbers are older than the board, re-plot them: 2 of "
-                                                  "16 board SMD pads have no Gerber pad at their place (R1:1, R1:2); 2 "
+                                                  "16 board pads have no Gerber pad at their place (R1:1, R1:2); 2 "
                                                   "Gerber paste pads lie on no board pad"), out
     assert "; gerbers red" in out
     other = Board("other.kicad_pcb", ORIGIN, [Part(f"R{i}", TOP, 10.0 + 7 * i, 20.0 + 3 * (i % 5), 0.0, pads=[
@@ -183,6 +201,45 @@ def test_unreadable_gerbers_are_bad_input(made, capsys):
     zipped = e.tmp / "g.zip"
     zipped.write_text("not a zip", encoding="utf-8")
     assert run(capsys, "check", e.board, e.out, "--gerbers", zipped, *offline(e))[0] == 3
+
+
+def test_a_side_missing_from_the_gerbers_is_said(made, capsys):
+    """A set without the bottom copper and paste: the bottom was never checked, and JLC could not make it: red. A
+    set without the bottom paste: the bottom parts would get no paste, yellow while the CPL places parts there."""
+    e = made
+    for f in e.aux.glob("board-bottom_*.gbr"):
+        f.unlink()
+    code, out, _ = run(capsys, "check", e.board, e.out, "--gerbers", e.aux, *offline(e))
+    assert code == 2 and lines(out)[1].startswith("RED     the Gerbers have no bottom copper or paste layer: "
+                                                  "the board's "), out
+    assert "(read: board-top_Cu.gbr, board-top_Paste.gbr)" in lines(out)[1] and "; gerbers red" in out
+    e.aux = plot(e.board_obj, ORIGIN, e.tmp / "g-aux2")
+    (e.aux / "board-bottom_Paste.gbr").unlink()
+    code, out, _ = run(capsys, "check", e.board, e.out, "--gerbers", e.aux, *offline(e))
+    assert code == 0 and lines(out)[1].startswith("YELLOW  the Gerbers have no bottom paste layer: the "
+                                                  "board's "), out
+    assert run(capsys, "check", e.board, e.out, "--gerbers", e.aux, *offline(e), "--fail-on", "yellow")[0] == 1
+    top = e.tmp / "top.csv"
+    write_cpl(top, [r for r in read_cpl(e.out) if r.layer == TOP])
+    code, out, _ = run(capsys, "check", e.board, top, "--gerbers", e.aux, *offline(e))
+    assert "no bottom paste layer" not in out, out                       # nothing is placed on the bottom
+
+
+def test_a_zip_that_cannot_be_read_is_bad_input(made, capsys):
+    import zipfile
+    from test_gerber import _patched_zip
+    e = made
+    z = e.tmp / "g.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(e.aux.iterdir()):
+            zf.write(f, f.name)
+    assert run(capsys, "check", e.board, e.out, "--gerbers", z, *offline(e))[0] == 0
+    code, _, err = run(capsys, "check", e.board, e.out, "--gerbers", _patched_zip(e.tmp / "enc.zip", z, flags=1),
+                       *offline(e))
+    assert code == 3 and "enc.zip: board-bottom_Cu.gbr: cannot be read" in err and "encrypted" in err, err
+    code, _, err = run(capsys, "check", e.board, e.out, "--gerbers", _patched_zip(e.tmp / "d64.zip", z, method=9),
+                       *offline(e))
+    assert code == 3 and "cannot be read" in err and "internal error" not in err, err
 
 
 def test_cpl_writes_the_rows_from_the_gerbers_origin(made, capsys):

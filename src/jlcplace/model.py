@@ -71,6 +71,8 @@ class Pad:
     pin_type: str = ""
     rr: float = 0.0                # roundrect corner radius ratio (0..0.5)
     poly: list[tuple[float, float]] | None = None  # exact outline in the library frame, if known (wins over shape)
+    cu: str = ""                   # the board's outer copper the pad has, as placed: top | bottom | both; "" none (a
+                                   # paste aperture, NPTH) or not known (an older snapshot): the Gerbers plot it there
 
 
 @dataclass

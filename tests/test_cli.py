@@ -1017,6 +1017,14 @@ def test_an_internal_error_is_not_the_yellow_exit_code(env, capsys, monkeypatch)
     code, out, err = run(capsys, "check", env.board, env.out, *offline(env))
     assert code == 4 and "jlcplace: internal error: RuntimeError: a bug" in err and "Traceback" in err
 
+    # out of memory: printing the traceback fails too, and the exit code must still not be 1
+    def oom(*args, **kwargs):
+        raise MemoryError
+
+    monkeypatch.setattr(cli, "cmd_check", oom)
+    monkeypatch.setattr(cli.traceback, "print_exc", oom)
+    assert run(capsys, "check", env.board, env.out, *offline(env))[0] == 4
+
 
 def test_an_output_that_cannot_be_written_is_bad_input(env, capsys):
     """cli-3: an output under a file (or a read-only directory) crashed with a traceback and exit 1 (the 'yellow'
