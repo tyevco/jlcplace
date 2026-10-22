@@ -8,6 +8,8 @@ import os
 import random
 import re
 import shutil
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -1443,3 +1445,27 @@ def test_html_report_labels_legends_and_checklist(env, capsys):
     assert "<th>row</th>" in table
     u2 = next(tr for tr in table.split("<tr>") if ">U2</a>" in tr)
     assert '<span class="badge b-red">RED</span>' in u2, u2
+
+
+def test_a_reader_that_goes_away_is_not_bad_input(env):
+    """`jlcplace check ... | head -1`: a broken pipe exits 141 quietly, not 3 ('bad input') with a message."""
+    env.make()
+    cpl = env.tmp / "rows.csv"
+    assert main(["cpl", env.board, "-o", str(cpl), *offline(env)]) in (0, 1)
+    args = [sys.executable, "-m", "jlcplace", "check", env.board, str(cpl), *offline(env), "-v"]
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p.stdout.close()                                   # the reader is gone before the first line
+    err = p.stderr.read().decode()
+    assert p.wait(timeout=120) == 141, err
+    assert "Broken pipe" not in err and "Traceback" not in err
+
+
+def test_text_the_console_cannot_encode_is_escaped(monkeypatch):
+    """A cp1252 stdout (Windows, redirected) gets EasyEDA's Chinese titles as escapes instead of a crash."""
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+    monkeypatch.setattr(sys, "stdout", out)
+    assert main(["--version"]) == 0
+    print("SOT-23-6 \u8d34\u7247", file=out)
+    out.flush()
+    assert b"\\u8d34\\u7247" in raw.getvalue()

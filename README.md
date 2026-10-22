@@ -134,7 +134,7 @@ Every CPL row gets a verdict:
 Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input (a file
 that cannot be read or written, a database file that cannot be read, a bad option or value, a reference that cannot
 be a designator, a `--db` that is a file), 4 an internal error (a bug: the traceback is printed), 130 interrupted
-(ctrl-C). `-v` (before or after the command) logs what the EasyEDA client does. Outputs:
+(ctrl-C), 141 the reader of stdout went away (`jlcplace ... | head`). `-v` (before or after the command) logs what the EasyEDA client does. Outputs:
 `--report` (one self-contained HTML page, for your own review: see below), `--json`, `--junit`, `--checklist`
 (`.md` or `.csv`) and `--github-annotations`.
 

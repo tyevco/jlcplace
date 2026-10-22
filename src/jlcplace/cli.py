@@ -43,6 +43,7 @@ from .pipeline import apply_bom_codes, bom_overrides, check, correction, describ
 from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
+EXIT_BROKEN_PIPE = 141                         # 128 + SIGPIPE, what a shell reports for `jlcplace ... | head`
 log = logging.getLogger("jlcplace")
 
 
@@ -770,7 +771,26 @@ def _glued(argv) -> list[str]:
     return out
 
 
+def _tolerant_streams():
+    """An EasyEDA title in Chinese must not crash a run whose stdout is a cp1252 pipe (Windows CI logs)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):   # not a TextIOWrapper, or already closed
+            pass
+
+
+def _quiet_stdout():
+    """After a broken pipe, point stdout at devnull so the interpreter's final flush does not raise again."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (AttributeError, ValueError, OSError):
+        pass
+
+
 def main(argv=None) -> int:
+    _tolerant_streams()
     parser = build_parser()
     try:
         args = parser.parse_args(_glued(sys.argv[1:] if argv is None else list(argv)))
@@ -790,6 +810,9 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("jlcplace: interrupted", file=sys.stderr)
         return EXIT_INTERRUPTED
+    except BrokenPipeError:                    # the reader (e.g. `head`) went away: not bad input, say nothing
+        _quiet_stdout()
+        return EXIT_BROKEN_PIPE
     except OSError as e:                       # inputs are BadInput already: an output or the cache
         print(printable(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}"), file=sys.stderr)
         return EXIT_INPUT
