@@ -529,6 +529,31 @@ def test_a_directory_whose_gerbers_are_in_a_subdirectory_names_it(tmp_path):
     assert res.messages == ["no Gerber files were read: the Gerbers are in gerbers/ (pass it as the path)"]
 
 
+def test_a_set_with_nothing_to_read_says_what_it_holds_instead(tmp_path):
+    """A fab directory that holds the zip JLC got (or a zip of it), or a set of only mask, silk and inner layers:
+    the message says where the Gerbers are, or that none of its layers is one the check uses."""
+    src = DIAL / "fab/main"
+    need(src / "gerbers.zip")
+    fab = tmp_path / "fab"
+    fab.mkdir()
+    shutil.copy(src / "gerbers.zip", fab)
+    (fab / "notes.txt").write_text("ordered", encoding="utf-8")
+    nested = tmp_path / "nested.zip"
+    with zipfile.ZipFile(nested, "w") as z:
+        z.write(src / "gerbers.zip", "gerbers.zip")
+    for path in (fab, nested):
+        res = gb.gerber_origin(load_board(pcb("main"), reader="sexpr"), path)
+        assert res.messages == ["no Gerber files were read: gerbers.zip is a zip (pass it as the path)"], path
+    masks = tmp_path / "masks"
+    masks.mkdir()
+    for f in (src / "gerbers").iterdir():
+        if re.search(r"Mask|Silkscreen|In\d_Cu|\.drl$", f.name):
+            shutil.copy(f, masks)
+    res = gb.gerber_origin(load_board(pcb("main"), reader="sexpr"), masks)
+    assert res.messages[0].startswith("no Gerber files were read: none is a layer the check uses (outer copper, paste, "
+                                      "outline); the set holds only dial-me-spinner-main-B_Mask"), res.messages
+
+
 # --------------------------------------------------------------------------------------------------- synthetic boards
 
 def synthetic_board(seed: int = 7, origin=(37.5, 112.25)) -> Board:

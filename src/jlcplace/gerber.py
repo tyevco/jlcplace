@@ -1534,10 +1534,20 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
         G = np.array([(p.x, p.y) for p in gs.pads(side)], float).reshape(-1, 2)
         sides.append(_Side(B, G, idx))
     res.gerber_pads = sum(len(sd.G) for sd in sides)
-    if not gs.layers:
+    if not gs.layers:                              # say why: where the Gerbers are, or what the set holds instead
         dirs = [n for n, why in gs.skipped if why.startswith("a directory of Gerber files")]
-        res.messages.append("no Gerber files were read" + (f": the Gerbers are in {', '.join(dirs)} (pass it as the "
-                                                           "path)" if dirs else ""))
+        zips = [Path(n).name for n, why in gs.skipped if why.startswith("archive")]
+        unused = [Path(n).name for n, why in gs.skipped if why.startswith("not read:")]
+        if dirs:
+            why = f": the Gerbers are in {', '.join(dirs)} (pass it as the path)"
+        elif zips:
+            why = f": {', '.join(zips)} {'is a zip' if len(zips) == 1 else 'are zips'} (pass it as the path)"
+        elif unused:
+            why = (": none is a layer the check uses (outer copper, paste, outline); the set holds only "
+                   + ", ".join(unused[:8]) + (f" and {len(unused) - 8} more" if len(unused) > 8 else ""))
+        else:
+            why = ""
+        res.messages.append("no Gerber files were read" + why)
         return res
     if not res.gerber_pads:
         res.messages.append("the Gerbers have no copper or paste pads to compare (" + _layers_said(gs) + ")")
