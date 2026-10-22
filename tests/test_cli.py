@@ -1342,6 +1342,22 @@ def test_checklist_is_one_item_per_part_and_per_code_at_odd_angles(env, capsys):
     assert "of R3–R7 (5 parts)" in page and "look at this one first" in page
 
 
+def test_checklist_leaves_out_rows_jlc_does_not_place(env, capsys):
+    """A row for a part with no LCSC code (KiCad's position file lists every footprint) was a 'not simulated'
+    preview item, though JLC places nothing without a code and its preview never shows the part: a KiCad demo board
+    gave 56 such items. A part EasyEDA has no record for (R3) is still one."""
+    board = env.make(two("R9", TOP, 112.0, 70.0, 0.0, ""), two("R3", TOP, 112.0, 75.0, 0.0, "C1005"))
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    x, y, a = cv.cpl_row_for(board.part("R9"), Correction(0.0), ORIGIN)
+    write_cpl(env.out, read_cpl(env.out) + [CplRow("R9", x, y, TOP, a)])
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
+    d = json.loads(out)
+    r9 = next(r for r in d["results"] if r["ref"] == "R9")
+    assert r9["status"] == "not-simulated" and "the board part has no LCSC code" in r9["messages"]
+    assert [(i["category"], i["refs"]) for i in d["checklist"] if i["category"] == "not simulated"] == [
+        ("not simulated", ["R3"])], d["checklist"]
+
+
 def test_html_report_labels_legends_and_checklist(env, capsys):
     """cli-12: the board views' labels sat on their part's pad outlines in the same colour; the legend said '+ CPL
     row point' where the board views draw the CPL origin, and 'off copper' dashed where they use verdict colours; the

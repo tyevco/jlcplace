@@ -124,8 +124,8 @@ Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP or excluded, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; or a BOM inconsistency. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -158,7 +158,8 @@ In this order:
   of placement in doubt (a polarity, names against numbers, an orientation the pads do not fix; those first), or a
   bare KiCad pad, a numbering, a manual decision. A green row whose fit is yellow only because the land patterns
   differ (every pad lands) is left out: the preview cannot settle that.
-* **not simulated**: parts with no EasyEDA footprint, each on its own.
+* **not simulated**: parts with no EasyEDA footprint, each on its own (not a part without an LCSC code: JLC does
+  not place it, so its preview never shows it).
 * **bottom reading**: bottom parts whose pins would move if JLC read the bottom rotation differently (see below),
   said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
   green part that moves under every other reading comes first, and when it sits right the others follow. Parts of
