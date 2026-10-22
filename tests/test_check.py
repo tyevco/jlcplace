@@ -176,12 +176,17 @@ def test_correction_overrules_numbers_for_polarity():
     assert [lnd.kicad_number for lnd in place_row(part, by_number, ee, ORIGIN)] == ["2", "1"]
     assert check_row(part, by_number, ee, ORIGIN).verdict == GREEN          # the numbers alone are satisfied
     res = check_row(part, by_number, ee, ORIGIN, corr=fit)
-    assert (res.status, res.verdict) == ("wrong-pad", YELLOW)
+    # a polar part: the fit chose its polarity against the numbers, so the row that follows them reverses it (red
+    # even against a fitted correction; a multi-pin part would be yellow, the numbers may be right after all)
+    assert (res.status, res.verdict) == ("wrong-pad", RED)
     assert res.messages[0] == "the pads land by number, but the correction puts them on other nets: 1 on VBAT, " \
                               "not SW, 2 on SW, not VBAT"
     verified = dataclasses.replace(fit, verdict=VERIFIED, status="board-verified")
     assert check_row(part, by_number, ee, ORIGIN, corr=verified).verdict == RED
-    assert check_row(part, by_number, ee, ORIGIN, corr=dataclasses.replace(fit, verdict=RED)).verdict == GREEN
+    # a red correction of a polar part (names against numbers, nothing to settle it) leaves the polarity open: a row
+    # that lands it by number is not vouched for either
+    res = check_row(part, by_number, ee, ORIGIN, corr=dataclasses.replace(fit, verdict=RED))
+    assert (res.status, res.verdict) == ("wrong-pad", RED) and "polarity needs a decision" in res.messages[0]
     res = check_row(part, row_for(part, fit), ee, ORIGIN, corr=fit)          # the row the correction makes
     assert (res.status, res.verdict) == ("renumbered", YELLOW)
     assert check_row(part, row_for(part, verified), ee, ORIGIN, corr=verified).verdict == VERIFIED
@@ -227,7 +232,7 @@ def test_numbers_one_side_lacks_and_uncovered_pads():
     res = check_row(part, row_for(part, Correction(0)), ee, ORIGIN)
     assert [lnd.ee_number for lnd in res.landings] == ["1", "2", "3", "4"]
     assert (res.status, res.verdict, res.uncovered) == ("ok", YELLOW, ["EP"])
-    assert res.messages == ["numbers only one side has: 3->MP, 4->MP", "KiCad pads no EasyEDA pad lands on: EP"]
+    assert res.messages == ["numbers only one side has: 3->MP, 4->MP", "KiCad pads that no EasyEDA pad lands on: EP"]
 
 
 @pytest.mark.parametrize("ee, why", [(None, "no EasyEDA footprint"),
@@ -240,12 +245,12 @@ def test_not_simulated(ee, why):
     r = two_pad()
     res = check_row(r, row_for(r, Correction(0)), ee, ORIGIN)
     assert (res.status, res.verdict, res.landings) == ("not-simulated", YELLOW, [])
-    assert res.messages == [f"placement not simulated: {why}"]
+    assert res.messages == [f"placement not simulated: {why}; a two-pad non-polar part, and the row point is on it"]
     for part in (sot23_6(), two_pad("C9", footprint="Capacitor_Tantalum_SMD:CP_EIA-3216-18_Kemet-A"),
                  two_pad("D2", footprint="Diode_SMD:D_SOD-123"), switch()[0]):
         res = check_row(part, row_for(part, Correction(0)), ee, ORIGIN, corr=Correction(0))
         assert (res.status, res.verdict) == ("not-simulated", RED), part.ref
-        assert res.messages[0].endswith("the part has polarity or more than two pads")
+        assert res.messages[0].endswith(("a polar two-pad part", "copper pads)")), res.messages
         assert res.expected is not None
 
 
@@ -389,11 +394,282 @@ def test_check_bom_messages():
     assert clean == []
 
 
+# ------------------------------------------------------------------------------------------------------- review
+
+def sod123(ref="D21", numbers=("1", "2"), names=("", ""), nets=("VBAT", "SW"), footprint="Diode_SMD:D_SOD-123"):
+    pads = [Pad(numbers[0], -1.65, 0.0, 0.9, 1.2, shape="roundrect", rr=0.25, net=nets[0], pin_name=names[0]),
+            Pad(numbers[1], 1.65, 0.0, 0.9, 1.2, shape="roundrect", rr=0.25, net=nets[1], pin_name=names[1])]
+    return Part(ref, TOP, 115.0, 75.0, 0.0, footprint=footprint, lcsc="C151296", pads=pads)
+
+
+def ee_two(numbers=("1", "2"), names=None, half=1.6, w=0.9, h=1.2, title="SOD-123F", tags=()):
+    ee = EEFootprint("C151296", title, pads=[EEPad(numbers[0], -half, 0.0, w, h), EEPad(numbers[1], half, 0.0, w, h)],
+                     pin_names=dict(names or {numbers[0]: numbers[0], numbers[1]: numbers[1]}))
+    if tags:
+        ee.tags = list(tags)                 # (set after construction: an older EEFootprint has no such field)
+    return ee
+
+
+def test_red_correction_without_number_evidence_is_red():
+    """logic-1: KiCad numbers the diode's pads K / A, EasyEDA 1 / 2, and no pin name says which is which. The fit
+    cannot tell the two placements apart (red); nothing else vouches for either row, so neither may be green."""
+    from jlcplace.fit import fit_part
+    part, ee = sod123(numbers=("K", "A")), ee_two()
+    corr = fit_part(part, ee)
+    assert corr.verdict == RED and "ambiguous" in corr.reasons[0]
+    for da in (0.0, 180.0):
+        res = check_row(part, turned(row_for(part, corr), da), ee, ORIGIN, corr=corr)
+        assert res.verdict == RED, (da, res.status, res.messages)
+        assert "nothing vouches" in res.messages[0] or "polarity needs a decision" in res.messages[0]
+    # without any correction (a library caller) the numbers decide nothing either: not green
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN)
+    assert res.verdict == YELLOW and "do not decide" in res.messages[0]
+    # BGA balls lettered in KiCad, numbered in EasyEDA: every quarter turn lands every ball
+    balls = [("A1", -0.4, -0.4), ("A2", 0.4, -0.4), ("B1", -0.4, 0.4), ("B2", 0.4, 0.4)]
+    bga = Part("U7", TOP, 100.0, 90.0, 0.0, footprint="Package_BGA:Fake_2x2", lcsc="C9",
+               pads=[Pad(n, x, y, 0.3, 0.3, shape="circle", net=f"N{n}") for n, x, y in balls])
+    ee = EEFootprint("C9", "BGA-4", pads=[EEPad(str(k + 1), x, y, 0.3, 0.3, shape="ellipse")
+                                          for k, (_, x, y) in enumerate(balls)])
+    corr = fit_part(bga, ee)
+    assert corr.verdict == RED
+    for da in (0.0, 90.0, 180.0, 270.0):
+        assert check_row(bga, turned(row_for(bga, corr), da), ee, ORIGIN, corr=corr).verdict == RED, da
+
+
+def test_letter_numbered_pads_keep_their_pin_names():
+    """logic-8: KiCad numbers the diode's pads K / A and names its pins K / A; EasyEDA numbers 1 / 2 and names them
+    - / +. The names were thrown away as 'repeating the pad number', the fit was red and either row passed."""
+    from jlcplace.fit import fit_part
+    part = sod123(numbers=("K", "A"), names=("K", "A"))
+    ee = ee_two(names={"1": "-", "2": "+"})
+    corr = fit_part(part, ee)
+    assert corr.verdict == YELLOW and corr.rot == 0.0 and any("pin names pick rot 0" in r for r in corr.reasons)
+    assert check_row(part, row_for(part, corr), ee, ORIGIN, corr=corr).verdict != RED
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("wrong-pad", RED), res.messages
+
+
+def test_reversed_tantalum_on_a_generic_capacitor_footprint_is_not_green():
+    """ee-1 / geo-2 / logic-3: a tantalum (EasyEDA category 'Tantalum Capacitors', or with no category its CAP-SMD_
+    title) on KiCad's non-polar C_1206 footprint. Turned 180 degrees its + is on the other net."""
+    from jlcplace.fit import fit_part
+    pads = [Pad("1", -1.475, 0.0, 1.15, 1.8, shape="roundrect", rr=0.2, net="+5V"),
+            Pad("2", 1.475, 0.0, 1.15, 1.8, shape="roundrect", rr=0.2, net="GND")]
+    part = Part("C5", TOP, 105.0, 95.0, 0.0, footprint="Capacitor_SMD:C_1206_3216Metric", lcsc="C7171", pads=pads)
+    for title, tags in (("CAP-SMD_L3.2-W1.6-RD-C7171", ["Tantalum Capacitors"]), ("CAP-SMD_L3.2-W1.6-RD", []),
+                        ("CASE-A_3216", [])):
+        ee = ee_two(half=1.53, w=1.2, h=1.8, title=title, tags=tags)
+        corr = fit_part(part, ee)
+        assert corr.verdict == YELLOW and any("polarity decided by pad numbers only" in r for r in corr.reasons)
+        res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+        assert (res.status, res.verdict) == ("wrong-pad", RED), (title, res.messages)
+        # even a preview-verified correction did not keep the turned row from passing as a terminal swap
+        verified = dataclasses.replace(corr, verdict=VERIFIED, status="preview-verified")
+        assert check_row(part, row_for(part, verified), ee, ORIGIN, corr=verified).verdict == VERIFIED
+        assert check_row(part, turned(row_for(part, verified), 180), ee, ORIGIN, corr=verified).verdict == RED
+    ee = ee_two(half=1.53, w=1.2, h=1.8, title="C1206", tags=["Multilayer Ceramic Capacitors MLCC - SMD/SMT"])
+    corr = fit_part(part, ee)
+    assert corr.verdict == GREEN
+    for da in (0.0, 180.0):
+        assert check_row(part, turned(row_for(part, corr), da), ee, ORIGIN, corr=corr).verdict == GREEN
+
+
+def test_reversed_two_pin_connector_with_an_x_reference_is_red():
+    """logic-2: X1 is a 2-pin battery connector (IEC 81346 letter for connectors), not a crystal."""
+    from jlcplace.fit import fit_part
+    pads = [Pad(n, x, 0.0, 1.2, 1.75, shape="oval", kind="tht", net=net)
+            for n, x, net in (("1", -1.0, "VBAT"), ("2", 1.0, "GND"))]
+    part = Part("X1", TOP, 100.0, 100.0, 0.0, footprint="Connector_JST:JST_PH_B2B-PH-K_1x02_P2.00mm_Vertical",
+                lcsc="C131337", pads=pads)
+    ee = EEFootprint("C131337", "CONN-TH_2P-P2.00_S2B-PH-K-S",
+                     pads=[EEPad(n, x, 0.0, 1.2, 1.75, shape="oval", layer="multi", hole=0.75)
+                           for n, x in (("1", -1.0), ("2", 1.0))], pin_names={"1": "1", "2": "2"})
+    corr = fit_part(part, ee)
+    assert corr.verdict == YELLOW and any("polarity decided by pad numbers only" in r for r in corr.reasons)
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    res = check_row(part, row_for(part, corr), NotFound("C131337", "Component not found"), ORIGIN)
+    assert (res.status, res.verdict) == ("not-simulated", RED)
+
+
+def test_polar_part_rows_against_the_polarity_decision():
+    """truth-2: EasyEDA numbers this diode's anode 1, against KiCad (pad 1 = K). Without a drawn + nothing settles
+    names against numbers: the fit is red and so is either row. With a + beside its anode the fit follows the names;
+    the row that lands it by number reverses it and is red, not yellow. Once verified, only the verified row passes."""
+    from jlcplace.fit import fit_part
+    part = sod123("D5", names=("K", "A"), nets=("VBAT", "SW"))
+    ee = ee_two(numbers=("2", "1"), names={"2": "K", "1": "A"})          # EasyEDA's pad 2 (K) where KiCad has 1
+    corr = fit_part(part, ee)
+    assert corr.verdict == RED
+    by_number = turned(row_for(part, corr), 180)
+    assert all(lnd.kicad_number == lnd.ee_number for lnd in place_row(part, by_number, ee, ORIGIN))
+    for row in (row_for(part, corr), by_number):
+        assert check_row(part, row, ee, ORIGIN, corr=corr).verdict == RED
+    marked = dataclasses.replace(ee, plus=[(1.6 + 0.6, 0.0, 0.4)])        # "+" beside EasyEDA pad 1, the anode
+    corr = fit_part(part, marked)
+    assert corr.verdict == YELLOW and corr.rot == 0.0
+    assert check_row(part, row_for(part, corr), marked, ORIGIN, corr=corr).verdict == YELLOW
+    res = check_row(part, by_number, marked, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    verified = dataclasses.replace(corr, verdict=VERIFIED, status="preview-verified")
+    assert check_row(part, row_for(part, verified), marked, ORIGIN, corr=verified).verdict == VERIFIED
+    assert check_row(part, by_number, marked, ORIGIN, corr=verified).verdict == RED
+
+
+def test_polarity_in_doubt_is_red_whichever_way_the_row_goes():
+    """ee-2 (C2286 on KiCad's LED_0603, no pin functions): EasyEDA numbers the LED's anode 1 and draws its + there;
+    KiCad's library puts the cathode on pad 1. The numbers say one way, the + the other: the fit is red, and the row
+    that follows the numbers must not pass because the numbers 'decide' it."""
+    from jlcplace.fit import fit_part
+    led = sod123("LED1", footprint="LED_SMD:LED_0603_1608Metric")
+    for p, x in zip(led.pads, (-0.7875, 0.7875)):
+        p.x, p.w, p.h = x, 0.875, 0.95
+    ee = ee_two(numbers=("2", "1"), half=0.75, w=0.8, h=0.8, title="LED-SMD_L1.6-W0.8-R-RD")
+    ee.plus = [(1.35, 0.0, 0.3)]                                        # beside EasyEDA pad 1, the anode
+    corr = fit_part(led, ee)
+    assert corr.verdict == RED and corr.doubt == "polarity" and any("drawn" in r or "+ beside" in r
+                                                                    for r in corr.reasons), corr.reasons
+    res = check_row(led, row_for(led, corr), ee, ORIGIN, corr=corr)          # by the numbers
+    assert res.verdict == RED and "the polarity needs a decision" in res.messages[0], res.messages
+    res = check_row(led, turned(row_for(led, corr), 180), ee, ORIGIN, corr=corr)   # as the + says
+    assert (res.status, res.verdict) == ("wrong-pad", RED), res.messages
+    # once someone has looked (JLC's preview), the verified orientation passes and the other does not
+    good = dataclasses.replace(corr, rot=cv.norm_angle(corr.rot + 180.0), verdict=VERIFIED, status="preview-verified")
+    assert check_row(led, row_for(led, good), ee, ORIGIN, corr=good).verdict == VERIFIED
+    assert check_row(led, turned(row_for(led, good), 180), ee, ORIGIN, corr=good).verdict == RED
+
+
+def test_rows_off_a_known_correction_are_yellow():
+    """truth-4 / logic-4: every pad centre still on its own pad, but the row is off where the correction puts the
+    part: yellow ("offset") beyond max(0.15 mm, a quarter of the smallest pad it lands on) or 2 degrees, and the
+    message comes first so the summary and the annotations show it."""
+    part = sot23_6(angle=0.0)
+    corr = Correction(rot=180.0, dx=0.02, verdict=GREEN)
+    ee, row = ee_for(part, corr), row_for(part, corr)
+    for dx, want in ((0.1, GREEN), (0.14, GREEN), (0.3, YELLOW), (0.5, YELLOW)):
+        res = check_row(part, turned(row, dx=dx), ee, ORIGIN, corr=corr, alt_readings=False)
+        assert all(lnd.kicad_number == lnd.ee_number for lnd in res.landings)
+        assert res.verdict == want, (dx, res.messages)
+        if want == YELLOW:
+            assert res.status == "offset" and res.messages[0].startswith("differs from the row jlcplace writes")
+    res = check_row(part, turned(row, da=10.0), ee, ORIGIN, corr=corr, alt_readings=False)
+    assert (res.status, res.verdict) == ("offset", YELLOW)
+    # a DPAK-like part: the lead pads are 1.2 mm wide, so 0.25 mm is within a quarter pad; 0.725 mm (a pad-box
+    # centre instead of EasyEDA's origin) is not
+    dpak = Part("U9", TOP, 130.0, 60.0, 90.0, footprint="Package_TO_SOT_SMD:TO-252-2", lcsc="C58069",
+                pads=[Pad("1", -4.2, -2.28, 2.2, 1.2, net="IN"), Pad("3", -4.2, 2.28, 2.2, 1.2, net="OUT"),
+                      Pad("2", 2.1, 0.0, 6.4, 5.8, net="GND")])
+    corr = Correction(rot=0.0, dx=-1.5649, verdict=GREEN)
+    ee, row = ee_for(dpak, corr), row_for(dpak, corr)
+    assert check_row(dpak, turned(row, dy=0.25), ee, ORIGIN, corr=corr).verdict == GREEN
+    res = check_row(dpak, turned(row, dy=0.725), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("offset", YELLOW) and "0.725 mm" in res.messages[0]
+    # against a verified correction the row is no longer verified, and a red correction places nothing to compare
+    verified = dataclasses.replace(corr, verdict=VERIFIED)
+    assert check_row(dpak, turned(row, dy=0.725), ee, ORIGIN, corr=verified).verdict == YELLOW
+    assert check_row(dpak, turned(row, dy=0.725), ee, ORIGIN, corr=dataclasses.replace(corr, verdict=RED)).status \
+        != "offset"
+
+
+def test_unsimulated_row_far_from_its_part_is_red():
+    """ci-1: no EasyEDA record for a resistor, and its row 25 mm off and turned: not 'probably fine'."""
+    r = two_pad("R1", angle=90.0)
+    row = row_for(r, Correction(0))
+    for da in (0.0, 180.0, 37.0):
+        res = check_row(r, turned(row, da), None, ORIGIN)
+        assert (res.status, res.verdict) == ("not-simulated", YELLOW), da
+    res = check_row(r, turned(row, 37.0, dx=25.0), None, ORIGIN)
+    assert (res.status, res.verdict) == ("not-simulated", RED) and "mm off the part's pads" in res.messages[0]
+    res = check_row(r, turned(row, dx=0.8), NotFound("C1", "Component not found"), ORIGIN)
+    assert res.verdict == RED                                   # beside the pads (a 0.62 mm wide part), not on them
+
+
+def test_pads_of_covered_pins_are_not_uncovered():
+    """logic-6 / ee-4 / truth-6: thermal vias inside an exposed pad, an ESP32 module's GND vias between its GND pads,
+    a DPAK's cut middle lead numbered like its tab: KiCad copper of a pin an EasyEDA pad covers. A pad of another
+    number that nothing lands on still counts."""
+    from jlcplace.fit import fit_part
+    leads = [Pad(str(k + 1), x, y, 0.8, 0.3, net=f"P{k + 1}") for k, (x, y) in
+             enumerate(((-1.45, -0.25), (-1.45, 0.25), (1.45, 0.25), (1.45, -0.25)))]
+    qfn = leads + [Pad("5", 0.0, 0.0, 1.7, 1.7, net="GND")] + [
+        Pad("5", x, y, 0.5, 0.5, shape="circle", kind="tht", net="GND") for x in (-0.5, 0.5) for y in (-0.5, 0.5)]
+    esp = leads + [Pad("39", x, 0.0, 0.9, 0.9, net="GND") for x in (-1.5, 0.0, 1.5)] + [
+        Pad("39", x, 0.0, 0.6, 0.6, shape="circle", kind="tht", net="GND") for x in (-0.75, 0.75)]
+    dpak = [Pad("1", -5.04, -2.28, 2.2, 1.2, net="IN"), Pad("2", -5.04, 0.0, 2.2, 1.2, net="OUT"),
+            Pad("3", -5.04, 2.28, 2.2, 1.2, net="ADJ"), Pad("2", 1.26, 0.0, 6.4, 5.8, net="OUT")]
+    for name, pads, smd in (("qfn", qfn, 5), ("esp", esp, 7), ("dpak", dpak, None)):
+        part = Part("U1", TOP, 110.0, 70.0, 0.0, footprint=name, lcsc="C2", pads=pads)
+        corr = Correction(rot=90.0, dx=0.1)
+        keep = [p for p in pads if p.kind == "smd"][:smd] if smd else [p for i, p in enumerate(pads) if i != 1]
+        ee = ee_for(Part("U1", TOP, 0, 0, 0, pads=keep), corr)
+        for e, p in zip(ee.pads, keep):
+            e.w, e.h = p.w, p.h
+        c = fit_part(part, ee)
+        assert c.verdict == GREEN and c.rot == 90.0, (name, c.reasons)
+        res = check_row(part, row_for(part, c), ee, ORIGIN, corr=c)
+        assert (res.verdict, res.uncovered) == (GREEN, []), (name, res.messages)
+    # without EasyEDA pad 3 the DPAK's pad 3 is uncovered: a pad of its own, yellow, and the fit names it once
+    keep = [dpak[0], dpak[3]]
+    ee = ee_for(Part("U1", TOP, 0, 0, 0, pads=keep), Correction(0))
+    part = Part("U1", TOP, 110.0, 70.0, 0.0, footprint="dpak", lcsc="C2", pads=dpak)
+    res = check_row(part, row_for(part, Correction(0)), ee, ORIGIN, corr=Correction(0, verdict=GREEN))
+    assert (res.verdict, res.uncovered) == (YELLOW, ["3"])
+
+
+def test_a_row_the_bom_lists_is_simulated_though_the_board_excludes_it_from_its_bom():
+    """logic-10: JLC places what its BOM lists. D21 is excluded from the board's BOM only, but the JLC BOM lists it
+    and its row is reversed: JLC places it reversed."""
+    part = sod123("D21", names=("K", "A"))
+    part.exclude_bom = True
+    corr = Correction(0.0, verdict=GREEN)
+    ee = ee_for(part, corr)
+    ee.pin_names = {"1": "K", "2": "A"}
+    board = Board("b", ORIGIN, [part])
+    row = turned(row_for(part, corr), 180)
+    res = check_cpl(board, [row], lambda code: ee, corrections={"D21": corr})[0]
+    assert (res.status, res.verdict) == ("not-placed", YELLOW)
+    res = check_cpl(board, [row], lambda code: ee, corrections={"D21": corr}, bom_refs={"D21"})[0]
+    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    assert "the BOM lists it: JLC will place it" in res.messages[-1]
+
+
+def test_a_one_pad_part_without_a_footprint_says_why():
+    """logic-11: not 'the part has polarity or more than two pads'."""
+    tp = Part("TP1", TOP, 100.0, 100.0, 0.0, footprint="TestPoint:TestPoint_Pad_1.0x1.0mm", lcsc="C5",
+              pads=[Pad("1", 0.0, 0.0, 1.0, 1.0, net="X")])
+    res = check_row(tp, CplRow("TP1", 0.0, 0.0, TOP, 0.0), NotFound("C5", "Component not found"), ORIGIN)
+    assert (res.status, res.verdict) == ("not-simulated", RED)
+    assert "one-pad part" in res.messages[0] and "polarity" not in res.messages[0] \
+        and "more than two" not in res.messages[0]
+
+
+def test_bidirectional_tvs_may_be_turned_round():
+    """truth-7: D13 (pin functions A1 / A2) at 90 and at 270 degrees is the same part."""
+    from jlcplace.fit import fit_part
+    part = sod123("D13", names=("A1", "A2"), footprint="Diode_SMD:D_SMF")
+    part.angle = 90.0
+    ee = ee_two(names={"1": "C", "2": "A"}, title="SMF_L2.8-W1.8-LS3.7-BI")
+    ee.tokens = ["BI"]
+    corr = fit_part(part, ee)
+    assert corr.verdict != RED
+    for da in (0.0, 180.0):
+        res = check_row(part, turned(row_for(part, corr), da), ee, ORIGIN, corr=corr)
+        assert res.verdict == GREEN, (da, res.status, res.messages)
+    # a unidirectional TVS on the same footprint turned round is reversed
+    uni = sod123("D14", names=("K", "A"), footprint="Diode_SMD:D_SMF")
+    ee = ee_two(names={"1": "K", "2": "A"}, title="SMF_L2.8-W1.8-LS3.7-RD")
+    corr = fit_part(uni, ee)
+    assert check_row(uni, turned(row_for(uni, corr), 180), ee, ORIGIN, corr=corr).verdict == RED
+
+
 # ------------------------------------------------------------------------------------------------------- golden
 
-DMS = "/home/user/dial-me-spinner/hardware"
+# CONTRACT.md: JLCPLACE_DIAL_ME_SPINNER (a dial-me-spinner checkout), JLCPLACE_TEST_EASYEDA (holding fab-before/, the
+# old CPLs); the defaults are the development machine's
+DMS = os.environ.get("JLCPLACE_DIAL_ME_SPINNER", "/home/user/dial-me-spinner") + "/hardware"
 OFFSETS = f"{DMS}/design/jlc_offsets.json"
-BEFORE = "/tmp/claude-0/-home-user-dial-me-spinner/3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc/fab-before"
+BEFORE = os.environ.get("JLCPLACE_TEST_EASYEDA", "/tmp/claude-0/-home-user-dial-me-spinner/"
+                        "3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc") + "/fab-before"
 BOARDS = ("main", "base")
 
 
@@ -476,7 +752,7 @@ def dms():
     pcbnew = pytest.importorskip("pcbnew")
     need = [OFFSETS] + [pcb_path(b) for b in BOARDS] + [cpl_path(b) for b in BOARDS]
     if not all(os.path.exists(p) for p in need):
-        pytest.skip("needs the dial-me-spinner repository at /home/user/dial-me-spinner")
+        pytest.skip(f"needs the dial-me-spinner repository at {DMS} (set JLCPLACE_DIAL_ME_SPINNER)")
     with open(OFFSETS) as f:
         offsets = json.load(f)
     kbs = {b: pcbnew.LoadBoard(pcb_path(b)) for b in BOARDS}
@@ -537,7 +813,7 @@ def test_committed_cpls_check_clean(dms):
 @pytest.mark.pcbnew
 def test_old_cpls_are_red_on_exactly_the_wrong_rows(dms):
     if not all(os.path.exists(cpl_path(b, before=True)) for b in BOARDS):
-        pytest.skip("needs the old (buggy) CPLs in the dial-me-spinner session scratchpad")
+        pytest.skip(f"needs the old (buggy) CPLs in {BEFORE} (set JLCPLACE_TEST_EASYEDA)")
     red = {}
     for name in BOARDS:
         res = check_cpl(dms.boards[name], read_cpl(cpl_path(name, before=True)), dms.lookup, corrections=dms.corrs)

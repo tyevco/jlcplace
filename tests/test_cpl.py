@@ -14,7 +14,7 @@ from jlcplace.cpl import format_row, natural_key, parse_layer, parse_length, rea
     write_cpl
 from jlcplace.model import BOTTOM, TOP, Board, Correction, CplRow, Pad, Part
 
-DMS = "/home/user/dial-me-spinner/hardware"
+DMS = os.environ.get("JLCPLACE_DIAL_ME_SPINNER", "/home/user/dial-me-spinner") + "/hardware"   # CONTRACT.md
 MAIN_PCB = f"{DMS}/kicad/main/dial-me-spinner-main.kicad_pcb"
 
 
@@ -119,7 +119,7 @@ def test_kicad_ascii_units_line_and_inch_csv(tmp_path):
 @pytest.fixture(scope="module")
 def kicad_pos(tmp_path_factory):
     if not shutil.which("kicad-cli") or not os.path.exists(MAIN_PCB):
-        pytest.skip("needs kicad-cli and the dial-me-spinner board")
+        pytest.skip(f"needs kicad-cli and the dial-me-spinner board {MAIN_PCB} (set JLCPLACE_DIAL_ME_SPINNER)")
     d = tmp_path_factory.mktemp("pos")
     out = {}
     for fmt in ("csv", "ascii"):
@@ -213,7 +213,8 @@ def test_read_bom_variants(tmp_path):
         read_bom(write(tmp_path, "bad.csv", "Comment,Footprint\nx,y\n"))
 
 
-@pytest.mark.skipif(not os.path.exists(f"{DMS}/fab/main"), reason="needs the dial-me-spinner fab outputs")
+@pytest.mark.skipif(not os.path.exists(f"{DMS}/fab/main"),
+                    reason=f"needs the dial-me-spinner fab outputs in {DMS} (set JLCPLACE_DIAL_ME_SPINNER)")
 def test_read_real_bom():
     rows = read_bom(f"{DMS}/fab/main/dial-me-spinner-main-BOM-JLCPCB.csv")
     assert rows and all(r["qty"] == len(r["designators"]) for r in rows)

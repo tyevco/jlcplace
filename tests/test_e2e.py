@@ -76,14 +76,16 @@ def confirm_sw1(capsys, cache, db):
 # ------------------------------------------------------------------------------------------------------- released
 
 def test_released_cpls_have_no_red_rows(cache, tmp_path, capsys):
-    """main: clean but for R26, whose code EasyEDA does not know (a 0402 resistor: yellow). base: SW1 is red until
-    someone decides the switch's numbering (EasyEDA 1-4 against KiCad 1,1,2,2: which EasyEDA pins are joined inside
-    the switch is not in the records); confirmed manually it is yellow."""
+    """main: clean but for R26, whose code EasyEDA does not know (a 0402 resistor: yellow), and BZ1, whose polarity
+    only the pad numbers decide (a buzzer on a custom footprint, no + drawn: yellow until checked in the preview).
+    base: SW1 is red until someone decides the switch's numbering (EasyEDA 1-4 against KiCad 1,1,2,2: which EasyEDA
+    pins are joined inside the switch is not in the records); confirmed manually it is yellow."""
     code, out, _ = jl(capsys, "check", pcb("main"), cpl("main"), "--bom", bom("main"), "--cache", cache, "--offline",
                       "--json", tmp_path / "main.json")
     res = results(tmp_path / "main.json")
     assert code == 0 and len(res) == 184
-    assert by_verdict(res, "red") == {} and by_verdict(res, "yellow") == {"R26": "not-simulated"}
+    assert by_verdict(res, "red") == {} and by_verdict(res, "yellow") == {"R26": "not-simulated", "BZ1": "ok"}
+    assert "polarity decided by pad numbers only" in res["BZ1"]["messages"][0]
     assert json.loads((tmp_path / "main.json").read_text())["bom"] == []
     assert not [r for r in res.values() if any("differs from the row jlcplace writes" in m for m in r["messages"])]
 
@@ -137,7 +139,7 @@ def test_cpl_from_fits_reproduces_the_released_cpls(cache, tmp_path, capsys):
     code, text, _ = jl(capsys, "cpl", pcb("main"), "-o", out, "--cache", cache, "--offline", "--json",
                        tmp_path / "main.json")
     assert code == 0 and f"wrote {out} (184 rows)" in text
-    assert by_verdict(results(tmp_path / "main.json"), "yellow") == {"R26": "not-simulated"}
+    assert by_verdict(results(tmp_path / "main.json"), "yellow") == {"R26": "not-simulated", "BZ1": "ok"}
     _same_rows(out, cpl("main"), offsets)
 
     out = tmp_path / "base.csv"
@@ -247,4 +249,4 @@ def test_snapshot_round_trip_and_checks_without_kicad(cache, tmp_path, capsys):
     code, _, err = sub("check", pcb("main"), cpl("main"), "--reader", "pcbnew", "--cache", cache, "--offline")
     assert code == 3 and "pcbnew" in err
     code, out, _ = sub("check", snap, cpl("main"), "--cache", cache, "--offline")
-    assert code == 0 and "184 results: 0 red, 1 yellow, 183 green, 0 verified" in out
+    assert code == 0 and "184 results: 0 red, 2 yellow, 182 green, 0 verified" in out

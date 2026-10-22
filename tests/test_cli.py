@@ -143,7 +143,7 @@ def test_mutated_rows_are_red_and_annotated(env, capsys):
     lines = out.splitlines()
     assert any(ln.startswith("RED     U1") and "wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other "
                "nets: 1->4 (C, not A)" in ln for ln in lines)
-    assert any(ln.startswith("RED     R1") and "off-copper" in ln for ln in lines)
+    assert any(ln.startswith("RED     R1") and "land off copper" in ln for ln in lines)
     ann = [ln for ln in lines if ln.startswith("::")]
     assert len(ann) == 2
     assert ann[1].startswith(f"::error file={_gh(env.out, True)},line=4,title=jlcplace U1 wrong-pad::")
@@ -153,7 +153,7 @@ def test_mutated_rows_are_red_and_annotated(env, capsys):
 def test_fail_on_yellow_and_reports(env, capsys):
     env.make(two("R3", TOP, 112.0, 70.0, 0.0, "C1005"))      # EasyEDA has no such component: a resistor, yellow
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
-    assert code == 0 and "YELLOW  R3" in out and "not-simulated" in out
+    assert code == 0 and "YELLOW  R3" in out and "placement not simulated" in out
     assert any(r.ref == "R3" and (r.x, r.y, r.rotation) == (12.0, 30.0, 0.0) for r in read_cpl(env.out))
     assert run(capsys, "check", env.board, env.out, *offline(env))[0] == 0
     code, _, _ = run(capsys, "check", env.board, env.out, *offline(env), "--fail-on", "yellow", "--junit",
@@ -191,7 +191,8 @@ def test_offline_check_from_a_committed_database(env, capsys):
     assert code == 0
     d = json.loads(out)
     assert {r["verdict"] for r in d["results"]} == {GREEN}
-    assert all(r["messages"][0].startswith("simulated with the KiCad pads through the stored auto correction")
+    # the check's own findings come first; the note on how it was simulated last (cli-7)
+    assert all(r["messages"][-1].startswith("simulated with the KiCad pads through the stored auto correction: ")
                and r["easyeda"]["proxy"] for r in d["results"])
     rows = read_cpl(env.out)
     next(r for r in rows if r.ref == "U1").rotation = 0.0
@@ -305,7 +306,7 @@ def test_bom_codes_and_rows_the_bom_leaves_out():
     parts[1].lcsc = parts[2].lcsc = ""
     board = Board("b", ORIGIN, parts)
     assert apply_bom_codes(board, [{"designators": ["R1"], "lcsc": "C1002"}, {"designators": ["U1"], "lcsc": "x"}]) \
-        == ["R1"]
+        == [("R1", "", "C1002")]
     assert (board.part("R1").lcsc, board.part("R1").lcsc_field) == ("C1002", "BOM")
 
     class Client:
@@ -384,7 +385,272 @@ def test_annotations_escape_and_junit_counts():
     run_ = Run(Board("b.kicad_pcb", ORIGIN, [part]), [res[0].row], res, {}, cpl_path="x.csv", row_lines=[2])
     assert res[0].verdict == YELLOW
     assert github_annotations(run_) == ["::warning file=x.csv,line=2,title=jlcplace R1 not-simulated::placement not "
-                                        "simulated: no EasyEDA footprint"]
+                                        "simulated: no EasyEDA footprint; a two-pad non-polar part, and the row "
+                                        "point is on it"]
     assert github_annotations(run_, fail_on=YELLOW)[0].startswith("::error ")
     assert ET.fromstring(junit(run_)).get("failures") == "0"
     assert ET.fromstring(junit(run_, fail_on=YELLOW)).get("failures") == "1"
+
+
+# ------------------------------------------------------------------------------------------------------- review
+
+def record2(pads, *, names=None, tags=None, plus=(), title="", uuid="fp2"):
+    """record() with symbol pin names {number: name}, part categories and "+" marks [(x, y, size)] (ee frame, mm)
+    drawn as two silkscreen tracks."""
+    rec = record(pads, uuid=uuid)
+    res = rec["result"]
+    res["dataStr"]["shape"] = [
+        f"P~show~0~{n}~0~0~0~gge{n}~0^^0~0^^M 0 0 h10~#000000^^1~0~0~0~{name}~start~~~#000000^^"
+        f"1~0~0~0~{n}~end~~~#000000^^0~0~0^^0~M 0 0" for n, name in (names or {}).items()]
+    if tags is not None:
+        res["tags"] = list(tags)
+    if title:
+        res["packageDetail"]["title"] = title
+    for k, (x, y, s) in enumerate(plus):
+        px, py, h = HX + x / 0.254, HY + y / 0.254, s / 2 / 0.254
+        res["packageDetail"]["dataStr"]["shape"] += [
+            f"TRACK~0.6~3~~{px - h:.4f} {py:.4f} {px + h:.4f} {py:.4f}~ggp{k}h~0",
+            f"TRACK~0.6~3~~{px:.4f} {py - h:.4f} {px:.4f} {py + h:.4f}~ggp{k}v~0"]
+    return rec
+
+
+def diode(ref, x, y, code, names=("K", "A"), footprint="Diode_SMD:D_SOD-123", numbers=("1", "2"), layer=TOP,
+          angle=0.0, nets=None, half=1.65):
+    nets = nets or (f"{ref}_1", f"{ref}_2")
+    return Part(ref, layer, x, y, angle, footprint=footprint, lcsc=code,
+                pads=[Pad(numbers[0], -half, 0.0, 0.9, 1.2, net=nets[0], pin_name=names[0]),
+                      Pad(numbers[1], half, 0.0, 0.9, 1.2, net=nets[1], pin_name=names[1])])
+
+
+def write_records(env, **records):
+    for code, rec in records.items():
+        (Path(env.cache) / f"{code}.json").write_text(json.dumps(rec))
+
+
+SOD = [("1", -1.6, 0.0, 0.9, 1.2, 0), ("2", 1.6, 0.0, 0.9, 1.2, 0)]
+
+
+def test_database_entries_follow_the_pin_functions(env, capsys):
+    """truth-1: D4 and D5, one code on one footprint, pad 1 the cathode on D4 and the anode on D5 (EasyEDA: pad 1 =
+    K, + drawn beside its anode). One database entry for both let D5's correction replace D4's: `cpl --db` wrote D4
+    reversed, and confirming D5 vouched for it."""
+    write_records(env, C2001=record2(SOD, names={"1": "K", "2": "A"}, plus=[(2.4, 0.0, 0.5)], uuid="sod"))
+    env.make(diode("D4", 115.0, 70.0, "C2001", names=("K", "A")), diode("D5", 115.0, 60.0, "C2001", names=("A", "K")))
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env), "--ref", "D4", "--ref", "D5")
+    assert code == 0 and out.count("[stored]") == 2, out
+    assert len(json.loads((db / "C2001.json").read_text())["entries"]) == 2
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    rows = {r.ref: r.rotation for r in read_cpl(env.out)}
+    assert code == 0 and (rows["D4"], rows["D5"]) == (0.0, 180.0), out
+    # D5 checked in JLC's preview: D4's entry is not verified by it, and D4 turned to D5's angle is red
+    run(capsys, "confirm", env.board, "--ref", "D5", "--db", db, "--by", "me", "--source", "preview", *offline(env))
+    statuses = sorted(e["status"] for e in json.loads((db / "C2001.json").read_text())["entries"])
+    assert statuses == ["auto", "preview-verified"]
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "D4").rotation = 180.0
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+    got = {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}
+    assert code == 2 and got["D4"] == RED and got["D5"] == VERIFIED
+    # one database for two boards: a board with only D5 gets D5's own correction, not D4's
+    db2 = env.tmp / "db2"
+    env.make(diode("D4", 115.0, 70.0, "C2001", names=("K", "A")))
+    run(capsys, "fit", env.board, "--db", db2, *offline(env), "--ref", "D4")
+    env.make(diode("D5", 115.0, 60.0, "C2001", names=("A", "K")))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db2, *offline(env))
+    assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["D5"] == 180.0, out
+
+
+def test_fit_does_not_let_a_second_part_replace_the_first_ones_entry(env, capsys, monkeypatch):
+    """truth-1: should two parts with one database key (code, EasyEDA footprint, KiCad pads and pin functions) ever
+    fit differently, the second must not replace the first one's entry behind its back."""
+    import dataclasses
+
+    from jlcplace import cli
+    real = cli.fit_part
+
+    def fit_part(part, ee, **kw):                     # R2 fits otherwise than R1 (same code, same pads)
+        c = real(part, ee, **kw)
+        return dataclasses.replace(c, rot=180.0) if part.ref == "R2" else c
+
+    monkeypatch.setattr(cli, "fit_part", fit_part)
+    env.make()
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
+    r2 = next(ln for ln in out.splitlines() if " R2 " in ln)
+    assert "not stored: R1 has the same code and footprint and fits rot 0" in r2, out
+    entries = json.loads((db / "C1002.json").read_text())["entries"]
+    assert [e["correction"]["rot"] for e in entries] == [0.0]
+
+
+def test_the_bom_code_is_the_part_jlc_places(env, capsys):
+    """cli-2: JLC assembles from the BOM's LCSC column. The BOM puts C1006 (the same SOT-23-6 drawn without the half
+    turn) where the board says C1001: rows for the board's code put C1006 half a turn off."""
+    write_records(env, C1006=record([(n, x, y, 1.3, 0.6, 0) for n, x, y in SOT], uuid="sot0"))
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1006\nR,\"R1,R2\",0402,C1002\n")
+    code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "r.json")
+    res = {r["ref"]: r for r in json.loads((env.tmp / "r.json").read_text())["results"]}
+    assert code == 2 and res["U1"]["lcsc"] == "C1006" and res["U1"]["verdict"] == RED
+    assert "U1: JLC places C1006 from the BOM; the board says C1001 (checked with C1006)" in out
+    # cpl with the BOM writes rows for the BOM's code
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--bom", bom, *offline(env))
+    assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["U1"] == 0.0, out
+    code, _, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env))
+    assert code == 0
+
+
+def test_cpl_refuses_rows_nothing_vouches_for(env, capsys):
+    """logic-1: KiCad numbers the diode K / A, EasyEDA 1 / 2 with no telling pin names: the fit is red
+    ("ambiguous"), the row written from it was green and `cpl` kept the file."""
+    write_records(env, C2002=record2(SOD, names={"1": "1", "2": "2"}, uuid="ka"))
+    env.make(diode("D21", 115.0, 70.0, "C2002", names=("", ""), numbers=("K", "A")))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 2 and "not written" in out and "RED     D21" in out and "nothing vouches" in out, out
+    assert not Path(env.out).exists()
+
+
+def test_rows_of_doubtful_corrections_are_yellow(env, capsys):
+    """ee-2: an LED whose polarity only the pad numbers decide (no KiCad pin functions, no + drawn): the row
+    jlcplace writes was green and `--fail-on yellow` passed it."""
+    write_records(env, C2286=record2([("2", -0.75, 0.0, 0.8, 0.8, 0), ("1", 0.75, 0.0, 0.8, 0.8, 0)],
+                                     names={"1": "1", "2": "2"}, uuid="led"))
+    env.make(diode("LED1", 110.0, 75.0, "C2286", names=("", ""), footprint="LED_SMD:LED_0603_1608Metric",
+                   half=0.7875))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--fail-on", "yellow")
+    assert code == 1 and "YELLOW  LED1" in out and "fit was unsure" in out, out
+    rows = {r.ref: r.rotation for r in read_cpl(env.out)}
+    assert rows["LED1"] == 180.0                               # by the numbers: EasyEDA's pad 1 on KiCad's 1
+
+
+def test_names_against_numbers_wait_for_a_decision(env, capsys):
+    """truth-3 / geo-4: D12, EasyEDA's symbol names its pad 1 A, its footprint draws the + beside pad 2, KiCad's
+    pad 1 is K. JLC's preview went with the + (and the numbers); jlcplace went with the names and wrote it reversed.
+    Without a + nothing settles it: red until confirmed."""
+    pads = [("1", -2.0, 0.0, 1.5, 1.5, 0), ("2", 2.0, 0.0, 1.5, 1.5, 0)]
+    write_records(env, C2836=record2(pads, names={"1": "A", "2": "K"}, uuid="sma"),
+                  C2837=record2(pads, names={"1": "A", "2": "K"}, plus=[(3.0, 0.0, 0.6)], uuid="sma+"))
+    env.make(diode("D12", 115.0, 70.0, "C2837", footprint="Diode_SMD:D_SMA", half=2.0))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["D12"] == 0.0, out
+    env.make(diode("D12", 115.0, 70.0, "C2836", footprint="Diode_SMD:D_SMA", half=2.0))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 2 and "polarity undecided" in out and "jlcplace confirm" in out, out
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "D12", "--db", db, "--by", "me", "--source", "preview",
+                       "--rot", "0", *offline(env))
+    assert code == 0, out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["D12"] == 0.0, out
+
+
+def test_offline_summary_keeps_the_finding_first(env, capsys):
+    """cli-7: simulated from the database without records, the summary and JUnit showed only "simulated with the
+    KiCad pads through ..." and a capped verdict gave no reason."""
+    # R3's EasyEDA pads sit 0.17 mm further out than KiCad's: a yellow fit (rms), a green row with the record
+    write_records(env, C2003=record([("1", -0.65, 0.0, 0.6, 0.6, 0), ("2", 0.65, 0.0, 0.6, 0.6, 0)], uuid="r3"))
+    env.make(two("R3", TOP, 112.0, 70.0, 0.0, "C2003"))
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
+    assert "YELLOW  R3" in out and "rms 0.170" in out, out
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "R1").x += 0.5                    # off its pads
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env, env.empty), "--junit",
+                       env.tmp / "j.xml")
+    lines = {ln.split()[1]: ln for ln in out.splitlines() if ln.startswith(("RED", "YELLOW"))}
+    assert code == 2 and "land off copper" in lines["R1"], out
+    assert "because the stored auto correction is yellow: rms 0.170" in lines["R3"], out
+    failure = ET.fromstring((env.tmp / "j.xml").read_text()).find(".//failure")
+    assert "land off copper" in failure.get("message")
+
+
+def test_hint_when_the_codes_live_in_the_bom(env, capsys):
+    """cli-8: every row 'the board part has no LCSC code' and nothing said --bom."""
+    board = env.make()
+    for p in board.parts:
+        p.lcsc = ""
+    save_snapshot(board, env.board)
+    rows = [CplRow(p.ref, 0.0, 0.0, p.layer, 0.0) for p in board.parts if p.pads]
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
+    assert out.count("pass --bom BOM.csv") == 1 and "--lcsc-field" in out, out
+
+
+def test_messages_read_as_english(env, capsys):
+    """cli-11: '1 codes: 1 footprints', '1 BOM issues', 'rot 0 also land', 'KiCad pads no EasyEDA pad lands on',
+    'off-copper: ... land off copper'."""
+    env.make()
+    code, out, _ = run(capsys, "fetch", "C1001", "--cache", env.cache)
+    assert "1 code: 1 footprint, 0 not found" in out
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "R1").x += 0.5
+    write_cpl(env.out, rows)
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2,R9\",0402,C1002\n")
+    code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env))
+    assert "; 1 BOM issue" in out and "BOM issues" not in out, out
+    r1 = next(ln for ln in out.splitlines() if ln.startswith("RED     R1"))
+    assert "off-copper:" not in r1 and "land off copper" in r1, r1
+
+
+def test_readme_says_what_the_database_keeps():
+    """lic-2: database entries keep the EasyEDA footprint's title (package dimensions) for people reading them."""
+    text = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    assert "hold only\nderived numbers, pad numbers and hashes" not in text and "footprint's title" in text
+    db = CorrectionDB(Path(os.environ.get("TMPDIR", "/tmp")) / "jlcplace-lic2-unused")
+    assert db.file("C1").name == "C1.json"
+
+
+def test_offset_rows_show_in_the_summary(env, capsys):
+    """truth-4 / logic-4: a row 0.5 mm along its pads from where the correction puts the part (every pad centre still
+    on its own pad) was green, its 'differs from the row jlcplace writes' only in the JSON."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "U1").x += 0.5
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--fail-on", "yellow",
+                       "--github-annotations")
+    line = next(ln for ln in out.splitlines() if ln.startswith("YELLOW  U1"))
+    assert code == 1 and "offset: differs from the row jlcplace writes" in line and "0.500 mm" in line, out
+    assert any(ln.startswith("::error ") and "jlcplace U1 offset" in ln for ln in out.splitlines())
+
+
+def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_bom(env, capsys):
+    """logic-10: D1 is excluded from the board's BOM, but the JLC BOM lists it, so JLC places it; its row is
+    reversed."""
+    write_records(env, C2001=record2(SOD, names={"1": "K", "2": "A"}, uuid="sod"))
+    d1 = diode("D1", 115.0, 70.0, "C2001")
+    d1.exclude_bom = True
+    board = env.make(d1)
+    x, y, a = cv.cpl_row_for(board.part("D1"), Correction(180.0), ORIGIN)      # D1 turned half a turn
+    write_cpl(env.out, [CplRow("D1", x, y, TOP, a)])
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nD,D1,SOD-123,C2001\n")
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", env.tmp / "a.json")
+    assert {r["ref"]: r["status"] for r in json.loads((env.tmp / "a.json").read_text())["results"]}["D1"] \
+        == "not-placed"
+    code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "b.json")
+    d = {r["ref"]: r for r in json.loads((env.tmp / "b.json").read_text())["results"]}["D1"]
+    assert code == 2 and (d["status"], d["verdict"]) == ("wrong-pad", RED), d
+    assert "the BOM lists it: JLC will place it" in d["messages"][-1]
+
+
+def test_checklist_puts_the_placements_in_doubt_first(env, capsys):
+    """truth-5: 'uncertain correction' items in plain ref order hid the one wrong fit among the right ones; the ones
+    whose choice of placement is in doubt (a polarity, an orientation) now come first."""
+    write_records(env, C2286=record2([("2", -0.75, 0.0, 0.8, 0.8, 0), ("1", 0.75, 0.0, 0.8, 0.8, 0)],
+                                     names={"1": "1", "2": "2"}, uuid="led"),
+                  C2003=record([("1", -0.65, 0.0, 0.6, 0.6, 0), ("2", 0.65, 0.0, 0.6, 0.6, 0)], uuid="r3"))
+    env.make(two("C0", TOP, 112.0, 70.0, 0.0, "C2003", footprint="Capacitor_SMD:C_0402_1005Metric"),
+             diode("LED9", 110.0, 75.0, "C2286", names=("", ""), footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
+    unsure = [i["ref"] for i in json.loads(out)["checklist"] if i["category"] == "uncertain correction"]
+    assert unsure == ["LED9", "C0"], unsure

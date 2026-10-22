@@ -58,8 +58,9 @@ API_URL = "https://easyeda.com/api/products/{code}/components?version=6.4.19.5"
 USER_AGENT = f"jlcplace/{__version__} (+https://github.com/tyevco/jlcplace)"
 EE_UNIT = 0.254                        # mm per EasyEDA canvas unit (10 mil)
 BACKOFF = (3.0, 6.0, 12.0, 24.0, 48.0)  # s, after the 1st, 2nd, ... consecutive failure; the last repeats
-ORIENTATION_TOKENS = ("TL", "TR", "BL", "BR", "RD", "FD", "CW")
-MARK_LAYER = "101"                     # ComponentPolarityLayer: the pin-1 / polarity dot
+ORIENTATION_TOKENS = ("TL", "TR", "BL", "BR", "RD", "FD", "CW", "BI")   # BI: bidirectional (a TVS)
+MARK_LAYER = "101"                     # ComponentPolarityLayer: the pin-1 dot (by pad 1 whatever its function)
+PLUS_LAYERS = ("3", "12")              # top silkscreen and document: where a footprint draws its "+"
 PAD_LAYERS = {"1": TOP, "2": BOTTOM, "11": "multi"}
 PAD_SHAPES = {"RECT": "rect", "OVAL": "oval", "ELLIPSE": "ellipse", "POLYGON": "polygon"}
 
@@ -256,9 +257,8 @@ def parse_record(code: str, result: dict) -> EEFootprint:
         raise EEError(f"{code}: footprint has no origin (head.x / head.y)")
     ox, oy = _num(head["x"], f"{code}: head.x"), _num(head["y"], f"{code}: head.y")
     pads, marks = [], []
-    for s in ds.get("shape") or []:
-        if not isinstance(s, str):
-            continue
+    shapes = [s for s in ds.get("shape") or [] if isinstance(s, str)]
+    for s in shapes:
         f = s.split("~")
         if f[0] == "PAD":
             p = _pad(f, ox, oy, code)
@@ -276,9 +276,97 @@ def parse_record(code: str, result: dict) -> EEFootprint:
         utime = int(float(pk.get("updateTime") or head.get("utime") or 0))
     except (TypeError, ValueError):
         utime = 0
+    tags = result.get("tags")
+    tags = [str(t) for t in tags if isinstance(t, (str, int, float))] if isinstance(tags, list) else []
     return EEFootprint(lcsc=code, title=title, uuid=str(pk.get("uuid") or head.get("uuid") or ""), utime=utime,
                        pads=pads, marks=marks, pin_names=pin_names(result), package=package or title,
-                       tokens=title_tokens(title))
+                       tokens=title_tokens(title), tags=tags, plus=plus_marks(shapes, ox, oy))
+
+
+# ------------------------------------------------------------------------------------------------------- "+" marks
+
+_PATH_TOKEN = re.compile(r"[A-Za-z]|[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+PLUS_ASPECT = 2.5                      # a filled bar is at least this many times longer than wide
+PLUS_MID = 0.35                        # the bars cross within this fraction of each one's length from its middle
+PLUS_RATIO = 2.5                       # neither bar is longer than this many times the other
+PLUS_CLEAR = 0.25                      # no other stroke comes this close (fraction of the shorter bar)
+
+
+def _path_points(path: str) -> list[tuple[float, float]] | None:
+    """The points of an `M x y L x y ... Z` path, None when it has curves."""
+    nums = []
+    for t in _PATH_TOKEN.findall(path or ""):
+        if t.upper() in ("M", "L", "Z"):
+            continue
+        if t.isalpha():
+            return None
+        nums.append(float(t))
+    return list(zip(nums[0::2], nums[1::2]))
+
+
+def _seg_dist(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    n = dx * dx + dy * dy
+    t = 0.0 if n <= 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / n))
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+def plus_marks(shapes: list[str], ox: float = 0.0, oy: float = 0.0) -> list[tuple[float, float, float]]:
+    """The "+" signs a footprint draws on its silkscreen or document layer (3, 12), as (x, y, length) in the ee frame:
+    a horizontal and a vertical bar of one layer (two-point TRACKs, or thin filled rectangles), alike in length,
+    crossing near both middles, with no other stroke of that layer near the crossing or the bars' ends (a diode's
+    drawn symbol meets its bar at an end, an outline at a corner). EasyEDA draws one beside the positive pad of a
+    polarised two-terminal part (a diode's anode, a capacitor's +); `parts.ee_positive_pad` reads which. Malformed
+    shapes are skipped."""
+    bars, edges = [], []
+    for s in shapes:
+        f = s.split("~")
+        try:
+            if f[0] == "TRACK" and len(f) > 4 and f[2].strip() in PLUS_LAYERS:
+                v = [float(t) for t in f[4].split()]
+                pts = [(_mm(v[i] - ox), _mm(v[i + 1] - oy)) for i in range(0, len(v) - 1, 2)]
+                if len(pts) == 2:
+                    bars.append((f[2].strip(), pts[0], pts[1]))
+                else:
+                    edges += [(f[2].strip(), a, b) for a, b in zip(pts, pts[1:])]
+            elif f[0] == "SOLIDREGION" and len(f) > 3 and f[1].strip() in PLUS_LAYERS:
+                pts = _path_points(f[3])
+                if not pts:
+                    continue
+                pts = [(_mm(x - ox), _mm(y - oy)) for x, y in pts]
+                xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+                w, h = max(xs) - min(xs), max(ys) - min(ys)
+                if len(pts) <= 5 and max(w, h) >= PLUS_ASPECT * max(min(w, h), 1e-9):
+                    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+                    bars.append((f[1].strip(), (min(xs), cy), (max(xs), cy)) if w >= h else
+                                (f[1].strip(), (cx, min(ys)), (cx, max(ys))))
+                else:
+                    edges += [(f[1].strip(), a, b) for a, b in zip(pts, pts[1:])]
+        except (ValueError, IndexError):
+            continue
+    horiz = [b for b in bars if abs(b[1][1] - b[2][1]) < 1e-6 < abs(b[1][0] - b[2][0])]
+    vert = [b for b in bars if abs(b[1][0] - b[2][0]) < 1e-6 < abs(b[1][1] - b[2][1])]
+    out = []
+    for hb in horiz:
+        hx0, hx1 = sorted((hb[1][0], hb[2][0]))
+        hy, hl = hb[1][1], hx1 - hx0
+        for vb in vert:
+            vy0, vy1 = sorted((vb[1][1], vb[2][1]))
+            vx, vl = vb[1][0], vy1 - vy0
+            if vb[0] != hb[0] or not (hx0 <= vx <= hx1 and vy0 <= hy <= vy1):
+                continue
+            if max(hl, vl) > PLUS_RATIO * min(hl, vl) or abs(vx - (hx0 + hx1) / 2) > PLUS_MID * hl \
+                    or abs(hy - (vy0 + vy1) / 2) > PLUS_MID * vl:
+                continue
+            c, clear = (vx, hy), PLUS_CLEAR * min(hl, vl)
+            ends = (c, hb[1], hb[2], vb[1], vb[2])
+            if any(o is not hb and o is not vb and o[0] == hb[0] and any(_seg_dist(p, o[1], o[2]) < clear
+                                                                          for p in ends) for o in bars):
+                continue
+            if any(o[0] == hb[0] and _seg_dist(c, o[1], o[2]) < clear for o in edges):
+                continue
+            out.append((round(vx, 4) + 0.0, round(hy, 4) + 0.0, round(max(hl, vl), 4)))
+    return out
 
 
 def from_response(code: str, response) -> EEFootprint | NotFound:

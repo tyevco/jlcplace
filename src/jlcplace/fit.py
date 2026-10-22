@@ -23,27 +23,38 @@ geometry  Numbers ignored: rotations 0/90/180/270 and those aligning the farthes
           missing pads do not pull them), refined 3x by assignment (geom.assign; cost = centre distance + size
           mismatch) and Kabsch. Every transform under which all EasyEDA pads land is kept, merged with the others
           that land each pad on the same land: the members of S (`Correction.alternatives` lists the others).
-names     EasyEDA symbol pin names vs KiCad pin functions of the lands each pad lands on (normalised, synonyms).
-          Names count only where they separate members of S: libraries that name pins differently under every
-          placement say nothing about the placement.
+names     EasyEDA symbol pin names vs KiCad pin functions of the lands each pad lands on (normalised, synonyms;
+          parts.name_tokens). Names count only where they separate members of S: libraries that name pins
+          differently under every placement say nothing about the placement.
++ mark    For a polar two-terminal part, the "+" its EasyEDA footprint draws beside its positive pad
+          (parts.ee_positive_pad) against KiCad's positive pad (parts.kicad_positive_pad: pin functions or pad
+          numbers A / K / + / -, else KiCad's library convention, diode pad 1 = cathode, polarised capacitor pad
+          1 = +). In JLC's preview data it settled all 6 cases where names and numbers disagreed.
 nets      Two members are equivalent when every EasyEDA pad lands on the same nets (a land without a net is its
-          own net). Swapping the two terminals of a non-polar two-terminal part (R, C, L, a switch numbered 1,1,2,2)
-          is harmless too. Anything else that changes a pad's net is a different placement.
+          own net). Swapping the two terminals of a non-polar two-terminal part (parts.nonpolar: R, C, L, a switch
+          numbered 1,1,2,2, ...) is harmless too. Anything else that changes a pad's net is a different placement.
 
 Decision (Correction.verdict)
 -----------------------------
-red      nothing lands every EasyEDA pad (the best partial transform is returned); only a mirror image lands, or the
-         mirrored fit is better supported by numbers and names than every normal one and no normal one lands on the
-         same nets, or as well supported and far more exact (mirror=True: never placed); numbering conflicts (a pad
-         on another-numbered land of another net, its own number existing in KiCad) that no pin names vouch for; or
-         several non-equivalent members that neither numbers nor names separate ("ambiguous").
-yellow   names pick a member the numbers do not (the names win: in JLC's preview data they were right 5 times of 6);
-         numbering differs or does not overlap but the members of S are equivalent, or the names pick one; the
-         number fit missing or leaving pads off copper while a fit consistent with the numbering lands them; a polar
-         two-terminal part whose polarity only the pad numbers decide; pin names that differ; rms > 0.1 mm; < 80 %
-         of the numbered EasyEDA pads matched by number; an angle that is not a multiple of 90 (kept unsnapped);
-         KiCad lands that no EasyEDA pad lands on; another placement that fits as well on the same numbers and nets
-         (the pads cannot orient the body).
+red      nothing lands every EasyEDA pad (the best partial transform at a multiple of 90 degrees is returned, so
+         `cpl --force` never writes a tilted compromise); only a mirror image lands, or the mirrored fit is better
+         supported by numbers and names than every normal one and no normal one lands on the same nets, or as well
+         supported and far more exact (mirror=True: never placed); numbering conflicts (a pad on another-numbered land
+         of another net, its own number existing in KiCad) that no pin names vouch for; several non-equivalent
+         members that neither numbers nor names separate ("ambiguous"); a polar two-terminal part whose pin names
+         and pad numbers disagree with no + mark to settle it (in JLC's preview data the names were right 5 times of
+         6), or whose + mark contradicts the only other evidence: its polarity needs a person (`jlcplace confirm`).
+yellow   names pick a member the numbers do not (the names win, or, for a polar two-terminal part, the + mark
+         decides); numbering differs or does not overlap but the members of S are equivalent, or the names pick one;
+         the number fit missing or leaving pads off copper while a fit consistent with the numbering lands them; a
+         polar two-terminal part whose polarity only the pad numbers decide (no names, no + mark); pin names that
+         differ; an rms above 0.1 mm and a quarter of the smallest KiCad pad the pads land on; < 80 % of the EasyEDA
+         pads whose number KiCad has matched by number (a number only EasyEDA has, a tab 4 or shield pads, cannot
+         match); an angle that is not a multiple of 90 (kept unsnapped); KiCad lands that no EasyEDA pad lands on
+         (parts.uncovered_exemption: vias and stubs of a covered pin excepted); another placement that fits as well
+         on the same numbers and nets (the pads cannot orient the body); all pads on one land (only the pads' shape
+         can tell 0 from 90 degrees).
+         Correction.doubt says when the yellow is about which placement was chosen (check makes such rows yellow).
 green    the number fit lands every pad without numbering conflicts, names agree or are uninformative, and every
          other member of S is equivalent or ruled out by the numbers (for a polar two-terminal part, by the names
          as well).
@@ -63,10 +74,15 @@ import numpy as np
 from . import geom
 from .convention import ee_to_library, norm_angle, rot
 from .model import BOTTOM, GREEN, RED, YELLOW, Correction, EEFootprint, Pad, PadLanding, Part
-from .parts import NONPOLAR_REFS, POLAR_FOOTPRINT, ee_key, norm_number, ref_prefix
+from .parts import compare_names, ee_key, ee_positive_pad, kicad_hash, kicad_positive_pad, name_tokens, norm_number, \
+    pad_size, uncovered_exemption
+from .parts import nonpolar as _nonpolar
+
+__all__ = ["compare_names", "ee_landings", "fit_part", "name_tokens", "net_map"]
 
 MERGE_TOL = 0.01          # mm: KiCad pads with centres this close are one land
-RMS_YELLOW = 0.1          # mm
+RMS_YELLOW = 0.1          # mm, or ...
+RMS_PAD = 0.25            # ... this fraction of the smallest KiCad pad the EasyEDA pads land on, when that is more
 MATCHED_YELLOW = 0.8      # fraction of the EasyEDA pads matched by number
 BOX_MARGIN = 0.05         # mm: bounding-box prefilter before the exact pad test
 MAX_REFINE = 24           # geometric hypotheses refined per part ...
@@ -75,52 +91,6 @@ ASSIGN_MAX = 2500         # cost-matrix cells up to which refinement pairs by Hu
 SAMPLE = 64               # pads that vote on translation hypotheses
 MIN_SPREAD = 0.05         # mm: a pair set narrower than this fixes no angle
 TWIN_RMS = 0.05           # mm: placements fitting this much alike are the same pattern turned
-
-_POLAR_EE_TITLE = re.compile(r"led|sod|diode|tant|elec", re.I)
-_POLARITY_NAMES = frozenset({"ANODE", "CATHODE"})
-
-_SYNONYMS = {
-    "EP": "GND", "PAD": "GND", "EPAD": "GND", "TAB": "GND", "THERMAL": "GND", "THERMALPAD": "GND", "VSS": "GND",
-    "DP": "D+", "DM": "D-", "DN": "D-",
-    "SHIELD": "SHELL", "SH": "SHELL", "EH": "SHELL", "MH": "SHELL",
-    "A": "ANODE", "+": "ANODE", "K": "CATHODE", "C": "CATHODE", "-": "CATHODE",
-    "VCC": "VDD",
-}
-_UNINFORMATIVE = re.compile(r"(PIN)?\d*|NC|DNC|N\.C\.?")
-
-
-# ------------------------------------------------------------------------------------------------------- names
-
-def name_tokens(name: str, number: str = "") -> frozenset[str]:
-    """Canonical tokens of a pin name: upper case without ~{} # * ! _ and spaces, split at '/', ',' and parentheses
-    (alternate functions; '/RESET' is active low), 'nRESET' -> RESET, synonyms applied. A name that only repeats its
-    pad number, digits, PINn or NC is uninformative: the empty set."""
-    s = (name or "").replace("~{", "").replace("{", "").replace("}", "")
-    out = set()
-    for t in re.split(r"[/,()\s]+", s):
-        t = t.strip("~#*!")
-        if len(t) > 1 and t[0] == "n" and t[1].isupper():
-            t = t[1:]
-        t = t.upper().replace("_", "")
-        if _UNINFORMATIVE.fullmatch(t) or t == norm_number(number):
-            continue
-        out.add(_SYNONYMS.get(t, t))
-    return frozenset(out)
-
-
-def compare_names(a: frozenset, b: frozenset) -> int:
-    """+1 agree, -1 disagree, 0 unknown: a side uninformative, or equal only up to a trailing index (CC1 vs CC2,
-    DP1 vs D+), which is how libraries differ on symmetric connectors."""
-    if not a or not b:
-        return 0
-    if a & b:
-        return 1
-
-    def stem(ts):
-        return {_SYNONYMS.get(u, u) for u in (re.sub(r"\d+$", "", t) for t in ts) if u}
-
-    return 0 if stem(a) & stem(b) else -1
-
 
 # ------------------------------------------------------------------------------------------------------- lands
 
@@ -134,6 +104,8 @@ class _Land:
     net: object                      # the set of its nets, or ("land", index) when it has none
     names: frozenset[str]
     box: tuple[float, float, float, float]
+    cx: float = 0.0                  # copper centre: the anchor, or the outline's box centre for a pad whose copper is
+    cy: float = 0.0                  # offset from its anchor or custom (SOT-89's tab, numbered with its middle lead)
 
 
 def _lands(pads: list[Pad]) -> list[_Land]:
@@ -148,19 +120,33 @@ def _lands(pads: list[Pad]) -> list[_Land]:
     for k, g in enumerate(groups):
         pts = [q for p in g for q in geom.pad_outline(p)]
         nets = frozenset(p.net for p in g if p.net)
-        lands.append(_Land(pads=g, x=sum(p.x for p in g) / len(g), y=sum(p.y for p in g) / len(g),
-                           numbers=frozenset(norm_number(p.number) for p in g if p.number),
+        box = (min(q[0] for q in pts), min(q[1] for q in pts), max(q[0] for q in pts), max(q[1] for q in pts))
+        x, y = sum(p.x for p in g) / len(g), sum(p.y for p in g) / len(g)
+        cx, cy = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if any(p.poly for p in g) else (x, y)
+        lands.append(_Land(pads=g, x=x, y=y, numbers=frozenset(norm_number(p.number) for p in g if p.number),
                            net=nets if nets else ("land", k),
-                           names=frozenset().union(*(name_tokens(p.pin_name, p.number) for p in g)),
-                           box=(min(q[0] for q in pts), min(q[1] for q in pts),
-                                max(q[0] for q in pts), max(q[1] for q in pts))))
+                           names=frozenset().union(*(name_tokens(p.pin_name, p.number) for p in g)), box=box,
+                           cx=cx, cy=cy))
     return lands
+
+
+def _ee_centre(p) -> tuple[float, float]:
+    """An EasyEDA pad's copper centre: a polygon pad's outline box centre (its record's centre field can sit
+    elsewhere, as on SOT-89's tab), else its centre."""
+    if p.poly:
+        xs, ys = [q[0] for q in p.poly], [q[1] for q in p.poly]
+        return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    return p.x, p.y
 
 
 def _extent(w: float, h: float, a: float):
     """Axis-aligned extent of a w x h pad turned by a."""
     c, s = abs(math.cos(math.radians(a))), abs(math.sin(math.radians(a)))
     return w * c + h * s, w * s + h * c
+
+
+def _natural(s: str):
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 
 def _spread(pts) -> float:
@@ -234,8 +220,10 @@ class _Fit:
     def __init__(self, part: Part, ee: EEFootprint, snap: float):
         self.part, self.ee, self.snap = part, ee, snap
         self.lands = _lands(part.copper_pads())
+        # landing uses the EasyEDA pad centres (as check does); pairing pads for a fit uses copper centres
         self.E = np.array([(p.x, p.y) for p in ee.pads], float).reshape(-1, 2)
-        self.K = np.array([(ld.x, ld.y) for ld in self.lands], float).reshape(-1, 2)
+        self.Ep = np.array([_ee_centre(p) for p in ee.pads], float).reshape(-1, 2)
+        self.K = np.array([(ld.cx, ld.cy) for ld in self.lands], float).reshape(-1, 2)
         self.box = np.array([ld.box for ld in self.lands], float).reshape(-1, 4)
         self.ksize = np.column_stack((self.box[:, 2] - self.box[:, 0], self.box[:, 3] - self.box[:, 1]))
         self.enum = [norm_number(p.number) for p in ee.pads]
@@ -256,8 +244,9 @@ class _Fit:
 
     # -------------------------------------------------------------------------------------------- mapping, landing
 
-    def map(self, tf: _Tf) -> np.ndarray:
-        X = self.E.copy()
+    def map(self, tf: _Tf, X: np.ndarray | None = None) -> np.ndarray:
+        """The EasyEDA pad centres (or the points X, ee frame) under tf."""
+        X = (self.E if X is None else X).copy()
         if tf.mirror:
             X[:, 0] = -X[:, 0]
         r = math.radians(tf.a)
@@ -282,7 +271,7 @@ class _Fit:
                         if any(geom.pad_contains(p, (q[0], q[1])) for p in self.lands[j].pads)]
                 own = [j for j in hits if j in self.by_num.get(self.enum[i], ())]
                 hits = own or hits
-                out.append(min(hits, key=lambda j: math.dist(q, self.K[j])) if hits else -1)
+                out.append(min(hits, key=lambda j: math.dist(q, (self.lands[j].x, self.lands[j].y))) if hits else -1)
             self._cache[key] = tuple(out)
         return self._cache[key]
 
@@ -318,20 +307,20 @@ class _Fit:
                 ee_by.setdefault(n, []).append(i)
         common = sorted(n for n in ee_by if n in self.by_num)
         once = [n for n in common if len(ee_by[n]) == 1 and len(self.by_num[n]) == 1]
-        src = [self.E[ee_by[n][0]] for n in once]
+        src = [self.Ep[ee_by[n][0]] for n in once]
         dst = [self.K[self.by_num[n][0]] for n in once]
         if tf is not None:
-            P = self.map(tf)
+            P = self.map(tf, self.Ep)
             for n in common:
                 ii, jj = ee_by[n], self.by_num[n]
                 if len(ii) == len(jj) > 1:
                     for a, b in geom.assign([[math.dist(P[i], self.K[j]) for j in jj] for i in ii]):
-                        src.append(self.E[ii[a]])
+                        src.append(self.Ep[ii[a]])
                         dst.append(self.K[jj[b]])
             return src, dst
         if len(src) >= 2 and _spread(src) > MIN_SPREAD and _spread(dst) > MIN_SPREAD:
             return src, dst
-        src = [self.E[ee_by[n]].mean(0) for n in common]
+        src = [self.Ep[ee_by[n]].mean(0) for n in common]
         dst = [self.K[self.by_num[n]].mean(0) for n in common]
         ok = len(src) >= 2 and _spread(src) > MIN_SPREAD and _spread(dst) > MIN_SPREAD
         return (src, dst) if ok else ([], [])
@@ -364,24 +353,27 @@ class _Fit:
             order = np.argsort(-d, kind="stable")[:12]
             return [(int(iu[0][k]), int(iu[1][k])) for k in order if d[k] >= 0.98 * d[order[0]]][:3]
 
-        for (p, q), (r, s) in itertools.product(far_pairs(self.E), far_pairs(self.K)):
+        for (p, q), (r, s) in itertools.product(far_pairs(self.Ep), far_pairs(self.K)):
             for dst in ((self.K[r], self.K[s]), (self.K[s], self.K[r])):
-                a = geom.kabsch([self.E[p], self.E[q]], list(dst), mirror)[0]
+                a = geom.kabsch([self.Ep[p], self.Ep[q]], list(dst), mirror)[0]
                 if all(min(abs(a - b) % 360, 360 - abs(a - b) % 360) > 0.01 for b in angles):
                     angles.append(a)
         return angles
 
     def _anchors(self) -> list[int]:
-        """EasyEDA pads to anchor translations on: the most distinctive size, the farthest out, the largest."""
+        """EasyEDA pads to anchor translations on: the most distinctive size, the farthest out, the largest; at least
+        two different pads, so that one oddly shaped pad (SOT-89's tab) is never the only anchor."""
         if self._anchor_list is None:
             size = np.array([sorted((p.w, p.h)) for p in self.ee.pads], float).reshape(-1, 2)
             similar = (np.abs(size[:, None] - size[None]) <= 0.1 * np.maximum(size[:, None], 1e-3)).all(2).sum(1)
             area = size[:, 0] * size[:, 1]
-            far = np.linalg.norm(self.E - self.E.mean(0), axis=1)
+            far = np.linalg.norm(self.Ep - self.Ep.mean(0), axis=1)
             out: list[int] = []
             for k in (int(np.lexsort((-area, similar))[0]), int(np.argmax(far)), int(np.argmax(area))):
                 if k not in out:
                     out.append(k)
+            if len(out) == 1 and len(self.Ep) > 1:
+                out.append(int(np.argmax(np.linalg.norm(self.Ep - self.Ep[out[0]], axis=1))))
             self._anchor_list = out
         return self._anchor_list
 
@@ -394,7 +386,7 @@ class _Fit:
         gate = np.maximum(0.5 * np.hypot(self.ksize[:, 0], self.ksize[:, 1]), 0.2)
         pairs: list[tuple[int, int]] = []
         for _ in range(3):
-            P = self.map(tf)
+            P = self.map(tf, self.Ep)
             D = np.linalg.norm(P[:, None] - self.K[None], axis=2)
             C = D + self._size_cost(tf)
             near = C.argmin(1).tolist()
@@ -417,15 +409,15 @@ class _Fit:
             if not new or new == pairs:
                 break
             pairs = new
-            src, dst = self.E[[i for i, _ in pairs]], self.K[[j for _, j in pairs]]
+            src, dst = self.Ep[[i for i, _ in pairs]], self.K[[j for _, j in pairs]]
             if len(pairs) >= 2 and _spread(src) > MIN_SPREAD:
                 a, tx, ty, rms = geom.kabsch(src, dst, tf.mirror)
             else:
                 a, (tx, ty), rms = tf.a, dst[0] - np.array(rot(((-1 if tf.mirror else 1) * src[0][0], src[0][1]),
                                                                tf.a)), 0.0
             tf = _Tf(norm_angle(a), float(tx), float(ty), tf.mirror, float(rms))
-        if len(pairs) >= 2 and _spread(self.E[[i for i, _ in pairs]]) > MIN_SPREAD:
-            return _fit_pairs(self.E[[i for i, _ in pairs]], self.K[[j for _, j in pairs]], tf.mirror, self.snap)
+        if len(pairs) >= 2 and _spread(self.Ep[[i for i, _ in pairs]]) > MIN_SPREAD:
+            return _fit_pairs(self.Ep[[i for i, _ in pairs]], self.K[[j for _, j in pairs]], tf.mirror, self.snap)
         return _Tf(_snap_angle(tf.a, self.snap), tf.tx, tf.ty, tf.mirror, tf.rms)
 
     def geometric(self) -> list[_Tf]:
@@ -440,9 +432,10 @@ class _Fit:
         for mirror in (False, True):
             for a in self._angles(mirror):
                 base = self.map(_Tf(a, 0.0, 0.0, mirror))
-                T = [self.K.mean(0) - base.mean(0),
-                     (self.K.min(0) + self.K.max(0)) / 2 - (base.min(0) + base.max(0)) / 2]
-                T = np.array(T + [self.K[j] - base[i] for i in self._anchors() for j in range(m)])
+                basep = self.map(_Tf(a, 0.0, 0.0, mirror), self.Ep)
+                T = [self.K.mean(0) - basep.mean(0),
+                     (self.K.min(0) + self.K.max(0)) / 2 - (basep.min(0) + basep.max(0)) / 2]
+                T = np.array(T + [self.K[j] - basep[i] for i in self._anchors() for j in range(m)])
                 for k in range(0, len(T), step):
                     landed = self._inbox(base[sample][None] + T[k:k + step, None]).any(2).sum(1)
                     hyps += [(int(landed[u]), _Tf(a, float(T[k + u][0]), float(T[k + u][1]), mirror))
@@ -451,7 +444,7 @@ class _Fit:
         keep = [h for h in hyps if h[0] >= best - max(1, ns // 10)]
 
         def near(tf):                    # tie-break: mean distance to the nearest land centre
-            return float(np.linalg.norm(self.map(tf)[:, None] - self.K[None], axis=2).min(1).mean())
+            return float(np.linalg.norm(self.map(tf, self.Ep)[:, None] - self.K[None], axis=2).min(1).mean())
 
         picked: list[_Tf] = []
         partial = 0
@@ -472,22 +465,26 @@ class _Fit:
         """The transform that best fits a landing map: Kabsch over every landed pad (EasyEDA centre -> land centre),
         kept only if it lands the pads the same way."""
         ii = [i for i, j in enumerate(land) if j >= 0]
-        if len(ii) < 2 or _spread(self.E[ii]) <= MIN_SPREAD:
+        if len(ii) < 2 or _spread(self.Ep[ii]) <= MIN_SPREAD:
             return tf
-        c = _fit_pairs(self.E[ii], self.K[[land[i] for i in ii]], tf.mirror, self.snap)
+        c = _fit_pairs(self.Ep[ii], self.K[[land[i] for i in ii]], tf.mirror, self.snap)
         return c if self.landing(c) == tuple(land) else tf
 
     # -------------------------------------------------------------------------------------------- part class
 
     def nonpolar(self) -> bool:
-        """A two-terminal part whose terminals may be swapped. Unknown parts count as polar."""
-        if len(self.terminals) != 2 or ref_prefix(self.part.ref) not in NONPOLAR_REFS:
-            return False
-        if POLAR_FOOTPRINT.search(self.part.footprint or "") or _POLAR_EE_TITLE.search(self.ee.title or ""):
-            return False
-        if any(ld.names & _POLARITY_NAMES for ld in self.lands):
-            return False
-        return not (len(set(self.enum)) == 2 and any(t & _POLARITY_NAMES for t in self.etok))
+        """A two-terminal part whose terminals may be swapped (parts.nonpolar, as check judges it)."""
+        return len(self.terminals) == 2 and _nonpolar(self.part, self.ee)
+
+    def polarity_mark(self) -> tuple[str, str, str] | None:
+        """(the EasyEDA pad its footprint draws a "+" beside, the KiCad positive pad, how that is known), or None."""
+        e, k = ee_positive_pad(self.ee), kicad_positive_pad(self.part)
+        return None if e is None or k is None or k[0] not in self.by_num else (e, k[0], k[1])
+
+    def mark_ok(self, m: _Member, mark) -> bool:
+        """Does member m put the EasyEDA "+" pad on the KiCad positive pad?"""
+        idx = [i for i, n in enumerate(self.enum) if n == mark[0]]
+        return bool(idx) and all(m.land[i] >= 0 and mark[1] in self.lands[m.land[i]].numbers for i in idx)
 
     def fixes_rotation(self, land) -> bool:
         """Do the lands the pads are on pin the rotation down (two distinct lands, apart)?"""
@@ -495,10 +492,13 @@ class _Fit:
         return len(js) >= 2 and _spread(self.K[js]) > MIN_SPREAD
 
     def uncovered(self, land) -> list[str]:
-        """KiCad lands no EasyEDA pad lands on, unless they sit on a covered land (thermal vias in an exposed pad)."""
+        """KiCad lands no EasyEDA pad lands on (each label once), unless parts.uncovered_exemption excuses them, as
+        check does: thermal vias in or beside a covered pad, the stub of a pin whose tab is covered."""
         hit = {j for j in land if j >= 0}
-        return [self.label(j) for j, ld in enumerate(self.lands) if j not in hit
-                and not any(geom.pad_contains(p, (ld.x, ld.y)) for k in hit for p in self.lands[k].pads)]
+        covered = [p for k in hit for p in self.lands[k].pads]
+        out = [self.label(j) for j, ld in enumerate(self.lands) if j not in hit
+               and not all(uncovered_exemption(p, covered) for p in ld.pads)]
+        return sorted(set(out), key=_natural)
 
 
 # ------------------------------------------------------------------------------------------------------- decision
@@ -508,6 +508,10 @@ def _rank(m: _Member):
     return -m.evidence[0], -m.evidence[1], round(m.tf.rms, 3), min(m.tf.a, 360.0 - m.tf.a), m.tf.a
 
 
+def _lands_word(ms: list) -> str:
+    return "lands" if len(ms) == 1 else "land"
+
+
 def _deg(m: _Member) -> str:
     return f"{norm_angle(m.tf.a):g}" + (" mirrored" if m.mirror else "")
 
@@ -515,7 +519,7 @@ def _deg(m: _Member) -> str:
 def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
     """The correction library = R(rot) . M . ee + (dx, dy) for a part and its EasyEDA footprint, with the verdict,
     reasons and the other transforms that land every pad. The rules are in the module docstring."""
-    corr = Correction(rot=0.0, ee_key=ee_key(ee), kicad_hash=geom.pad_hash(part.copper_pads()))
+    corr = Correction(rot=0.0, ee_key=ee_key(ee), kicad_hash=kicad_hash(part))
     if any(p.layer == BOTTOM for p in ee.pads):
         # pads on EasyEDA's bottom layer are on the far side of the part and never meet its copper (as in check)
         ee = replace(ee, pads=[p for p in ee.pads if p.layer != BOTTOM])
@@ -583,15 +587,50 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
                 "mirror": m.mirror, "matched": m.agree, "conflicts": len(m.conflicts), "names": m.name_score,
                 "equivalent": harmless(m, ref), "nets_changed": changed[:16]}
 
+    def one_land(m: _Member) -> tuple[_Tf, str]:
+        """Every EasyEDA pad on one land: turning about it lands them all alike, but the pads' shape can still tell
+        0 from 90 degrees (a rectangular test point)."""
+        ii = [i for i, j in enumerate(m.land) if j >= 0]
+        cands = []
+        for a in (0.0, 90.0, 180.0, 270.0):
+            tf = _fixed_angle_fit(f.Ep[ii], f.K[[m.land[i] for i in ii]], a, False)
+            if f.landing(tf) == m.land:
+                cands.append((float(sum(f._size_cost(tf)[i, m.land[i]] for i in ii)), a, tf))
+        if not cands:
+            return m.tf, "the pads are on one land, which does not fix the rotation"
+        best = min(c[0] for c in cands)
+        good = [c for c in cands if c[0] <= best + 0.02]
+        if len({c[1] % 180.0 for c in good}) == 1 and len({c[1] % 180.0 for c in cands}) > 1:
+            return (min(good, key=lambda c: c[1])[2],
+                    "the pads are on one land; their shape fixes the rotation, but only up to 180 degrees")
+        return m.tf, "the pads are on one land, which does not fix the rotation"
+
     # ---- nothing lands every pad
     if not members:
         # the transform that lands the most pads; the number fit among equals
         best = max(partial, key=lambda p: (p[0], p[2] is nf, -p[1]))[2] if partial else _Tf(0.0, 0.0, 0.0)
+        tilted = ""
+        if best.a % 90:
+            # a compromise between pin layouts that do not match (`cpl --force` would write it): report it, but keep
+            # the best partial placement at a multiple of 90
+            tilted = f" (the best one overall is turned {best.a:g} deg, a compromise between unlike patterns)"
+            square = [p for p in partial if not p[2].a % 90]
+            if square:
+                best = max(square, key=lambda p: (p[0], p[2] is nf, -p[1]))[2]
+            else:
+                k = norm_angle(round(best.a / 90.0) * 90.0)
+                best = _Tf(k, best.tx, best.ty, best.mirror, best.rms)
+                land = f.landing(best)
+                ii = [i for i, j in enumerate(land) if j >= 0]
+                if ii:
+                    best = _fixed_angle_fit(f.Ep[ii], f.K[[land[i] for i in ii]], k, best.mirror)
         take(best, "number" if best is nf else "geometry")
         land = f.landing(best)
         off = [ee.pads[i].number or f"#{i}" for i, j in enumerate(land) if j < 0]
-        reasons.append(f"no placement puts every EasyEDA pad on KiCad copper; under the best one {len(off)} of "
-                       f"{len(land)} are off copper: {', '.join(off[:16])}")
+        reasons.append(f"no placement puts every EasyEDA pad on KiCad copper; under the best one at a multiple of 90 "
+                       f"deg {len(off)} of {len(land)} are off copper: {', '.join(off[:16])}{tilted}"
+                       if tilted else f"no placement puts every EasyEDA pad on KiCad copper; under the best one "
+                       f"{len(off)} of {len(land)} are off copper: {', '.join(off[:16])}")
         corr.verdict, corr.matched = RED, f.member(best, land).agree
         corr.score = int(40 * (len(land) - len(off)) / len(land))
         return corr
@@ -617,18 +656,47 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
     pick = names_pick(normal)
     lead = min(normal, key=lambda m: _rank(m)[:2] + (not m.is_nf,) + _rank(m)[2:])
     N = lead if not lead.conflicts and lead.agree >= 1 else None
+    polar2 = len(f.terminals) == 2 and not nonpolar
+    mark = f.polarity_mark() if polar2 else None
     alts: list[_Member] = []
+    doubt = ""
+
+    def by_mark(pool: list[_Member]) -> _Member | None:
+        """The one member of pool that puts the footprint's "+" pad on KiCad's positive pad (None: no mark, or it
+        does not single one out)."""
+        ok = [m for m in pool if mark is not None and f.mark_ok(m, mark)]
+        return ok[0] if len(ok) == 1 else None
+
+    def mark_says() -> str:
+        return (f"the EasyEDA footprint draws its + beside pad {mark[0]}, and KiCad's positive pad is {mark[1]} "
+                f"(by {mark[2]})")
+
     if N is not None and pick is not None and not harmless(pick, N):
-        chosen, verdict = pick, YELLOW
-        reasons.append(f"pin names pick rot {_deg(pick)} ({pick.names_ok} agree, {pick.names_bad} differ), pad "
-                       f"numbers pick rot {_deg(N)}: following the names")
+        names_vs = (f"pin names pick rot {_deg(pick)} ({pick.names_ok} agree, {pick.names_bad} differ), pad numbers "
+                    f"pick rot {_deg(N)}")
+        if polar2:
+            # a polar part's names against its numbers: neither won reliably in JLC's preview data (the names 5 times
+            # of 6), the drawn + did every time; without one the polarity needs a person
+            m, doubt = by_mark([pick, N]), "polarity"
+            if m is not None:
+                chosen, verdict = m, YELLOW
+                reasons.append(f"{names_vs}; {mark_says()}: following the {'names' if m is pick else 'pad numbers'}")
+            else:
+                chosen, verdict = pick, RED
+                reasons.append(f"polarity undecided: {names_vs}, and no + drawn on the EasyEDA footprint settles it: "
+                               f"check the polarity in JLC's preview and record it with `jlcplace confirm`")
+        else:
+            chosen, verdict, doubt = pick, YELLOW, "names"
+            reasons.append(f"{names_vs}: following the names")
     elif N is not None:
         chosen, verdict = N, GREEN if N.is_nf else YELLOW
         if not N.is_nf:
             if nf is None and f.fixes_rotation(N.land):
                 reasons.append("fewer than two pad numbers fix the map; placed by geometry")
             elif nf is None:
-                reasons.append("the pads are on one land, which does not fix the rotation")
+                N.tf, why = one_land(N)
+                reasons.append(why)
+                doubt = "orientation"
             elif any(m.is_nf for m in normal):
                 reasons.append("the number fit is not the placement that matches the most pad numbers")
             else:
@@ -637,23 +705,35 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         alts = [m for m in normal if m is not N and not harmless(m, N)]
         loose = [m for m in alts if m.agree >= N.agree and not m.conflicts and m.name_score >= N.name_score]
         by_names = all(N.name_score > m.name_score for m in alts)
+        others = ", ".join(_deg(m) for m in alts)
         if loose:
             verdict = RED
             reasons.append("ambiguous: " + "; ".join(f"rot {_deg(m)} lands every pad, on other nets, and neither pad "
                                                      f"numbers nor pin names rule it out" for m in loose))
         elif alts and len(f.terminals) == 2 and not by_names:
-            verdict = YELLOW
-            reasons.append(f"polarity decided by pad numbers only (rot {', '.join(_deg(m) for m in alts)} also lands "
-                           f"both pads, and no pin names confirm it): check the polarity mark in JLC's preview")
+            m = by_mark([N] + alts)
+            if m is N:
+                reasons.append(f"rot {others} also {_lands_word(alts)} both pads; ruled out by the pad numbers and "
+                               f"the drawn polarity: {mark_says()}")
+            elif m is not None:
+                verdict, doubt = RED, "polarity"
+                reasons.append(f"polarity: the pad numbers pick rot {_deg(N)}, but {mark_says()}, which takes rot "
+                               f"{_deg(m)}: check the polarity in JLC's preview and record it with `jlcplace confirm`")
+            else:
+                verdict, doubt = YELLOW, "polarity"
+                reasons.append(f"polarity decided by pad numbers only (rot {others} also {_lands_word(alts)} both "
+                               f"pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's "
+                               f"preview")
         elif alts:
-            reasons.append(f"rot {', '.join(_deg(m) for m in alts)} also land every pad, on other nets; ruled out by "
+            reasons.append(f"rot {others} also {_lands_word(alts)} every pad, on other nets; ruled out by "
                            + ("pad numbers and pin names" if by_names else "pad numbers"))
         twins = [m for m in normal if m is not N and m.land != N.land and f.same_nets(m, N) and m.agree >= N.agree
                  and m.tf.rms <= N.tf.rms + TWIN_RMS]
         if twins:
             verdict = YELLOW if verdict == GREEN else verdict
-            reasons.append(f"rot {', '.join(_deg(m) for m in twins)} puts every pad on the same numbers and nets: the "
-                           f"pads do not fix the body's orientation")
+            doubt = doubt or "orientation"
+            reasons.append(f"rot {', '.join(_deg(m) for m in twins)} {'puts' if len(twins) == 1 else 'put'} every pad "
+                           f"on the same numbers and nets: the pads do not fix the body's orientation")
     else:
         why = "numbering differs" if any(m.agree for m in normal) else "the pad numbers do not overlap"
         if lead.conflicts:
@@ -661,25 +741,39 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         chosen = pick or lead
         alts = [m for m in normal if m is not chosen and not harmless(m, chosen)]
         if pick is not None:
-            verdict = YELLOW
-            reasons.append(f"{why}; pin names pick rot {_deg(pick)} ({pick.names_ok} agree)")
+            verdict, doubt = YELLOW, "names"
+            m = by_mark([pick] + alts) if alts else None
+            if m is not None and m is not pick:
+                verdict, doubt = RED, "polarity"
+                reasons.append(f"polarity: {why}; pin names pick rot {_deg(pick)} ({pick.names_ok} agree), but "
+                               f"{mark_says()}, which takes rot {_deg(m)}: check the polarity in JLC's preview and "
+                               f"record it with `jlcplace confirm`")
+            else:
+                reasons.append(f"{why}; pin names pick rot {_deg(pick)} ({pick.names_ok} agree)"
+                               + (f"; {mark_says()}" if m is pick else ""))
         elif lead.conflicts:
             # the pad would sit on another terminal's net, and only domain knowledge (a switch's internal pairs, a
             # regulator's pinout) could say that is intended
             verdict = RED
             reasons.append(f"numbering conflict: {', '.join(lead.conflicts[:6])} (pads on another terminal's net) "
                            f"and no pin names confirm it; check the pinout, or confirm the placement in JLC's preview")
+        elif alts and by_mark([lead] + alts) is not None:
+            chosen = by_mark([lead] + alts)
+            alts = [m for m in normal if m is not chosen and not harmless(m, chosen)]
+            verdict, doubt = YELLOW, "polarity"
+            reasons.append(f"{why}; {mark_says()}: rot {_deg(chosen)}")
         elif alts:
             verdict = RED
             reasons.append(f"ambiguous: {why}, and rot {', '.join(_deg(m) for m in [lead] + alts)} each land every "
                            f"pad on different nets with nothing to separate them")
         else:
             verdict = YELLOW
+            several = sum(m.tf.rms <= chosen.tf.rms + TWIN_RMS for m in normal) > 1
+            doubt = "orientation" if several else ""
             reasons.append(f"{why}; " + ("every placement that lands all pads is electrically equivalent"
                                          + (" or swaps the terminals of a non-polar part" if nonpolar else "")
                                          + ", but the pads do not fix the body's orientation"
-                                         if sum(m.tf.rms <= chosen.tf.rms + TWIN_RMS for m in normal) > 1
-                                         else "one placement fits"))
+                                         if several else "one placement fits"))
     take(chosen.tf, "number" if chosen.is_nf else "geometry")
 
     # ---- names and quality
@@ -692,19 +786,29 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         downgrade(f"{chosen.names_bad} pin name(s) differ ({chosen.names_ok} agree)")
     elif chosen.names_ok:
         reasons.append(f"{chosen.names_ok} pin names agree")
-    if chosen.agree < MATCHED_YELLOW * numbered:
-        downgrade(f"only {chosen.agree} of {numbered} numbered EasyEDA pads matched by number")
-    if chosen.tf.rms > RMS_YELLOW:
+    # EasyEDA numbers KiCad does not have (a tab 4 against KiCad's 2, shield pads 1-4 against S1) cannot match, and
+    # check calls them harmless: they do not count against the fit
+    known = sum(1 for n in f.enum if n and n in f.by_num)
+    if known and chosen.agree < MATCHED_YELLOW * known:
+        downgrade(f"only {chosen.agree} of {known} EasyEDA pads with a number KiCad has matched by number")
+    # a residual is a land pattern that differs; it matters relative to the pads it has to stay on
+    rms_limit = max(RMS_YELLOW, RMS_PAD * min((pad_size(p) for j in set(chosen.land) if j >= 0
+                                               for p in f.lands[j].pads), default=0.0))
+    if chosen.tf.rms > rms_limit:
         downgrade(f"rms {chosen.tf.rms:.3f} mm: the land patterns differ (every pad lands)")
     if corr.rot % 90:
         downgrade(f"angle {corr.rot:g} deg is not a multiple of 90 (kept unsnapped)")
     uncovered = f.uncovered(chosen.land)
     if uncovered:
-        downgrade(f"KiCad pads no EasyEDA pad lands on: {', '.join(uncovered[:16])}")
+        downgrade(f"KiCad pads that no EasyEDA pad lands on: {', '.join(uncovered[:16])}")
     if verdict == GREEN:
-        reasons.insert(0, f"fits by pad numbers: {chosen.agree}/{numbered} matched, rms {chosen.tf.rms:.3f} mm")
+        only_ee = numbered - known if known else 0
+        reasons.insert(0, f"fits by pad numbers: {chosen.agree}/{known or numbered} matched"
+                          + (f" ({only_ee} more with numbers KiCad does not have)" if only_ee else "")
+                          + f", rms {chosen.tf.rms:.3f} mm")
 
-    corr.verdict, corr.matched = verdict, chosen.agree
+    corr.verdict, corr.matched, corr.doubt = verdict, chosen.agree, doubt
+    corr.polar = polar2 if len(f.terminals) == 2 else None
     corr.alternatives = [describe(m, chosen) for m in sorted(members.values(), key=_rank) if m is not chosen][:12]
     s = 100.0 * (0.5 + 0.5 * chosen.agree / numbered) * max(0.3, 1.0 - chosen.tf.rms / 0.5) * 0.9 ** len(alts)
     s *= 1.0 if chosen.names_ok and not chosen.names_bad else 0.95 if not chosen.names_bad else 0.8

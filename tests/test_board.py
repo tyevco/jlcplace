@@ -11,6 +11,7 @@ older-format boards from the reference tools' test data, and boards that KiCad b
 import csv
 import json
 import math
+import os
 import random
 import warnings
 from pathlib import Path
@@ -23,10 +24,13 @@ from jlcplace import convention as cv
 from jlcplace import geom
 from jlcplace.model import BOTTOM, TOP, Board
 
-DIAL = Path("/home/user/dial-me-spinner/hardware")
+# optional real data; CONTRACT.md: JLCPLACE_DIAL_ME_SPINNER (a dial-me-spinner checkout), JLCPLACE_TEST_EASYEDA (the
+# directory holding src/, the reference tools' test data); the defaults are the development machine's
+DIAL = Path(os.environ.get("JLCPLACE_DIAL_ME_SPINNER", "/home/user/dial-me-spinner")) / "hardware"
 DIAL_BOARDS = [DIAL / "kicad/main/dial-me-spinner-main.kicad_pcb", DIAL / "kicad/base/dial-me-spinner-base.kicad_pcb"]
 DEMOS = sorted(Path("/usr/share/kicad/demos").glob("**/*.kicad_pcb"))
-REF = Path("/tmp/claude-0/-home-user-dial-me-spinner/3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc/src")
+REF = Path(os.environ.get("JLCPLACE_TEST_EASYEDA", "/tmp/claude-0/-home-user-dial-me-spinner/"
+                         "3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc")) / "src"
 # KiCad 5 (module), 6, 7 and 8 files from the reference tools' test data: formats pcbnew 9 still reads
 OLDER = [REF / "yaqwsx_KiKit" / p for p in (
     "docs/resources/conn.kicad_pcb", "test/resources/multiboard.kicad_pcb",
@@ -42,7 +46,7 @@ REAL = DIAL_BOARDS + DEMOS + OLDER
 
 def need(path: Path) -> None:
     if not path.exists():
-        pytest.skip(f"{path} is not on this machine")
+        pytest.skip(f"{path} is not on this machine (JLCPLACE_DIAL_ME_SPINNER / JLCPLACE_TEST_EASYEDA say where)")
 
 
 def adiff(a: float, b: float) -> float:
