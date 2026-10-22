@@ -14,14 +14,7 @@ Simulate a CPL against the board.
 Simulate every CPL row with JLC's EasyEDA footprint and report where its pads land.
 
 ```text
-jlcplace check [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-               [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-               [--online | --offline] [--db DIR]
-               [--reading {jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}]
-               [--fail-on {red,yellow}] [--report HTML] [--json PATH]
-               [--junit XML] [--checklist PATH] [--github-annotations]
-               [--bom CSV] [-q] [--units {mm,in,mil}]
-               BOARD CPL
+jlcplace check [options] BOARD CPL
 ```
 
 **Arguments**
@@ -76,14 +69,7 @@ Write a corrected CPL and check it.
 Write the CPL JLC needs (corrections from --db, else fitted), check the written file, and refuse to keep it when a row is red.
 
 ```text
-jlcplace cpl [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-             [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-             [--online | --offline] [--db DIR]
-             [--reading {jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}]
-             [--fail-on {red,yellow}] [--report HTML] [--json PATH]
-             [--junit XML] [--checklist PATH] [--github-annotations]
-             [--bom CSV] [-q] -o CPL [--force]
-             BOARD
+jlcplace cpl --output CPL [options] BOARD
 ```
 
 **Arguments**
@@ -136,11 +122,7 @@ jlcplace cpl [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
 Fit corrections (store them with --db).
 
 ```text
-jlcplace fit [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-             [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-             [--online | --offline] [--db DIR] [--ref REF]
-             [--json PATH] [--fail-on {red,yellow}] [-q]
-             BOARD
+jlcplace fit [options] BOARD
 ```
 
 **Arguments**
@@ -181,10 +163,7 @@ jlcplace fit [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
 Download EasyEDA records into the cache.
 
 ```text
-jlcplace fetch [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-               [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-               [--refresh] [--min-interval S]
-               BOARD|CODE [BOARD|CODE ...]
+jlcplace fetch [options] BOARD|CODE [BOARD|CODE ...]
 ```
 
 **Arguments**
@@ -217,16 +196,7 @@ Record a verification in the database.
 Record that a part's placement was checked: manual (datasheet), preview (JLC's placement preview) or board (the assembled board). What was checked is the row of the CPL that was uploaded (--cpl, needed for preview and board), moved by the keys pressed in the preview; its correction is stored when it differs from the database's. Fits and stores a correction first when the database has none.
 
 ```text
-jlcplace confirm [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-                 [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-                 [--online | --offline]
-                 [--reading {jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}]
-                 --ref REF [--cpl CPL] [--units {mm,in,mil}] --db DIR
-                 --by NAME --source {board,preview,manual}
-                 [--note NOTE] [--failed] [--space SPACE]
-                 [--right RIGHT] [--up UP] [--rot ROT] [--dx DX]
-                 [--dy DY]
-                 BOARD
+jlcplace confirm --ref REF --db DIR --by NAME --source {board,preview,manual} [options] BOARD
 ```
 
 **Arguments**
@@ -277,12 +247,7 @@ jlcplace confirm [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
 Show what jlcplace knows about a code or part.
 
 ```text
-jlcplace show [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-              [--reader {auto,pcbnew,sexpr,json}] [--cache DIR]
-              [--online | --offline] [--db DIR]
-              [--reading {jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}]
-              [--ref REF] [--json PATH]
-              CODE|BOARD
+jlcplace show [options] CODE|BOARD
 ```
 
 **Arguments**
@@ -322,9 +287,7 @@ jlcplace show [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
 Save the board as JSON (checks without KiCad).
 
 ```text
-jlcplace snapshot [-h] [-v] [--origin ORIGIN] [--lcsc-field NAME]
-                  [--reader {auto,pcbnew,sexpr,json}] -o JSON
-                  BOARD
+jlcplace snapshot --output JSON [options] BOARD
 ```
 
 **Arguments**
