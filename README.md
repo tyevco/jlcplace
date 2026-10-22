@@ -81,7 +81,9 @@ a KiCad position file (CSV or ASCII). UTF-8, cp1252 and UTF-16 (Excel's "Unicode
 line ends (also Excel for Mac's CR-only "CSV (Macintosh)"); a value that is not a finite number ("nan", "inf") is bad
 input. Use `--units in` for a CSV position file exported in inches (`check` suggests it when most rows would sit
 on their parts in inches). The CPL origin is the board's aux (drill/place file) origin; use
-`--origin grid|absolute|X,Y` for other origins (X,Y in mm, or with a unit: `--origin 4in,-500mil`).
+`--origin grid|absolute|X,Y` for other origins (X,Y in mm, or with a unit: `--origin 4in,-500mil`). `check`
+suggests `--origin absolute` when most rows would sit on their parts from the page origin (KiCad's position file
+without "use drill/place file origin").
 
 **Write the CPL:**
 
