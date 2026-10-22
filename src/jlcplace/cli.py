@@ -259,9 +259,10 @@ def _judge_origin(args, run, board, gerbers, found) -> list[str]:
     return offset_hints(run, units=getattr(args, "units", "mm"), origins=origins, off=run.offset)
 
 
-def _units_finding(args, rows) -> list[Finding]:
+def _units_finding(args, rows, off=None) -> list[Finding]:
     """--units tells jlcplace how to read a position file's bare numbers, not JLC: a CPL whose numbers it read in
-    another unit than mm is red (JLC reads them in mm)."""
+    another unit than mm is red (JLC reads them in mm). When the rows sit on their parts read in mm (`off`, the
+    run's common offset, says so), the file is in mm already and --units misread it: the finding says that."""
     if args.units == "mm":
         return []
     try:
@@ -270,6 +271,10 @@ def _units_finding(args, rows) -> list[Finding]:
         return []
     if [(r.x, r.y) for r in as_mm] == [(r.x, r.y) for r in rows]:
         return []                              # its numbers carry their unit
+    if off is not None and off.origin_error and off.unit == "mm":
+        return [Finding("units", RED, f"the CPL's numbers are in mm already ({off.rows} of {off.total} rows sit on "
+                                      f"their parts read so), as JLC reads them: --units {args.units} misread them; "
+                                      f"check without it")]
     word = {"in": "inches", "mil": "mils"}.get(args.units, args.units)
     return [Finding("units", RED, f"the CPL's numbers are in {word} (read so because of --units {args.units}), but "
                                   "JLC reads a CPL's numbers in mm: write it again in mm (KiCad: --units mm)")]
@@ -300,7 +305,6 @@ def cmd_check(args) -> int:
     rows = _rows(args.cpl, args.units)
     bom = _bom(args.bom)
     jlc, gerbers, found = _gerbers(args, board, rows)
-    found += _units_finding(args, rows)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
     resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom)
@@ -308,6 +312,8 @@ def cmd_check(args) -> int:
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
     hints = _judge_origin(args, run, board, gerbers, found)
+    k = len(found)                             # after the Gerbers' findings, before the origin's: the offset tells
+    run.findings[k:k] = _units_finding(args, rows, run.offset)      # whether the file was in mm all along
     fixed = [_fixed_cpl(args, run, resolved, bom)] if args.fixed_cpl else []
     return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + _misses_note(client), _outline(gerbers))
 

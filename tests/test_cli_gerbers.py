@@ -169,6 +169,20 @@ def test_rows_displaced_alike_beside_a_row_in_place_are_no_origin_finding(made, 
     assert "jlcplace: 3 of 4 rows are displaced alike from where they belong, by (+5.000, +5.000) mm" in out, out
 
 
+def test_an_mm_file_read_with_units_in_is_not_said_to_be_in_inches(made, capsys):
+    """A position file in mm checked with a wrong --units in: the rows sit on their parts read in mm, so the red
+    finding (what annotations and JUnit carry) says --units misread an mm file, not that the file is in inches."""
+    e = made
+    mm = e.tmp / "mm.csv"
+    mm.write_text("Designator,Mid X,Mid Y,Layer,Rotation\n" + "".join(
+        f"{r.ref},{r.x:.4f},{r.y:.4f},{r.layer},{r.rotation:g}\n" for r in read_cpl(e.out)), encoding="utf-8")
+    for unit in ("in", "mil"):
+        code, out, err = run(capsys, "check", e.board, mm, "--units", unit, *offline(e), "-q")
+        assert code == 2 and "are in inches" not in out + err and "are in mils" not in out + err, out + err
+        assert f"jlcplace: red: the CPL's numbers are in mm already (4 of 4 rows sit on their parts read so), as JLC " \
+               f"reads them: --units {unit} misread them; check without it" in out + err, out + err
+
+
 def test_a_cpl_in_inches_is_red_however_it_is_read(made, capsys):
     """--units in makes jlcplace read the CPL's numbers as inches, not JLC: a CPL whose bare numbers are inches is
     red, and the fix is to write it in mm. Inches from another origin than the Gerbers': both fixes, joined."""
