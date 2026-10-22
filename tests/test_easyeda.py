@@ -40,7 +40,7 @@ def cached_files(dirs=(EE_RAW, EE_DL, Z_FIX)):
 
 
 def load(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------------------------------------------------------------- builders
@@ -608,7 +608,7 @@ def test_fetch_stores_the_raw_response_verbatim_and_parses_from_the_file(tmp_pat
     # a cache hit makes no request; parsing reads the file, so an edited file is what comes back
     rec = json.loads(OK)
     rec["result"]["packageDetail"]["dataStr"]["shape"].pop()
-    path.write_text(json.dumps(rec))
+    path.write_text(json.dumps(rec), encoding="utf-8")
     assert len(c.get("C2500").pads) == 1 and c.requests == 1 and clk.sleeps == []
 
 
@@ -735,7 +735,7 @@ def test_offline_never_uses_the_network(tmp_path):
         c.get("C1")
     with pytest.raises(ee.EEError, match="offline"):
         c.get("C1", refresh=True)
-    (tmp_path / "C2.json").write_text("{truncated")
+    (tmp_path / "C2.json").write_text("{truncated", encoding="utf-8")
     with pytest.raises(ee.EEError, match="not valid JSON"):
         c.get("C2")
     assert net.urls == []
@@ -750,7 +750,7 @@ def test_refresh_refetches_a_cached_record(tmp_path):
 def test_corrupt_cache_file_is_refetched_online(tmp_path):
     c, _ = make(tmp_path, FakeNet((200, OK)))
     c.cache_dir.mkdir()
-    c.cache_path("C1").write_text("<html>")
+    c.cache_path("C1").write_text("<html>", encoding="utf-8")
     assert isinstance(c.get("C1"), EEFootprint) and c.cache_path("C1").read_bytes() == OK
 
 
@@ -802,7 +802,7 @@ def test_the_cache_dir_holds_only_raw_responses(tmp_path):
 
 def test_cache_write_failure_is_an_eeerror(tmp_path):
     blocker = tmp_path / "file"
-    blocker.write_text("not a directory")
+    blocker.write_text("not a directory", encoding="utf-8")
     c = ee.EEClient(blocker / "cache", opener=FakeNet((200, OK)), sleep=lambda s: None)
     with pytest.raises(ee.EEError, match="cache"):
         c.get("C1")
@@ -816,6 +816,7 @@ def test_default_cache_dir(monkeypatch, tmp_path):
     assert ee.default_cache_dir() == tmp_path / "x" / "jlcplace"
     monkeypatch.delenv("XDG_CACHE_HOME")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))      # Path.home() on Windows
     assert ee.default_cache_dir() == tmp_path / "home" / ".cache" / "jlcplace"
     assert ee.EEClient().cache_dir == tmp_path / "home" / ".cache" / "jlcplace"
 

@@ -288,7 +288,11 @@ def test_non_finite_values_are_refused(text):
 
 def test_atomic_write_never_touches_the_process_umask(tmp_path, monkeypatch):
     """Reading the umask means setting it (os.umask(0), then back): in that instant another thread's new files are
-    world-writable. The kernel applies the umask to a file created with 0666; an existing file keeps its mode."""
+    world-writable. The kernel applies the umask to a file created with 0666; an existing file keeps its mode. (On
+    Windows, where files have no mode bits, only the rest is checked.)"""
+    def has_mode(path, m):
+        return os.name != "posix" or os.stat(path).st_mode & 0o7777 == m
+
     old = os.umask(0o022)
     try:
         def no_umask(*a):
@@ -297,12 +301,12 @@ def test_atomic_write_never_touches_the_process_umask(tmp_path, monkeypatch):
         monkeypatch.setattr(os, "umask", no_umask)
         new = tmp_path / "new.csv"
         cpl.atomic_write(new, "a\r\n")
-        assert new.read_bytes() == b"a\r\n" and os.stat(new).st_mode & 0o7777 == 0o644
+        assert new.read_bytes() == b"a\r\n" and has_mode(new, 0o644)
         write_cpl(tmp_path / "rows.csv", [CplRow("R1", 1.0, 2.0, TOP, 90.0)])
-        assert os.stat(tmp_path / "rows.csv").st_mode & 0o7777 == 0o644
+        assert has_mode(tmp_path / "rows.csv", 0o644)
         os.chmod(new, 0o640)
         cpl.atomic_write(new, "b\n")
-        assert new.read_text() == "b\n" and os.stat(new).st_mode & 0o7777 == 0o640
+        assert new.read_text(encoding="utf-8") == "b\n" and has_mode(new, 0o640)
         assert sorted(p.name for p in tmp_path.iterdir()) == ["new.csv", "rows.csv"]      # no temporary file left
     finally:
         monkeypatch.undo()

@@ -772,7 +772,7 @@ def parse_record():
 
     def parse(code, path):
         try:
-            return pr(code, json.loads(Path(path).read_text())["result"])
+            return pr(code, json.loads(Path(path).read_text(encoding="utf-8"))["result"])
         except NotImplementedError:
             pytest.skip("jlcplace.easyeda.parse_record not implemented yet")
 
@@ -820,11 +820,11 @@ DIAL_NOT_GREEN = {
 def test_dial_me_spinner_reproduces_jlc_offsets():
     pcbnew = pytest.importorskip("pcbnew")
     parse = parse_record()
-    offsets = json.loads(OFFSETS.read_text())
+    offsets = json.loads(OFFSETS.read_text(encoding="utf-8"))
     seen, verdicts = set(), {}
     for board, part, code in board_parts(pcbnew):
         raw = EE_RAW / f"{code}.json"
-        if not raw.is_file() or not json.loads(raw.read_text()).get("success"):
+        if not raw.is_file() or not json.loads(raw.read_text(encoding="utf-8")).get("success"):
             continue
         c = fit.fit_part(part, parse(code, raw))
         o = offsets[code]
@@ -849,8 +849,8 @@ def test_jlc_preview_truth_is_never_contradicted_by_green():
     wrong, right, red_expected = [], [], []
     for board, truth_file in (("corner_case", "truth.csv"), ("pin_functions_and_marks",
                                                              "truth_pin_functions_and_marks.csv")):
-        truth = {r["reference"]: r for r in csv.DictReader(open(Z_FIX / truth_file))}
-        for r in csv.DictReader(open(Z_FIX / "boards" / board / "cases.csv")):
+        truth = {r["reference"]: r for r in csv.DictReader(open(Z_FIX / truth_file, encoding="utf-8"))}
+        for r in csv.DictReader(open(Z_FIX / "boards" / board / "cases.csv", encoding="utf-8")):
             raw = Z_FIX / "easyeda" / f"{r['lcsc']}.json"
             if not raw.is_file():
                 continue
@@ -881,7 +881,7 @@ OLD_CPL = SCRATCH / "fab-before"
 def read_cpl_csv(path):
     """Designator -> (Mid X, Mid Y, layer, rotation) of a JLC CPL as jlc_cpl.py wrote it."""
     return {r["Designator"]: (float(r["Mid X"].removesuffix("mm")), float(r["Mid Y"].removesuffix("mm")),
-                              r["Layer"], float(r["Rotation"])) for r in csv.DictReader(open(path))}
+                              r["Layer"], float(r["Rotation"])) for r in csv.DictReader(open(path, encoding="utf-8"))}
 
 
 @pytest.mark.pcbnew
@@ -906,7 +906,7 @@ def test_dial_me_spinner_rows_from_the_fits():
             code = fp.GetFieldText("LCSC") if fp.HasFieldByName("LCSC") else ""
             raw = EE_RAW / f"{code}.json"
             if not code or fp.GetReference() not in released or not raw.is_file() \
-                    or not json.loads(raw.read_text()).get("success"):
+                    or not json.loads(raw.read_text(encoding="utf-8")).get("success"):
                 continue
             part = part_from_footprint(fp, pcbnew)
             x, y, a = cv.cpl_row_for(part, fit.fit_part(part, parse(code, raw)), origin)

@@ -48,7 +48,7 @@ fixed CPLs again, to within a micron, once SW1's numbering has been decided (see
 
 ```
 git clone https://github.com/tyevco/jlcplace && cd jlcplace
-pip install -e .            # Python 3.10+, numpy
+pip install -e .            # Python 3.10+ (CI tests 3.10 to 3.13 on Linux, macOS and Windows), numpy
 ```
 
 To read `.kicad_pcb` files, jlcplace uses KiCad's `pcbnew` Python module when it can import it (KiCad's own Python,
@@ -229,7 +229,9 @@ in for the EasyEDA pads. That catches rows that no longer match the stored corre
 hand). The verdict cannot be better than the correction's, and a row whose verdict the correction caps says so
 ("yellow because the stored auto correction is yellow: ..."). A two-pad non-polar part with neither a record nor a
 stored correction is still checked against its own copper: a row point off its pads is red. For a full simulation,
-cache the records too.
+the recipe below also keeps the EasyEDA records in an Actions cache: `jlcplace fetch` downloads the ones the cache
+lacks (it is the only step that talks to EasyEDA, at most one request per 0.7 s), and the cache is saved under a new
+key when the board changes.
 
 ```yaml
 # .github/workflows/cpl.yml
@@ -238,23 +240,34 @@ on: [push, pull_request]
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      JLCPLACE_CACHE: ~/.cache/jlcplace       # the EasyEDA record cache (jlcplace expands the ~)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - run: pip install git+https://github.com/tyevco/jlcplace
-      - uses: actions/cache@v4               # optional: EasyEDA records for a full simulation
-        with: {path: ~/.cache/jlcplace, key: easyeda-${{ hashFiles('jlcplace-db/*.json') }}, restore-keys: easyeda-}
-      # no --report: the HTML report draws EasyEDA pad outlines; never upload it (or the record cache) as an
-      # artifact of a public repository. The JUnit and JSON outputs hold derived data only.
+        with:
+          python-version: "3.12"
+      - run: pip install "jlcplace @ git+https://github.com/tyevco/jlcplace@v0.1.0"    # a release tag or commit SHA
+      # EasyEDA records: never upload them, or an HTML report (it draws EasyEDA pad outlines), as an artifact of a
+      # public repository; the JUnit and JSON outputs hold derived data only.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/jlcplace
+          key: easyeda-${{ hashFiles('hardware/board.kicad_pcb') }}
+          restore-keys: easyeda-
+      - run: jlcplace fetch hardware/board.kicad_pcb
+        continue-on-error: true               # EasyEDA down or rate-limiting: the check says which records it lacks
       - run: >
           jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.csv
           --db jlcplace-db --github-annotations --junit cpl.xml
 ```
 
+Pin the install to a release tag or a commit SHA, so that a new jlcplace does not change the verdicts under you.
+`fetch` downloads the codes on the board; it takes LCSC codes too, for parts whose BOM names another code
+(`jlcplace fetch hardware/board.kicad_pcb C7519`).
 Without KiCad on the runner, the board is read with the S-expression reader. Pass `--fail-on yellow` to make yellow
-fail the job as well. To fill the record cache, run `jlcplace fetch hardware/board.kicad_pcb` (on a schedule, say)
-before the check; nothing else in the job talks to EasyEDA.
+fail the job as well (with the records missing, routine yellows such as "not simulated" fail it too). The check
+itself downloads nothing: drop the cache and fetch steps to check from the committed database alone.
 
 ## Limits
 

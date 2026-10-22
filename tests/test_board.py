@@ -370,8 +370,12 @@ def built(tmp_path_factory):
     rnd = random.Random(7)
     kb = pcbnew.BOARD()
     lib, want = build_library_footprint(pcbnew, kb, rnd)
+    # each copy gets its own UUID, as every footprint on a real board has (pcbnew.FOOTPRINT(lib) would copy the
+    # library's to all eight). KiCad saves footprints sorted by UUID, so the file's order is not the order they were
+    # added in; seeded, it is the same order on every run (ci-3: it used to depend on earlier tests' allocations)
+    pcbnew.KIID.SeedGenerator(7)
     for i, (how, theta) in enumerate(PLACEMENTS):
-        fp = pcbnew.FOOTPRINT(lib)
+        fp = lib.Duplicate()
         fp.SetReference(f"U{i + 1}")
         kb.Add(fp)
         fp.SetPosition(V(pcbnew, 50 + 60 * (i % 4), 50 + 60 * (i // 4)))
@@ -391,7 +395,9 @@ def test_flipped_footprints_read_back_in_the_library_frame(built):
     """Whatever KiCad's flip did, both readers recover the pads exactly as they were drawn in the library."""
     pcbnew, kb, want, sexpr, pcb = built
     for board in (sexpr, pcb):
-        assert [(p.layer, p.angle) for p in board.parts] == [(TOP if h == "top" else BOTTOM, a) for h, a in PLACEMENTS]
+        # by reference: the file holds the parts in KiCad's save order, not in the order they were placed (ci-3)
+        assert {p.ref: (p.layer, p.angle) for p in board.parts} == \
+            {f"U{i + 1}": (TOP if h == "top" else BOTTOM, a) for i, (h, a) in enumerate(PLACEMENTS)}
         for part in board.parts:
             assert len(part.pads) == len(want)
             # KiCad saves pads sorted by number (ties in memory order), so match them by their library position

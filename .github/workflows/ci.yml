@@ -1,18 +1,24 @@
 # CI for jlcplace.
 #
-# unit   the pure-Python tests (not pcbnew, cache or network) on Linux and macOS: no KiCad, no EasyEDA data, no
-#        network (the proxy variables point nowhere, so a stray request fails at once).
-# kicad  the rest but the EasyEDA-record tests, in KiCad's own image: pcbnew, kicad-cli and KiCad's footprint
-#        libraries, on the public dial-me-spinner boards and the reference tools' KiCad 5 to 10 test boards.
-# e2e    the EasyEDA-record tests and a dogfood check of the shipped and the old CPLs, with the boards' records fetched
-#        by `jlcplace fetch` (rate-limited) and kept in this repository's private Actions cache.
+# unit     the pure-Python tests (not pcbnew, cache or network) on Linux, macOS and Windows with Python 3.10 to 3.13
+#          (the versions pyproject.toml claims; tests/test_packaging.py keeps the two lists equal): no KiCad, no
+#          EasyEDA data, no network (the proxy variables point nowhere, so a stray request fails at once). Run with
+#          `python -X warn_default_encoding`: text I/O that depends on the locale fails there on every OS (pyproject's
+#          filterwarnings), not only on Windows.
+# package  the sdist and the wheel build without a warning, pass `twine check`, and the wheel installs and runs.
+# kicad    the pcbnew tests, and every other test but the EasyEDA-record and network ones, in KiCad's own image:
+#          pcbnew, kicad-cli and KiCad's footprint libraries, on the public dial-me-spinner boards and the reference
+#          tools' KiCad 5 to 10 test boards. Nothing may skip.
+# e2e      optional: the EasyEDA-record tests and a dogfood check of the shipped and the old CPLs, with the boards'
+#          records fetched by `jlcplace fetch` (rate-limited) into an Actions cache. When the fetch fails (EasyEDA
+#          down or rate-limiting the runner), the steps that need the records report but do not fail the job.
 #
 # Every pytest run writes JUnit and goes through .github/skip_gate.py: a skip whose reason the job does not allow
 # (ALLOW_SKIPS, a regular expression) fails the job, so tests cannot silently stop running when a fixture moves. The
 # tests find their data through JLCPLACE_DIAL_ME_SPINNER and JLCPLACE_TEST_EASYEDA (see CONTRACT.md).
 #
-# Licensing: EasyEDA records stay on the runner and in the private Actions cache. Never upload them, or an HTML report
-# (it draws EasyEDA pad outlines), as an artifact; the JSON and JUnit outputs hold derived data only.
+# Licensing: EasyEDA records stay on the runner and in this repository's Actions cache. Never upload them, or an HTML
+# report (it draws EasyEDA pad outlines), as an artifact; the JSON and JUnit outputs hold derived data only.
 name: CI
 on:
   push:
@@ -43,14 +49,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.10", "3.11", "3.12", "3.13"]
-        include:
-          - os: macos-latest
-            python: "3.12"
+    defaults:
+      run:
+        shell: bash                 # Git Bash on Windows: one set of commands for every runner
     env:
-      JLCPLACE_DIAL_ME_SPINNER: /nonexistent/dial-me-spinner
-      JLCPLACE_TEST_EASYEDA: /nonexistent/jlc
       # unmarked tests that read optional real boards and BOMs skip without them; nothing else may
       ALLOW_SKIPS: "is not on this machine|needs the dial-me-spinner fab outputs"
     steps:
@@ -66,33 +70,69 @@ jobs:
       - run: jlcplace --version
       - name: pytest (not pcbnew, cache or network)
         env:
+          JLCPLACE_DIAL_ME_SPINNER: ${{ runner.temp }}/absent/dial-me-spinner
+          JLCPLACE_TEST_EASYEDA: ${{ runner.temp }}/absent/jlc
           HTTPS_PROXY: http://127.0.0.1:9
           HTTP_PROXY: http://127.0.0.1:9
           NO_PROXY: ""
         run: >
-          python -m pytest -q -p no:cacheprovider -rs -m "not pcbnew and not cache and not network"
-          --junitxml=junit-unit.xml
+          python -X warn_default_encoding -m pytest -q -p no:cacheprovider -rs
+          -m "not pcbnew and not cache and not network" --junitxml=junit-unit.xml
       - name: skip gate
         if: always()
         run: python .github/skip_gate.py junit-unit.xml
+
+  package:
+    name: package (sdist, wheel, metadata)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build twine
+      - name: build (a setuptools warning, such as a deprecated pyproject field, fails the job)
+        run: |
+          python -m build 2>&1 | tee build.log
+          if grep -n -i -E "warning|deprecat" build.log; then echo "::error::the build warns (see above)"; exit 1; fi
+      - run: python -m twine check --strict dist/*
+      - name: the wheel installs and runs on its own
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel"
+          "$RUNNER_TEMP/wheel/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/wheel/bin/jlcplace" --version
+          "$RUNNER_TEMP/wheel/bin/python" - <<'PY'
+          from importlib.metadata import metadata
+          m = metadata("jlcplace")
+          assert m["License-Expression"] == "MIT", m["License-Expression"]
+          assert "Repository, https://github.com/tyevco/jlcplace" in m.get_all("Project-URL"), m.get_all("Project-URL")
+          print(m["Name"], m["Version"], m["License-Expression"], m["Author"])
+          PY
 
   kicad:
     name: kicad (pcbnew, kicad/kicad:9.0)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
+      # KiCad's official image (the same one is ghcr.io/kicad/kicad:9.0): Debian bookworm with KiCad 9.0.x, its
+      # footprint libraries in /usr/share/kicad, and pcbnew built for the system Python 3.11
+      # (/usr/lib/python3/dist-packages, with numpy and PyYAML beside it). The image has no pip and no venv module,
+      # and its default user (kicad) cannot write the workspace the runner mounts.
       image: kicad/kicad:9.0
-      options: --user root          # the image's own user cannot write the mounted workspace
+      options: --user root
     defaults:
       run:
         shell: bash
     env:
       ALLOW_SKIPS: "(?!)"           # nothing may skip here
     steps:
-      - name: tools
+      - name: venv module for the image's Python (git and CA certificates are in the image)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates python3-venv python3-pip
+          apt-get install -y --no-install-recommends git ca-certificates python3-venv
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -130,18 +170,20 @@ jobs:
         run: |
           mkdir -p fixtures/jlc/fab-before
           cp -r fixtures/dms-old/hardware/fab/main fixtures/dms-old/hardware/fab/base fixtures/jlc/fab-before/
-          echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner" >> "$GITHUB_ENV"
-          echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc" >> "$GITHUB_ENV"
-          echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints" >> "$GITHUB_ENV"
-      - name: venv with KiCad's pcbnew
+          {
+            echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner"
+            echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc"
+            echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints"
+          } >> "$GITHUB_ENV"
+      - name: venv on the image's Python, with KiCad's pcbnew
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
-          /opt/venv/bin/python -c "import pcbnew; print('pcbnew', pcbnew.Version())"
+          /opt/venv/bin/python -c "import pcbnew, jlcplace; print('pcbnew', pcbnew.Version(), 'jlcplace', jlcplace.__version__)"
           echo /opt/venv/bin >> "$GITHUB_PATH"
           kicad-cli version
-          test -d /usr/share/kicad/footprints/Package_TO_SOT_SMD.pretty || { echo "::error::no KiCad footprint libraries in the image"; exit 1; }
-      - name: pytest (everything but the EasyEDA records and the network)
+          test -d "$KICAD_FOOTPRINT_DIR/Package_TO_SOT_SMD.pretty" || { echo "::error::no KiCad footprint libraries in the image"; exit 1; }
+      - name: pytest (the pcbnew tests and everything else but the EasyEDA records and the network)
         env:
           HTTPS_PROXY: http://127.0.0.1:9
           HTTP_PROXY: http://127.0.0.1:9
@@ -170,10 +212,10 @@ jobs:
       ALLOW_SKIPS: ${{ github.event_name == 'schedule' && '(?!)' || 'set JLCPLACE_NETWORK_TESTS=1' }}
       JLCPLACE_NETWORK_TESTS: ${{ github.event_name == 'schedule' && '1' || '' }}
     steps:
-      - name: tools
+      - name: venv module for the image's Python, zstd for the Actions cache
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates python3-venv python3-pip zstd
+          apt-get install -y --no-install-recommends git ca-certificates python3-venv zstd
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -211,10 +253,12 @@ jobs:
         run: |
           mkdir -p fixtures/jlc/fab-before fixtures/jlc/ee_raw
           cp -r fixtures/dms-old/hardware/fab/main fixtures/dms-old/hardware/fab/base fixtures/jlc/fab-before/
-          echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner" >> "$GITHUB_ENV"
-          echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc" >> "$GITHUB_ENV"
-          echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints" >> "$GITHUB_ENV"
-      - name: venv with KiCad's pcbnew
+          {
+            echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner"
+            echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc"
+            echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints"
+          } >> "$GITHUB_ENV"
+      - name: venv on the image's Python, with KiCad's pcbnew
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
@@ -225,27 +269,38 @@ jobs:
           path: fixtures/jlc/ee_raw
           key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}
           restore-keys: easyeda-v1-
-      # the boards' records, and three multi-unit symbols for tests/test_easyeda.py (test_multi_unit_records_...)
+      # the boards' records, and three multi-unit symbols for tests/test_easyeda.py (test_multi_unit_records_...);
+      # only the codes the cache lacks are downloaded (all of them again on the weekly run)
       - name: fetch missing EasyEDA records (network; at least 0.7 s between requests)
         id: fetch
+        continue-on-error: true
+        run: |
+          jlcplace fetch --reader sexpr --cache fixtures/jlc/ee_raw \
+            ${{ github.event_name == 'schedule' && '--refresh' || '' }} \
+            fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb \
+            fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb \
+            C20916 C111548 C108023 | tee fetch.log
+          if grep -q "(fetched)" fetch.log; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+      - name: the fetch failed
+        if: steps.fetch.outcome == 'failure'
         run: >
-          jlcplace fetch --reader sexpr --cache fixtures/jlc/ee_raw
-          ${{ github.event_name == 'schedule' && '--refresh' || '' }}
-          fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb
-          fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb
-          C20916 C111548 C108023
-      - name: save EasyEDA records (repository-private Actions cache, never an artifact)
-        if: always() && steps.fetch.outcome == 'success' && github.event_name != 'pull_request'
+          echo "::warning title=EasyEDA fetch failed::EasyEDA is down or rate-limits this runner: the record tests and
+          the dogfood check below run with the cached records only, and their failures do not fail the job"
+      - name: save EasyEDA records (this repository's Actions cache, never an artifact)
+        if: always() && steps.fetch.outcome == 'success' && steps.fetch.outputs.new == 'true' && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: fixtures/jlc/ee_raw
           key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}-${{ github.run_id }}
       - name: pytest (everything, with the fetched records)
+        continue-on-error: ${{ steps.fetch.outcome == 'failure' }}
         run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit-e2e.xml
       - name: skip gate
         if: always()
+        continue-on-error: ${{ steps.fetch.outcome == 'failure' }}
         run: python .github/skip_gate.py junit-e2e.xml
       - name: dogfood (the shipped CPLs are clean, the old ones red on exactly the 7 known rows)
+        continue-on-error: ${{ steps.fetch.outcome == 'failure' }}
         run: bash .github/dogfood.sh fixtures/dial-me-spinner/hardware fixtures/jlc/fab-before fixtures/jlc/ee_raw
       - name: upload derived results only (no HTML report, no EasyEDA records)
         if: always()

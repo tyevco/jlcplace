@@ -27,8 +27,9 @@ print(json.dumps({
 
 
 def test_fixture_locations_follow_the_environment(tmp_path):
-    env = dict(os.environ, JLCPLACE_DIAL_ME_SPINNER=str(tmp_path / "dms"), JLCPLACE_TEST_EASYEDA=str(tmp_path / "jlc"))
-    out = subprocess.run([sys.executable, "-c", PROBE, str(TESTS)], env=env, capture_output=True, text=True,
+    env = dict(os.environ, JLCPLACE_DIAL_ME_SPINNER=str(tmp_path / "dms"), JLCPLACE_TEST_EASYEDA=str(tmp_path / "jlc"),
+               PYTHONIOENCODING="utf-8")
+    out = subprocess.run([sys.executable, "-c", PROBE, str(TESTS)], env=env, capture_output=True, encoding="utf-8",
                          cwd=tmp_path, check=True).stdout
     paths = json.loads(out.splitlines()[-1])
     for module, ps in paths.items():
