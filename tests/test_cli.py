@@ -1308,6 +1308,21 @@ def test_a_cpl_in_inches_gets_a_hint(env, capsys):
     assert code == 2 and "--units" not in out, out
 
 
+def test_a_cpl_from_the_page_origin_gets_a_hint(env, capsys):
+    """KiCad's position file is exported from the page origin unless 'use drill/place file origin' is ticked: every
+    row was red ('lands off copper', up to 140 mm away) with no word on why, where an inch file gets a hint."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    page = env.tmp / "page.csv"
+    write_cpl(page, [CplRow(r.ref, r.x + ORIGIN[0], r.y - ORIGIN[1], r.layer, r.rotation) for r in read_cpl(env.out)])
+    code, out, _ = run(capsys, "check", env.board, page, *offline(env), "-q")
+    assert code == 2 and "4 of 4 rows would sit on their parts" in out and "--origin absolute" in out, out
+    code, out, _ = run(capsys, "check", env.board, page, *offline(env), "--origin", "absolute", "-q")
+    assert code == 0 and "--origin" not in out, out
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "-q")
+    assert code == 0 and "--origin" not in out, out
+
+
 # ------------------------------------------------------------------------------------------------------- cli-6, cli-12
 
 def test_checklist_is_one_item_per_part_and_per_code_at_odd_angles(env, capsys):

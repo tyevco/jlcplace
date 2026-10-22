@@ -195,7 +195,8 @@ def _codeless_hint(run, bom) -> list[str]:
 
 def _units_hint(run, units: str) -> list[str]:
     """A hint when most rows lie far from their parts but would sit on them were the CPL's bare numbers in inches or
-    mils (KiCad's CSV position file does not say its unit)."""
+    mils (KiCad's CSV position file does not say its unit), or relative to the page origin (KiCad's position file
+    without "use drill/place file origin")."""
     if units != "mm" or run.worst() != RED:
         return []
     pairs = [(r.row, run.board.part(r.ref)) for r in run.results if r.row is not None and run.board.part(r.ref)]
@@ -210,6 +211,13 @@ def _units_hint(run, units: str) -> list[str]:
         if 2 * n > len(pairs) and n > 2 * here:
             return [f"jlcplace: {n} of {plural(len(pairs), 'row')} would sit on their parts if the CPL's numbers were "
                     f"in {'inches' if unit == 'in' else 'mils'}: pass --units {unit}"]
+    # KiCad's position file is relative to the page origin unless "use drill/place file origin" is ticked
+    if run.board.origin != (0.0, 0.0):
+        n = sum(1 for row, p in pairs if math.dist(cpl_to_board((row.x, row.y), (0.0, 0.0)), (p.x, p.y)) <= 2.0)
+        if 2 * n > len(pairs) and n > 2 * here:
+            return [f"jlcplace: {n} of {plural(len(pairs), 'row')} would sit on their parts if the CPL were relative "
+                    f"to the page origin, not the board's {run.board.origin_kind} origin: pass --origin absolute (and "
+                    f"check that the Gerbers use the same origin)"]
     return []
 
 

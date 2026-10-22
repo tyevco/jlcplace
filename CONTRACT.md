@@ -406,13 +406,14 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   `show CODE | BOARD --ref REF [--json]`;
   `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
   default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache lacked
-  and say how to fetch them; `check` also says `--units in` (or mil) when most rows are red and would sit within 2
-  mm of their parts in that unit. `-v` is taken before or after the command; `--origin -5,3` is read as
-  `--origin=-5,3`. `check`, `cpl` and `show` warn on stderr when `--db` does not exist (`fit` and `confirm` create
-  it); a `--db` that exists and is not a directory is bad input. Exit codes: 0 clean, 1 yellow (rows or BOM issues)
-  with --fail-on yellow, 2 red (fetch: records that could not be fetched), 3 bad input (argparse errors, unreadable or
-  unwritable files and database files included; when one output cannot be written the others still are), 4 an
-  internal error (the traceback is printed): no crash exits 1; 130 interrupted (ctrl-C, "jlcplace: interrupted").
+  and say how to fetch them; `check` also says `--units in` (or mil) when most rows are red and would sit within 2 mm of
+  their parts in that unit, or `--origin absolute` when they would from the page origin. `-v` is taken before or after
+  the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl` and `show` warn on stderr when `--db` does not
+  exist (`fit` and `confirm` create it); a `--db` that exists and is not a directory is bad input. Exit codes: 0 clean,
+  1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch: records that could not be fetched), 3 bad input
+  (argparse errors, unreadable or unwritable files and database files included; when one output cannot be written the
+  others still are), 4 an internal error (the traceback is printed): no crash exits 1; 130 interrupted (ctrl-C,
+  "jlcplace: interrupted").
 
 ## Open
 
