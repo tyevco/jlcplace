@@ -6,6 +6,7 @@ G/D/S) are yellow in both. Hand-built footprints, then every cached real record 
 of its own pads; the real boards are covered by the golden tests of test_fit, test_check and test_e2e, whose verdicts
 this must not change."""
 import dataclasses
+import itertools
 import json
 import os
 from pathlib import Path
@@ -225,6 +226,42 @@ def test_a_row_by_pad_numbers_is_red_when_no_placement_wires_the_part_right():
     from jlcplace.model import Board
     run = check(Board("t.kicad_pcb", ORIGIN, [part]), [numbers], {"U3": Resolved(part, ee, c, "fit")})
     assert run.exit_code() == 2
+
+
+def sot236_part(names=("SW", "GND", "FB", "EN", "VIN", "BST")):
+    pads = [Pad(n, x, y, 1.325, 0.6, net=f"/{name}", pin_name=name) for (n, x, y), name in zip(SOT236, names)]
+    return Part("U3", TOP, 120.0, 80.0, 0.0, footprint="Package_TO_SOT_SMD:SOT-23-6", lcsc="C7722", pads=pads)
+
+
+def sot236_record(names):
+    return EEFootprint("C7722", "SOT-23-6", pads=[EEPad(n, x, y, 1.325, 0.6) for n, x, y in SOT236],
+                       pin_names={n: name for (n, _, _), name in zip(SOT236, names)})
+
+
+def test_a_placement_that_agrees_with_more_names_but_permutes_some_too_does_not_save_the_fit():
+    """The fit's red asks what the check's asks: no placement that permutes no names and agrees with more of them.
+    Here the half turn agrees with more names but permutes others: the part is wired wrong whatever the rotation,
+    red in the fit (stored so: `fit --db`), in the row and in a check from the database without the record."""
+    part, ee = sot236_part(), sot236_record(("SW", "FB", "BST", "VIN", "GND", "EN"))
+    c = fit_part(part, ee)
+    assert c.verdict == RED and c.reasons[0].startswith("pinout differs from the symbol"), c.reasons
+    res = check_row(part, row_for(part, c), ee, ORIGIN, corr=c)
+    assert (res.status, res.verdict) == ("pinout", RED), res.messages
+    from jlcplace.model import Board
+    run = check(Board("t.kicad_pcb", ORIGIN, [part]), [row_for(part, c)],
+                {"U3": Resolved(part, NotFound("C7722", "not cached"), c, "db")})
+    assert run.results[0].verdict == RED and run.exit_code() == 2, run.results[0].messages
+
+
+def test_the_fit_and_the_check_agree_on_every_permutation_of_six_names():
+    """Over every permutation of a SOT-23-6's six names, the fit is red exactly when the check of its own row is red
+    pinout."""
+    part = sot236_part()
+    for names in itertools.permutations(("SW", "GND", "FB", "EN", "VIN", "BST")):
+        ee = sot236_record(names)
+        c = fit_part(part, ee)
+        res = check_row(part, row_for(part, c), ee, ORIGIN, corr=c, alt_readings=False)
+        assert (c.verdict == RED) == ((res.status, res.verdict) == ("pinout", RED)), (names, c.reasons, res.messages)
 
 
 def test_names_that_differ_without_a_permutation_make_the_row_yellow():

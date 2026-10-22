@@ -309,9 +309,9 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
      or whose + mark contradicts the numbers (or the names) that are its only other evidence; the mirror wins (only
      a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
      far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA
-     names are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S does better
-     by the names (not for a non-polar two-terminal part, nor a polar one whose drawn + the member puts on KiCad's
-     positive pad): reason "pinout differs from the symbol: pad N is X on the LCSC part, Y on the board; ...: no
+     names are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S wires it
+     better (permutes no names and agrees with more of them, as check's `_pinout` asks; not for a non-polar
+     two-terminal part, nor a polar one whose drawn + the member puts on KiCad's positive pad): reason "pinout differs from the symbol: pad N is X on the LCSC part, Y on the board; ...: no
      placement that lands every pad puts the pins on their own functions, so the part is wired wrong whatever the
      rotation; check the LCSC part's pinout against the symbol".
    Angles within `snap` of a multiple of 90 are snapped and the translation refitted. `dx, dy` (4 decimals) = the

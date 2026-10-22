@@ -798,9 +798,11 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
     diffs = f.pin_diffs(chosen) if chosen.names_bad else []
     swapped = [d for d in diffs if d.kind == "swapped"]
     plus_ok = mark is not None and f.mark_ok(chosen, mark)
-    if swapped and not nonpolar and not plus_ok and not any(m.name_score > chosen.name_score for m in normal):
-        # the names are permuted under every placement that lands the pads: no rotation wires the part right (a
-        # polar part's drawn + on its positive pad vouches for the polarity against the names, as in JLC's preview)
+    if swapped and not nonpolar and not plus_ok and not any(
+            m.name_score > chosen.name_score and not any(d.kind == "swapped" for d in f.pin_diffs(m)) for m in normal):
+        # the names are permuted under every placement that lands the pads (one that agrees with more names permutes
+        # some too): no rotation wires the part right, as check's _pinout judges it (a polar part's drawn + on its
+        # positive pad vouches for the polarity against the names, as in JLC's preview)
         verdict = RED
         reasons.insert(0, f"pinout differs from the symbol: {pinout_text(swapped)}: no placement that lands every "
                           f"pad puts the pins on their own functions, so the part is wired wrong whatever the "
