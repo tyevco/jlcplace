@@ -59,7 +59,7 @@ def jl(capsys, *args):
 
 
 def results(path) -> dict:
-    return {r["ref"]: r for r in json.loads(Path(path).read_text())["results"]}
+    return {r["ref"]: r for r in json.loads(Path(path).read_text(encoding="utf-8"))["results"]}
 
 
 def by_verdict(res: dict, verdict: str) -> dict:
@@ -86,7 +86,7 @@ def test_released_cpls_have_no_red_rows(cache, tmp_path, capsys):
     assert code == 0 and len(res) == 184
     assert by_verdict(res, "red") == {} and by_verdict(res, "yellow") == {"R26": "not-simulated", "BZ1": "ok"}
     assert "polarity decided by pad numbers only" in res["BZ1"]["messages"][0]
-    assert json.loads((tmp_path / "main.json").read_text())["bom"] == []
+    assert json.loads((tmp_path / "main.json").read_text(encoding="utf-8"))["bom"] == []
     assert not [r for r in res.values() if any("differs from the row jlcplace writes" in m for m in r["messages"])]
 
     code, out, _ = jl(capsys, "check", pcb("base"), cpl("base"), "--bom", bom("base"), "--cache", cache, "--offline",
@@ -115,7 +115,7 @@ def test_preview_checklist_is_short_and_keeps_what_matters(cache, tmp_path, caps
     first; the part EasyEDA does not know still listed."""
     code, out, _ = jl(capsys, "check", pcb("main"), cpl("main"), "--cache", cache, "--offline", "--json",
                       tmp_path / "main.json")
-    d = json.loads((tmp_path / "main.json").read_text())
+    d = json.loads((tmp_path / "main.json").read_text(encoding="utf-8"))
     items = d["checklist"]
     assert code == 0 and len(items) <= 15, [(i["category"], i["refs"]) for i in items]
     refs = [r for i in items for r in i["refs"]]
@@ -149,12 +149,12 @@ def test_old_cpls_are_red_on_exactly_the_seven_wrong_rows(cache, tmp_path, capsy
         annotated = {ln.split("title=jlcplace ")[1].split(" ")[0] for ln in out.splitlines()
                      if ln.startswith("::error")}
         assert annotated == set(red[b])
-        page = (tmp_path / f"{b}.html").read_text()
+        page = (tmp_path / f"{b}.html").read_text(encoding="utf-8")
         for ref in red[b]:
             assert f'<b>{ref}</b>' in page and page.index(f"<b>{ref}</b>") < page.index('<details class="card green"')
     assert red == {"main": {"J1": "off-copper", "J20": "off-copper", "J40": "off-copper"},
                    "base": {"J1": "off-copper", "J2": "off-copper", "J3": "off-copper", "SW1": "off-copper"}}
-    md = (tmp_path / "main.md").read_text()
+    md = (tmp_path / "main.md").read_text(encoding="utf-8")
     assert "## Bottom reading" in md and "**J1** (C160411, bottom, rot 120) **(red: fix the row first)**" in md
 
 
@@ -162,7 +162,7 @@ def test_cpl_from_fits_reproduces_the_released_cpls(cache, tmp_path, capsys):
     """Rows written from fits alone (no database) against the released CPLs (made from jlc_offsets.json): the same
     refs, sides and angles, positions within 0.6 um. The released rows used corrections rounded to 3 decimals, the
     fits keep 4; base needs SW1's numbering decided first (red, so `cpl` refuses), R26 gets KiCad's own row."""
-    offsets = json.loads(OFFSETS.read_text()) if OFFSETS.is_file() else {}
+    offsets = json.loads(OFFSETS.read_text(encoding="utf-8")) if OFFSETS.is_file() else {}
     out = tmp_path / "main.csv"
     code, text, _ = jl(capsys, "cpl", pcb("main"), "-o", out, "--cache", cache, "--offline", "--json",
                        tmp_path / "main.json")
@@ -254,13 +254,14 @@ def test_snapshot_round_trip_and_checks_without_kicad(cache, tmp_path, capsys):
 
     stub = tmp_path / "nopcbnew"
     stub.mkdir()
-    (stub / "pcbnew.py").write_text("raise ImportError('pcbnew is blocked for this test')\n")
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(stub), str(Path(__file__).parents[1] / "src")])}
+    (stub / "pcbnew.py").write_text("raise ImportError('pcbnew is blocked for this test')\n", encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(stub), str(Path(__file__).parents[1] / "src")]),
+           "PYTHONIOENCODING": "utf-8"}
     assert subprocess.run([sys.executable, "-c", "import pcbnew"], env=env, capture_output=True).returncode != 0
 
     def sub(*args):
         p = subprocess.run([sys.executable, "-m", "jlcplace", *map(str, args)], env=env, capture_output=True,
-                           text=True, timeout=300)
+                           encoding="utf-8", timeout=300)
         return p.returncode, p.stdout, p.stderr
 
     for board, extra in ((snap, ()), (snap, ("--reader", "json")), (pcb("main"), ()),
@@ -273,7 +274,8 @@ def test_snapshot_round_trip_and_checks_without_kicad(cache, tmp_path, capsys):
         assert {k: (r["status"], r["verdict"]) for k, r in got.items()} == \
             {k: (r["status"], r["verdict"]) for k, r in ref.items()}, (board, extra)
         # a snapshot remembers the reader that made it; the .kicad_pcb file falls back to the S-expression reader
-        assert json.loads(out_json.read_text())["board"]["source"] == ("pcbnew" if board == snap else "sexpr")
+        source = json.loads(out_json.read_text(encoding="utf-8"))["board"]["source"]
+        assert source == ("pcbnew" if board == snap else "sexpr")
     code, _, err = sub("check", pcb("main"), cpl("main"), "--reader", "pcbnew", "--cache", cache, "--offline")
     assert code == 3 and "pcbnew" in err
     code, out, _ = sub("check", snap, cpl("main"), "--cache", cache, "--offline")

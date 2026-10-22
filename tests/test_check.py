@@ -783,7 +783,7 @@ def dms():
     need = [OFFSETS] + [pcb_path(b) for b in BOARDS] + [cpl_path(b) for b in BOARDS]
     if not all(os.path.exists(p) for p in need):
         pytest.skip(f"needs the dial-me-spinner repository at {DMS} (set JLCPLACE_DIAL_ME_SPINNER)")
-    with open(OFFSETS) as f:
+    with open(OFFSETS, encoding="utf-8") as f:
         offsets = json.load(f)
     kbs = {b: pcbnew.LoadBoard(pcb_path(b)) for b in BOARDS}
     return SimpleNamespace(pcbnew=pcbnew, kb=kbs, boards={b: board_from_pcbnew(pcbnew, kbs[b], pcb_path(b))

@@ -81,7 +81,7 @@ def env(tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     for code, rec in RECORDS.items():
-        (cache / f"{code}.json").write_text(json.dumps(rec))
+        (cache / f"{code}.json").write_text(json.dumps(rec), encoding="utf-8")
     (tmp_path / "empty").mkdir()
     return SimpleNamespace(tmp=tmp_path, make=make, board=str(tmp_path / "board.json"), cache=str(cache),
                            empty=str(tmp_path / "empty"), out=str(tmp_path / "out.csv"))
@@ -116,7 +116,7 @@ def test_cpl_writes_rows_that_check_clean(env, capsys):
                        t / "r.html", "--junit", t / "r.xml", "--checklist", t / "c.md")
     assert code == 0
     assert "4 results: 0 red, 0 yellow, 4 green, 0 verified" in out
-    d = json.loads((t / "r.json").read_text())
+    d = json.loads((t / "r.json").read_text(encoding="utf-8"))
     assert d["summary"]["red"] == 0 and d["summary"]["worst"] == GREEN and len(d["results"]) == 4
     u1 = next(r for r in d["results"] if r["ref"] == "U1")
     assert u1["correction"]["source"] == "fit" and u1["correction"]["rot"] == 180.0 and u1["line"] == 4
@@ -126,11 +126,11 @@ def test_cpl_writes_rows_that_check_clean(env, capsys):
     assert set(items) == {"U2"} and (items["U2"]["category"], items["U2"]["also"]) == ("bottom reading",
                                                                                          ["odd angle"])
     assert "pin 1 would" in items["U2"]["what"] and "rotation 330 is not a multiple of 90" in items["U2"]["what"]
-    md = (t / "c.md").read_text()
+    md = (t / "c.md").read_text(encoding="utf-8")
     assert "## Bottom reading" in md and "- [ ] **U2**" in md
-    suite = ET.fromstring((t / "r.xml").read_text())
+    suite = ET.fromstring((t / "r.xml").read_text(encoding="utf-8"))
     assert (suite.get("tests"), suite.get("failures")) == ("4", "0")
-    page = (t / "r.html").read_text()
+    page = (t / "r.html").read_text(encoding="utf-8")
     assert page.count('<details class="card green"') == 4 and page.count("<svg") == 6
 
 
@@ -165,17 +165,17 @@ def test_fail_on_yellow_and_reports(env, capsys):
     code, _, _ = run(capsys, "check", env.board, env.out, *offline(env), "--fail-on", "yellow", "--junit",
                      env.tmp / "j.xml", "--checklist", env.tmp / "c.csv", "-q")
     assert code == 1
-    assert ET.fromstring((env.tmp / "j.xml").read_text()).get("failures") == "1"
-    rows = list(csv.DictReader((env.tmp / "c.csv").open()))
+    assert ET.fromstring((env.tmp / "j.xml").read_text(encoding="utf-8")).get("failures") == "1"
+    rows = list(csv.DictReader((env.tmp / "c.csv").open(encoding="utf-8")))
     assert {(r["category"], r["ref"]) for r in rows} >= {("not simulated", "R3"), ("bottom reading", "U2")}
 
 
 def test_cpl_refuses_red_rows(env, capsys):
     env.make(two("D1", TOP, 115.0, 70.0, 0.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
-    Path(env.out).write_text("old\n")
+    Path(env.out).write_text("old\n", encoding="utf-8")
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
     assert code == 2 and "not written" in out and "RED     D1" in out
-    assert Path(env.out).read_text() == "old\n"                         # left as it was
+    assert Path(env.out).read_text(encoding="utf-8") == "old\n"     # left as it was
     assert not [p for p in env.tmp.iterdir() if p.name.startswith(".out.csv")]
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force")
     assert code == 2 and "red rows included (--force)" in out
@@ -186,9 +186,9 @@ def test_a_red_cpl_run_says_what_it_left(env, capsys, monkeypatch):
     """cli-10: a red run left an old CPL in place under the name of the one it refused, said 'the rows above' under
     -q with nothing above, named the unwritten file in the summary header, and `-o -` wrote a file called '-'."""
     env.make(two("D1", TOP, 115.0, 70.0, 0.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
-    Path(env.out).write_text("STALE OLD CONTENT\n")
+    Path(env.out).write_text("STALE OLD CONTENT\n", encoding="utf-8")
     code, out, err = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "-q")
-    assert code == 2 and Path(env.out).read_text() == "STALE OLD CONTENT\n"
+    assert code == 2 and Path(env.out).read_text(encoding="utf-8") == "STALE OLD CONTENT\n"
     assert out.strip() == (f"jlcplace: {env.out} not written: D1 is red (--force writes it anyway); the existing "
                            f"{env.out} is left unchanged"), out
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.tmp / "new.csv", *offline(env))
@@ -211,7 +211,7 @@ def test_offline_check_from_a_committed_database(env, capsys):
     db = env.tmp / "db"
     code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
     assert code == 0 and "4 parts: 0 red, 0 yellow, 4 green" in out
-    stored = json.loads((db / "C1001.json").read_text())
+    stored = json.loads((db / "C1001.json").read_text(encoding="utf-8"))
     assert set(stored["entries"][0]) == {"ee", "kicad", "correction", "fit", "verdict", "reasons", "status",
                                          "verifications", "tool", "fitted"}
     assert "pads" not in json.dumps(stored)                               # numbers and hashes, no geometry
@@ -272,7 +272,7 @@ def test_confirm_presses_and_show(env, capsys):
 def test_bad_input_is_exit_3(env, capsys):
     env.make()
     bad = env.tmp / "bad.csv"
-    bad.write_text("a,b,c\n1,2,3\n")
+    bad.write_text("a,b,c\n1,2,3\n", encoding="utf-8")
     assert run(capsys, "check", env.tmp / "nope.kicad_pcb", bad, *offline(env))[0] == 3
     assert run(capsys, "check", env.board, env.tmp / "nope.csv", *offline(env))[0] == 3
     code, _, err = run(capsys, "check", env.board, bad, *offline(env))
@@ -458,7 +458,7 @@ def diode(ref, x, y, code, names=("K", "A"), footprint="Diode_SMD:D_SOD-123", nu
 
 def write_records(env, **records):
     for code, rec in records.items():
-        (Path(env.cache) / f"{code}.json").write_text(json.dumps(rec))
+        (Path(env.cache) / f"{code}.json").write_text(json.dumps(rec), encoding="utf-8")
 
 
 SOD = [("1", -1.6, 0.0, 0.9, 1.2, 0), ("2", 1.6, 0.0, 0.9, 1.2, 0)]
@@ -473,14 +473,14 @@ def test_database_entries_follow_the_pin_functions(env, capsys):
     db = env.tmp / "db"
     code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env), "--ref", "D4", "--ref", "D5")
     assert code == 0 and out.count("[stored]") == 2, out
-    assert len(json.loads((db / "C2001.json").read_text())["entries"]) == 2
+    assert len(json.loads((db / "C2001.json").read_text(encoding="utf-8"))["entries"]) == 2
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
     rows = {r.ref: r.rotation for r in read_cpl(env.out)}
     assert code == 0 and (rows["D4"], rows["D5"]) == (0.0, 180.0), out
     # D5 checked in JLC's preview: D4's entry is not verified by it, and D4 turned to D5's angle is red
     run(capsys, "confirm", env.board, "--ref", "D5", "--db", db, "--by", "me", "--source", "preview", "--cpl",
         env.out, *offline(env))
-    statuses = sorted(e["status"] for e in json.loads((db / "C2001.json").read_text())["entries"])
+    statuses = sorted(e["status"] for e in json.loads((db / "C2001.json").read_text(encoding="utf-8"))["entries"])
     assert statuses == ["auto", "preview-verified"]
     rows = read_cpl(env.out)
     next(r for r in rows if r.ref == "D4").rotation = 180.0
@@ -515,7 +515,7 @@ def test_fit_does_not_let_a_second_part_replace_the_first_ones_entry(env, capsys
     code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
     r2 = next(ln for ln in out.splitlines() if " R2 " in ln)
     assert "not stored: R1 has the same code and footprint and fits rot 0" in r2, out
-    entries = json.loads((db / "C1002.json").read_text())["entries"]
+    entries = json.loads((db / "C1002.json").read_text(encoding="utf-8"))["entries"]
     assert [e["correction"]["rot"] for e in entries] == [0.0]
 
 
@@ -526,9 +526,10 @@ def test_the_bom_code_is_the_part_jlc_places(env, capsys):
     env.make()
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
     bom = env.tmp / "bom.csv"
-    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1006\nR,\"R1,R2\",0402,C1002\n")
+    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1006\nR,\"R1,R2\",0402,C1002\n",
+                   encoding="utf-8")
     code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "r.json")
-    res = {r["ref"]: r for r in json.loads((env.tmp / "r.json").read_text())["results"]}
+    res = {r["ref"]: r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"]}
     assert code == 2 and res["U1"]["lcsc"] == "C1006" and res["U1"]["verdict"] == RED
     assert "U1: JLC places C1006 from the BOM; the board says C1001 (checked with C1006)" in out
     # cpl with the BOM writes rows for the BOM's code
@@ -600,7 +601,7 @@ def test_offline_summary_keeps_the_finding_first(env, capsys):
     lines = {ln.split()[1]: ln for ln in out.splitlines() if ln.startswith(("RED", "YELLOW"))}
     assert code == 2 and "land off copper" in lines["R1"], out
     assert "because the stored auto correction is yellow: rms 0.170" in lines["R3"], out
-    failure = ET.fromstring((env.tmp / "j.xml").read_text()).find(".//failure")
+    failure = ET.fromstring((env.tmp / "j.xml").read_text(encoding="utf-8")).find(".//failure")
     assert "land off copper" in failure.get("message")
 
 
@@ -627,18 +628,19 @@ def test_messages_read_as_english(env, capsys):
     next(r for r in rows if r.ref == "R1").x += 0.5
     write_cpl(env.out, rows)
     bom = env.tmp / "bom.csv"
-    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2,R9\",0402,C1002\n")
+    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2,R9\",0402,C1002\n",
+                   encoding="utf-8")
     code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env))
     assert "; 1 BOM issue" in out and "BOM issues" not in out, out
     r1 = next(ln for ln in out.splitlines() if ln.startswith("RED     R1"))
     assert "off-copper:" not in r1 and "land off copper" in r1, r1
 
 
-def test_readme_says_what_the_database_keeps():
+def test_readme_says_what_the_database_keeps(tmp_path):
     """lic-2: database entries keep the EasyEDA footprint's title (package dimensions) for people reading them."""
-    text = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     assert "hold only\nderived numbers, pad numbers and hashes" not in text and "footprint's title" in text
-    db = CorrectionDB(Path(os.environ.get("TMPDIR", "/tmp")) / "jlcplace-lic2-unused")
+    db = CorrectionDB(tmp_path / "jlcplace-lic2-unused")
     assert db.file("C1").name == "C1.json"
 
 
@@ -667,12 +669,13 @@ def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_b
     x, y, a = cv.cpl_row_for(board.part("D1"), Correction(180.0), ORIGIN)      # D1 turned half a turn
     write_cpl(env.out, [CplRow("D1", x, y, TOP, a)])
     bom = env.tmp / "bom.csv"
-    bom.write_text("Comment,Designator,Footprint,LCSC\nD,D1,SOD-123,C2001\n")
+    bom.write_text("Comment,Designator,Footprint,LCSC\nD,D1,SOD-123,C2001\n", encoding="utf-8")
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", env.tmp / "a.json")
-    assert {r["ref"]: r["status"] for r in json.loads((env.tmp / "a.json").read_text())["results"]}["D1"] \
+    assert {r["ref"]: r["status"]
+            for r in json.loads((env.tmp / "a.json").read_text(encoding="utf-8"))["results"]}["D1"] \
         == "not-placed"
     code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "b.json")
-    d = {r["ref"]: r for r in json.loads((env.tmp / "b.json").read_text())["results"]}["D1"]
+    d = {r["ref"]: r for r in json.loads((env.tmp / "b.json").read_text(encoding="utf-8"))["results"]}["D1"]
     assert code == 2 and (d["status"], d["verdict"]) == ("wrong-pad", RED), d
     assert "the BOM lists it: JLC will place it" in d["messages"][-1]
 
@@ -718,7 +721,7 @@ def rows_with(board, **rots):
 
 
 def entry_rots(db, code="C1001"):
-    entries = json.loads((Path(db) / f"{code}.json").read_text())["entries"]
+    entries = json.loads((Path(db) / f"{code}.json").read_text(encoding="utf-8"))["entries"]
     return [(e["correction"]["rot"], e["status"]) for e in entries]
 
 
@@ -733,7 +736,7 @@ def test_presses_are_relative_to_the_row_that_was_uploaded(env, capsys):
                          "--cpl", raw, "--space", "2", *offline(env))
     assert code == 0 and out.startswith("U1 C1001: preview-verified, verified: rot 180"), out + err
     assert entry_rots(db) == [(180.0, "preview-verified")]
-    v = json.loads((db / "C1001.json").read_text())["entries"][0]["verifications"][-1]
+    v = json.loads((db / "C1001.json").read_text(encoding="utf-8"))["entries"][0]["verifications"][-1]
     assert v["presses"] == {"space": 2, "right": 0, "up": 0}
     # the right row (jlcplace's) is verified, the uploaded one is red
     run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
@@ -833,11 +836,11 @@ def test_non_finite_cpl_values_are_bad_input(env, capsys, field, value):
     number' at distance nan, the rows green and the exit code 0."""
     env.make()
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
-    with open(env.out, newline="") as f:
+    with open(env.out, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     rows[1][field] = value
     bad = env.tmp / "bad.csv"
-    with open(bad, "w", newline="") as f:
+    with open(bad, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
@@ -864,7 +867,7 @@ def test_json_report_is_strict_json(env, capsys):
     def strict(token):
         raise ValueError(f"not JSON: {token}")
 
-    d = json.loads((env.tmp / "r.json").read_text(), parse_constant=strict)
+    d = json.loads((env.tmp / "r.json").read_text(encoding="utf-8"), parse_constant=strict)
     u9 = next(r for r in d["results"] if r["ref"] == "U9")
     assert code == 2 and u9["verdict"] == RED and {lnd["dist"] for lnd in u9["landings"]} == {None}
 
@@ -902,7 +905,7 @@ def test_garbage_cpl_bom_and_snapshot_are_bad_input(env, capsys):
     for i, text in enumerate(("{}", "[]", '{"parts": 3}', '{"path": "b", "origin": [0, 0], "parts": [{"x": 1}]}',
                               '"board"')):
         snap = env.tmp / f"snap{i}.json"
-        snap.write_text(text)
+        snap.write_text(text, encoding="utf-8")
         code, out, err = run(capsys, "check", snap, env.out, *offline(env))
         assert code == 3 and "not a jlcplace snapshot" in err, (text, out, err)
 
@@ -915,7 +918,7 @@ def test_a_broken_database_file_is_bad_input(env, capsys):
     run(capsys, "fit", env.board, "--db", db, *offline(env))
     run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
     f = db / "C1001.json"
-    good = f.read_text()
+    good = f.read_text(encoding="utf-8")
     entry = json.loads(good)["entries"][0]
     commands = [["check", env.board, env.out], ["cpl", env.board, "-o", env.tmp / "again.csv"], ["fit", env.board],
                 ["confirm", env.board, "--ref", "U1", "--by", "me", "--source", "manual"],
@@ -930,7 +933,7 @@ def test_a_broken_database_file_is_bad_input(env, capsys):
             code, out, err = run(capsys, *cmd, "--db", db, *offline(env))
             assert code == 3 and "C1001.json: not a valid jlcplace correction file" in err, (broken, cmd, out, err)
             assert "Traceback" not in err
-    f.write_text(good)
+    f.write_text(good, encoding="utf-8")
     # a snapshot whose code has a leading zero (a package typed into the field) is no code, as the board readers
     # read it; it crashed the database lookup
     board.part("R1").lcsc = "C0402"
@@ -963,7 +966,7 @@ def test_an_output_that_cannot_be_written_is_bad_input(env, capsys):
     next(r for r in rows if r.ref == "U1").rotation = 0.0                  # red
     write_cpl(env.out, rows)
     afile = env.tmp / "afile"
-    afile.write_text("not a directory")
+    afile.write_text("not a directory", encoding="utf-8")
     for opt in ("--report", "--json", "--junit", "--checklist"):
         later = env.tmp / f"later{opt}.xml"
         code, out, err = run(capsys, "check", env.board, env.out, *offline(env), "-q", opt, afile / "r.out",
@@ -1036,17 +1039,17 @@ def test_control_characters_in_a_reference_are_bad_input(env, capsys):
     pcb = env.tmp / "evil.kicad_pcb"
     pcb.write_text('(kicad_pcb (version 20241229) (setup (aux_axis_origin 100 100))\n'
                    '  (footprint "R:R" (layer "F.Cu") (at 110 95 90) (property "Reference" "R1\\n::error::x\\x01")\n'
-                   '    (pad "1" smd rect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu"))))\n')
+                   '    (pad "1" smd rect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu"))))\n', encoding="utf-8")
     code, out, err = run(capsys, "check", pcb, rows, "--reader", "sexpr", *offline(env))
     assert code == 3 and "R1\\n::error::x\\x01" in err, err
     own_lines_only(out + err)
     text = (env.tmp / "board.csv")
-    text.write_text('Designator,Mid X,Mid Y,Layer,Rotation\r\n"R1' + INJECT + '",10,5,Top,0\r\n')
+    text.write_text('Designator,Mid X,Mid Y,Layer,Rotation\r\n"R1' + INJECT + '",10,5,Top,0\r\n', encoding="utf-8")
     code, out, err = run(capsys, "check", env.board, text, *offline(env), "--github-annotations")
     assert code == 3 and "line 2" in err and "control character" in err, err
     own_lines_only(out + err)
     bom = env.tmp / "bom.csv"
-    bom.write_text("Comment,Designator,Footprint,LCSC\n10k,\"R1,R2\x1b[8m\",0402,C1002\n")
+    bom.write_text("Comment,Designator,Footprint,LCSC\n10k,\"R1,R2\x1b[8m\",0402,C1002\n", encoding="utf-8")
     code, out, err = run(capsys, "check", env.board, rows, "--bom", bom, *offline(env))
     assert code == 3 and "R2\\x1b[8m" in err, err
     own_lines_only(out + err)
@@ -1059,10 +1062,10 @@ def test_text_from_easyeda_and_the_database_is_printed_without_control_character
     cache = env.tmp / "evilcache"
     shutil.copytree(env.cache, cache)
     (cache / "C1005.json").write_text(json.dumps({"success": False, "code": 404,
-                                                  "message": "Component not found" + INJECT}))
-    rec = json.loads((cache / "C1002.json").read_text())
+                                                  "message": "Component not found" + INJECT}), encoding="utf-8")
+    rec = json.loads((cache / "C1002.json").read_text(encoding="utf-8"))
     rec["result"]["packageDetail"]["title"] = "R0402" + INJECT
-    (cache / "C1002.json").write_text(json.dumps(rec))
+    (cache / "C1002.json").write_text(json.dumps(rec), encoding="utf-8")
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env, str(cache)), "--force")
     code, out, err = run(capsys, "check", env.board, env.out, *offline(env, str(cache)), "--github-annotations",
                          "--fail-on", "yellow")
@@ -1078,7 +1081,7 @@ def test_text_from_easyeda_and_the_database_is_printed_without_control_character
     (db / "C1005.json").write_text(json.dumps({"lcsc": "C1005", "entries": [{
         "ee": {"key": "", "title": "x" + INJECT}, "kicad": {"fpid": "R" + INJECT, "pad_hash": ""},
         "correction": {"rot": 0, "dx": 0, "dy": 0, "mirror": False}, "verdict": "yellow", "status": "manual",
-        "reasons": ["typed in" + INJECT], "verifications": []}]}))
+        "reasons": ["typed in" + INJECT], "verifications": []}]}), encoding="utf-8")
     code, out, err = run(capsys, "show", "C1005", "--db", db, *offline(env, str(cache)))
     assert code == 0 and "typed in" in out, out
     own_lines_only(out + err)
@@ -1206,7 +1209,7 @@ def test_html_report_declares_the_source_of_the_easyeda_outlines_where_they_are_
 def test_readme_ci_recipe_writes_no_html_report_and_downloads_nothing():
     """lic-1 / net-1: the README's workflow wrote --report cpl.html (EasyEDA pad outlines) on the runner, a step away
     from an artifact of a public repository; and the commands' network use is opt-in."""
-    text = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    text = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     recipe = text[text.index("# .github/workflows/cpl.yml"):]
     recipe = recipe[:recipe.index("```")]
     commands = "\n".join(ln for ln in recipe.splitlines() if not ln.strip().startswith("#"))
@@ -1255,7 +1258,7 @@ def test_option_quirks(env, capsys, monkeypatch):
         assert code == 0 and f"--db {missing} does not exist" in err, (argv, err)
     assert not missing.exists()
     afile = env.tmp / "afile"
-    afile.write_text("x\n")
+    afile.write_text("x\n", encoding="utf-8")
     code, _, err = run(capsys, "check", env.board, env.out, *offline(env), "--db", afile)
     assert code == 3 and "not a directory" in err, err
     code, _, err = run(capsys, "fit", env.board, *offline(env), "--db", env.tmp / "new-db", "-q")
@@ -1268,7 +1271,8 @@ def test_a_cpl_in_inches_gets_a_hint(env, capsys):
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
     inch = env.tmp / "inch.csv"
     inch.write_text("Designator,Mid X,Mid Y,Layer,Rotation\n" + "".join(
-        f"{r.ref},{r.x / 25.4:.6f},{r.y / 25.4:.6f},{r.layer},{r.rotation:g}\n" for r in read_cpl(env.out)))
+        f"{r.ref},{r.x / 25.4:.6f},{r.y / 25.4:.6f},{r.layer},{r.rotation:g}\n" for r in read_cpl(env.out)),
+        encoding="utf-8")
     code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "-q")
     assert code == 2 and "--units in" in out and "4 of 4 rows" in out, out
     code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "--units", "in", "-q")
@@ -1291,7 +1295,7 @@ def test_checklist_is_one_item_per_part_and_per_code_at_odd_angles(env, capsys):
     t = env.tmp
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", t / "r.json", "--checklist",
                        t / "c.md", "--report", t / "r.html")
-    items = json.loads((t / "r.json").read_text())["checklist"]
+    items = json.loads((t / "r.json").read_text(encoding="utf-8"))["checklist"]
     assert code == 0 and [(i["category"], i["ref"], i["refs"]) for i in items] == [
         ("bottom reading", "U2", ["U2"]), ("bottom reading", "U3", ["U3", "U4"]),
         ("odd angle", "R6", ["R3", "R4", "R5", "R6", "R7"])], items
@@ -1304,10 +1308,10 @@ def test_checklist_is_one_item_per_part_and_per_code_at_odd_angles(env, capsys):
     assert "Preview checklist (3 items, 8 parts)" in out, out
     assert "  odd angle       R6 of R3..R7 (C1002, 5 parts at 10 to 50 deg: look at R6)" in out, out
     assert "U2 (look at it first: it settles the bottom reading), U3 U4" in out, out
-    md = (t / "c.md").read_text()
+    md = (t / "c.md").read_text(encoding="utf-8")
     assert "- [ ] **R6** of R3–R7 (C1002, top, 5 parts): " in md and "- [ ] **U3 U4** (C1001, bottom, rot 0, " \
         "2 parts)" in md, md
-    page = (t / "r.html").read_text()
+    page = (t / "r.html").read_text(encoding="utf-8")
     assert "of R3–R7 (5 parts)" in page and "look at this one first" in page
 
 
@@ -1326,7 +1330,7 @@ def test_html_report_labels_legends_and_checklist(env, capsys):
     write_cpl(env.out, rows)
     page_path = env.tmp / "r.html"
     code, _, _ = run(capsys, "check", env.board, env.out, *offline(env), "--report", page_path, "-q")
-    page = page_path.read_text()
+    page = page_path.read_text(encoding="utf-8")
     assert code == 2
     assert str(env.tmp) not in page                      # file names only
     head = page[page.index('<p class="sub">'):page.index("</p>", page.index('<p class="sub">'))]

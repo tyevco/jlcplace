@@ -25,8 +25,14 @@ Conventions for every module:
 * Fixture locations can be overridden, and every test module reads them: `JLCPLACE_DIAL_ME_SPINNER` (the
   dial-me-spinner checkout), `JLCPLACE_TEST_EASYEDA` (the directory holding `ee_raw/`, `dl/`, `fab-before/`, `src/`),
   `KICAD_FOOTPRINT_DIR` (KiCad's footprint libraries). Network tests run only with `JLCPLACE_NETWORK_TESTS=1`.
-  `.github/workflows/ci.yml` runs the unmarked tests without KiCad, the pcbnew tests in KiCad's image and the cache
-  tests with fetched records; `.github/skip_gate.py` fails a job on any skip whose reason it does not allow.
+  `.github/workflows/ci.yml` runs the unmarked tests without KiCad on Linux, macOS and Windows with Python 3.10 to
+  3.13 (the classifiers' versions), under `python -X warn_default_encoding` so that text I/O without an explicit
+  encoding fails on every OS (pyproject's `filterwarnings`); builds and checks the sdist and wheel; runs the pcbnew
+  tests in KiCad's image (kicad/kicad:9.0, its Python 3.11 in a `--system-site-packages` venv); and, optionally, the
+  cache tests with records `jlcplace fetch` puts in an Actions cache. `.github/skip_gate.py` fails a job on any skip
+  whose reason it does not allow. The unmarked tests assume nothing POSIX (file modes, line ends, `HOME`, `/tmp`)
+  and open every text file with `encoding="utf-8"`; the fixture defaults above are the development machine's paths.
+  `tests/test_packaging.py` checks pyproject, that workflow and the README's CI recipe as data.
 * Real data used by the tests on the development machine (read-only; EasyEDA records are never copied into the repo):
   KiCad 9.0.9 (`pcbnew`, `kicad-cli`, `/usr/share/kicad/footprints`, `/usr/share/kicad/demos`); the dial-me-spinner
   boards, CPLs, BOMs and `jlc_offsets.json`; the old buggy CPLs (7 rows wrong: main J1 J20 J40, base J1 J2 J3 SW1);

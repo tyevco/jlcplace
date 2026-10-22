@@ -70,7 +70,7 @@ def test_no_pad_geometry_is_stored(db):
                presses={"space": 1, "right": 2, "up": -1}, part=part,
                correction=presses_to_correction(part, db.lookup("C1"), space=1, right=2, up=-1))
     db.upsert("C1", corr(kicad_hash="sha1:bbbb", alternatives=alternatives))
-    doc = json.loads((db.path / "C1.json").read_text())
+    doc = json.loads((db.path / "C1.json").read_text(encoding="utf-8"))
 
     def walk(v, path):
         if isinstance(v, dict):
@@ -112,19 +112,19 @@ def test_codes_are_validated(db, code):
 
 def test_not_a_correction_file_and_hand_edited_entries(db):
     db.path.mkdir(parents=True)
-    (db.path / "C5.json").write_text('["not", "an", "entry file"]\n')
+    (db.path / "C5.json").write_text('["not", "an", "entry file"]\n', encoding="utf-8")
     with pytest.raises(ValueError):
         db.lookup("C5")
     (db.path / "C6.json").write_text('{"lcsc": "C6", "entries": [{"correction": {"rot": 90, "dx": 0, "dy": 1}, '
-                                     '"status": "manual"}]}\n')
+                                     '"status": "manual"}]}\n', encoding="utf-8")
     got = db.lookup("C6", ee_key="u:1", kicad_hash="sha1:x")         # no keys: it claims no footprint
     assert (got.rot, got.dy, got.status, got.method, got.ee_key) == (90.0, 1.0, "manual", "db", "")
     # sec-2: git conflict markers and a hand-edited value were a JSONDecodeError / a bare ValueError, from lookup
     # only when the entry was reached
-    good = (db.path / "C6.json").read_text()
+    good = (db.path / "C6.json").read_text(encoding="utf-8")
     for broken in ("<<<<<<< HEAD\n" + good + "=======\n" + good + ">>>>>>> other\n",
                    good.replace('"rot": 90', '"rot": "x"'), good.replace('"correction": {', '"correction": [{')):
-        (db.path / "C6.json").write_text(broken)
+        (db.path / "C6.json").write_text(broken, encoding="utf-8")
         for call in (lambda: db.lookup("C6"), lambda: db.entries("C6"), lambda: db.upsert("C6", corr())):
             with pytest.raises(dbmod.DBError, match="C6.json: not a valid jlcplace correction file"):
                 call()
@@ -386,9 +386,10 @@ def test_jlc_preview_presses_replayed_on_the_uploaded_rows(tmp_path, capsys):
             rows.append(CplRow(part.ref, x, y, part.layer, a))
     raw = tmp_path / "raw.csv"
     write_cpl(raw, rows)
-    presses = {r[0]: int(r[1]) // 90 for r in csv.reader(open(Z_FIX / "truth_presses.csv"))
+    presses = {r[0]: int(r[1]) // 90 for r in csv.reader(open(Z_FIX / "truth_presses.csv", encoding="utf-8"))
                if r and not r[0].startswith("#") and r[1:2] != [""]}
-    truth = {r["reference"]: float(r["observed_rotation"]) for r in csv.DictReader(open(Z_FIX / "truth.csv"))
+    truth = {r["reference"]: float(r["observed_rotation"])
+             for r in csv.DictReader(open(Z_FIX / "truth.csv", encoding="utf-8"))
              if r["observed_rotation"].strip()}
     refs = ("C2", "D4", "D8", "D9", "D12", "LED2", "U4")
     db = tmp_path / "db"
@@ -409,5 +410,5 @@ def test_jlc_preview_presses_replayed_on_the_uploaded_rows(tmp_path, capsys):
     write_cpl(tmp_path / "truth.csv", rows)
     main([str(a) for a in ["check", CORNER, tmp_path / "truth.csv", "--db", db, "--json", tmp_path / "t.json",
                            "-q", *common]])
-    got = {r["ref"]: r["verdict"] for r in json.loads((tmp_path / "t.json").read_text())["results"]}
+    got = {r["ref"]: r["verdict"] for r in json.loads((tmp_path / "t.json").read_text(encoding="utf-8"))["results"]}
     assert {ref: got[ref] for ref in refs} == {ref: VERIFIED for ref in refs}
