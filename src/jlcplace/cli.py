@@ -11,7 +11,7 @@
 BOARD is a .kicad_pcb file or a JSON snapshot. Only `fetch`, and the other commands with --online, use the network
 (the EasyEDA API); otherwise records come from the cache. Exit codes: 0 clean; 1 something yellow and --fail-on
 yellow; 2 something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a
-database file that cannot be read, bad options); 4 an internal error (a bug), never 1.
+database file that cannot be read, bad options); 4 an internal error (a bug), never 1; 130 interrupted (ctrl-C).
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import traceback
 import warnings
@@ -30,8 +31,8 @@ from pathlib import Path
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
 from .check import ANGLE_TOL, ROW_TOL, check_bom
-from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
-from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
+from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, cpl_to_board, norm_angle, row_correction
+from .cpl import UNITS, assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
@@ -41,7 +42,7 @@ from .pipeline import apply_bom_codes, bom_overrides, check, correction, describ
     resolve, row_lines
 from .report import plural
 
-EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL = 0, 1, 2, 3, 4
+EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 log = logging.getLogger("jlcplace")
 
 
@@ -112,8 +113,18 @@ def _misses_note(client: EEClient) -> list[str]:
              f"`jlcplace fetch BOARD` downloads them (rate-limited), or pass --online")]
 
 
-def _db(args) -> CorrectionDB | None:
-    return CorrectionDB(args.db) if getattr(args, "db", None) else None
+def _db(args, *, creates: bool = False) -> CorrectionDB | None:
+    """The --db database. Not a directory: bad input. Missing: a warning, unless the command creates it (fit); a
+    typo would otherwise drop every stored and verified correction without a word."""
+    path = getattr(args, "db", None)
+    if not path:
+        return None
+    if Path(path).exists() and not Path(path).is_dir():
+        raise BadInput(f"--db {path}: not a directory (the database is a directory of JSON files)")
+    if not creates and not Path(path).exists():
+        print(printable(f"jlcplace: warning: --db {path} does not exist: no stored corrections are used "
+                        f"(`jlcplace fit --db` or `confirm` creates it)"), file=sys.stderr)
+    return CorrectionDB(path)
 
 
 def _write(path: str, text: str) -> None:
@@ -182,6 +193,26 @@ def _codeless_hint(run, bom) -> list[str]:
     return []
 
 
+def _units_hint(run, units: str) -> list[str]:
+    """A hint when most rows lie far from their parts but would sit on them were the CPL's bare numbers in inches or
+    mils (KiCad's CSV position file does not say its unit)."""
+    if units != "mm" or run.worst() != RED:
+        return []
+    pairs = [(r.row, run.board.part(r.ref)) for r in run.results if r.row is not None and run.board.part(r.ref)]
+
+    def on_parts(scale: float) -> int:
+        return sum(1 for row, p in pairs
+                   if math.dist(cpl_to_board((row.x * scale, row.y * scale), run.board.origin), (p.x, p.y)) <= 2.0)
+
+    here = on_parts(1.0)
+    for unit in ("in", "mil"):
+        n = on_parts(UNITS[unit])
+        if 2 * n > len(pairs) and n > 2 * here:
+            return [f"jlcplace: {n} of {plural(len(pairs), 'row')} would sit on their parts if the CPL's numbers were "
+                    f"in {'inches' if unit == 'in' else 'mils'}: pass --units {unit}"]
+    return []
+
+
 def cmd_check(args) -> int:
     _stdout_once(args)
     board = _board(args)
@@ -193,11 +224,24 @@ def cmd_check(args) -> int:
     run = check(board, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
-    return _finish(args, run, _codeless_hint(run, bom) + _misses_note(client))
+    return _finish(args, run, _units_hint(run, args.units) + _codeless_hint(run, bom) + _misses_note(client))
+
+
+def _no_dash(args, what: str) -> None:
+    if args.output == "-":
+        raise BadInput(f"-o -: {what} writes a file; give it a name (--json - prints the results)")
+
+
+def _refs(results) -> str:
+    """'D1 is red', 'D1, U3 and 2 more are red'."""
+    refs = list(dict.fromkeys(r.ref for r in results))
+    shown = ", ".join(refs[:6]) + (f" and {len(refs) - 6} more" if len(refs) > 6 else "")
+    return printable(f"{shown} {'is' if len(refs) == 1 else 'are'} red")
 
 
 def cmd_cpl(args) -> int:
     _stdout_once(args)
+    _no_dash(args, "cpl")
     board = _board(args)
     bom = _bom(args.bom)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
@@ -214,17 +258,21 @@ def cmd_cpl(args) -> int:
             raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
         written = read_cpl(tmp)                    # check what is in the file, not what was meant to be
         run = check(board, written, resolved, reading=args.reading, bom_rows=bom)
-        run.cpl_path, run.row_lines = str(out), row_lines(tmp, run.results)
         if bom is not None:
             run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, written)
         red = run.worst() == RED
         if red and not args.force:
-            note = f"jlcplace: {out} not written: the rows above are red (--force writes it anyway)"
+            # the reports name no file (there is none): "the rows jlcplace would write"
+            why = _refs(r for r in run.results if r.verdict == RED) if args.quiet else "the rows above are red"
+            note = f"jlcplace: {out} not written: {why} (--force writes it anyway)"
+            if out.exists():
+                note += f"; the existing {out} is left unchanged"
         else:
             try:
                 os.replace(tmp, out)
             except OSError as e:
                 raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
+            run.cpl_path, run.row_lines = str(out), row_lines(out, run.results)
             note = f"jlcplace: wrote {out} ({len(rows)} rows)" + (", red rows included (--force)" if red else "")
     finally:
         if os.path.exists(tmp):
@@ -251,7 +299,7 @@ def cmd_fit(args) -> int:
         raise BadInput(f"not on the board: {', '.join(unknown)}")
     parts = [p for p in sorted(board.parts, key=lambda p: natural_key(p.ref))
              if p.lcsc and (p.ref in want if want else assembled(p))]
-    client, db = _client(args), _db(args)
+    client, db = _client(args), _db(args, creates=True)
     out = sys.stderr if args.json == "-" else sys.stdout
     ees: dict = {}
     data, verdicts = [], []
@@ -552,6 +600,7 @@ def cmd_show(args) -> int:
 # ------------------------------------------------------------------------------------------------------- snapshot
 
 def cmd_snapshot(args) -> int:
+    _no_dash(args, "snapshot")
     board = _board(args)
     try:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -566,9 +615,14 @@ def cmd_snapshot(args) -> int:
 # ------------------------------------------------------------------------------------------------------- parser
 
 def build_parser() -> argparse.ArgumentParser:
-    board = argparse.ArgumentParser(add_help=False)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-v", "--verbose", action="store_true", default=argparse.SUPPRESS,
+                        help="log what the EasyEDA client does")
+
+    board = argparse.ArgumentParser(add_help=False, parents=[common])
     g = board.add_argument_group("board")
-    g.add_argument("--origin", default="aux", help="CPL origin: aux (default), grid, absolute, or 'X,Y' in mm")
+    g.add_argument("--origin", default="aux",
+                   help="CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil')")
     g.add_argument("--lcsc-field", action="append", default=[], metavar="NAME",
                    help="footprint field holding the LCSC code, searched before the usual names (repeatable)")
     g.add_argument("--reader", default="auto", choices=("auto", "pcbnew", "sexpr", "json"),
@@ -604,9 +658,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _Parser(prog="jlcplace", description="Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards "
                                              "by simulating JLC's placement with its own EasyEDA footprints.",
-                epilog="Exit codes: 0 clean, 1 yellow with --fail-on yellow, 2 red, 3 bad input, 4 internal error.")
+                epilog="Exit codes: 0 clean, 1 yellow with --fail-on yellow, 2 red, 3 bad input, 4 internal error, "
+                       "130 interrupted.")
     p.add_argument("--version", action="version", version=f"jlcplace {__version__}")
-    p.add_argument("-v", "--verbose", action="store_true", help="log what the EasyEDA client does")
+    p.add_argument("-v", "--verbose", action="store_true", default=False, help="log what the EasyEDA client does")
     sub = p.add_subparsers(dest="command", required=True, parser_class=_Parser)
 
     s = sub.add_parser("check", parents=[board, ee, db, reading, out], help="simulate a CPL against the board",
@@ -686,10 +741,24 @@ class _Printable(logging.Formatter):
         return printable(super().format(record))
 
 
+def _glued(argv) -> list[str]:
+    """'--origin -5,3' as '--origin=-5,3': argparse takes a value that starts with '-' (and is not a plain number)
+    for an option."""
+    out, i = [], 0
+    while i < len(argv):
+        if argv[i] == "--origin" and i + 1 < len(argv) and re.match(r"-\.?\d", argv[i + 1]):
+            out.append(f"--origin={argv[i + 1]}")
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(_glued(sys.argv[1:] if argv is None else list(argv)))
     except SystemExit as e:                    # --help, --version, usage errors
         return int(e.code or 0)
     if not logging.getLogger().handlers and not log.handlers:
@@ -704,7 +773,8 @@ def main(argv=None) -> int:
         print(printable(f"jlcplace: {e}"), file=sys.stderr)
         return EXIT_INPUT
     except KeyboardInterrupt:
-        return 130
+        print("jlcplace: interrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
     except OSError as e:                       # inputs are BadInput already: an output or the cache
         print(printable(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}"), file=sys.stderr)
         return EXIT_INPUT

@@ -225,6 +225,7 @@ jobs:
           path: fixtures/jlc/ee_raw
           key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}
           restore-keys: easyeda-v1-
+      # the boards' records, and three multi-unit symbols for tests/test_easyeda.py (test_multi_unit_records_...)
       - name: fetch missing EasyEDA records (network; at least 0.7 s between requests)
         id: fetch
         run: >
@@ -232,6 +233,7 @@ jobs:
           ${{ github.event_name == 'schedule' && '--refresh' || '' }}
           fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb
           fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb
+          C20916 C111548 C108023
       - name: save EasyEDA records (repository-private Actions cache, never an artifact)
         if: always() && steps.fetch.outcome == 'success' && github.event_name != 'pull_request'
         uses: actions/cache/save@v4

@@ -107,6 +107,34 @@ def test_released_cpls_have_no_red_rows(cache, tmp_path, capsys):
                       "--fail-on", "yellow", "-q")[0] - 1
 
 
+def test_preview_checklist_is_short_and_keeps_what_matters(cache, tmp_path, capsys):
+    """cli-6: the released main CPL (0 red) had 112 checklist items for 105 parts: 88 of them two codes around the
+    LED ring, parts listed up to three times, and five green rows whose fits are yellow only for their land-pattern
+    residual. Now: a dozen items, one per LED-ring code, each part once; the polarity in doubt (BZ1) first; every
+    bottom part whose pins move under another reading still listed, with a green one that moves under all of them
+    first; the part EasyEDA does not know still listed."""
+    code, out, _ = jl(capsys, "check", pcb("main"), cpl("main"), "--cache", cache, "--offline", "--json",
+                      tmp_path / "main.json")
+    d = json.loads((tmp_path / "main.json").read_text())
+    items = d["checklist"]
+    assert code == 0 and len(items) <= 15, [(i["category"], i["refs"]) for i in items]
+    refs = [r for i in items for r in i["refs"]]
+    assert len(refs) == len(set(refs))                                          # each part once
+    assert [i for i in items if i["lcsc"] in ("C1525", "C55109522")] == [
+        i for i in items if i["category"] == "odd angle"] and len([i for i in items if i["category"] == "odd angle"]) \
+        == 2 and all(len(i["refs"]) == 44 for i in items if i["category"] == "odd angle")
+    assert (items[0]["ref"], items[0]["category"]) == ("BZ1", "uncertain correction")
+    assert items[0]["what"].startswith("yellow fit correction (auto): polarity decided by pad numbers only")
+    sensitive = {r["ref"] for r in d["results"] if r["convention_sensitive"]}
+    assert len(sensitive) == 10 and sensitive <= set(refs)
+    lead = [i for i in items if i["first"]]
+    assert len(lead) == 1 and lead[0]["category"] == "bottom reading" and lead[0]["verdict"] == "green"
+    assert "R26" in refs
+    for ref in ("U2", "U21", "D20", "U31"):                                    # yellow only for an rms residual
+        assert ref not in refs
+    assert f"Preview checklist ({len(items)} items, " in out
+
+
 @need_before
 def test_old_cpls_are_red_on_exactly_the_seven_wrong_rows(cache, tmp_path, capsys):
     red = {}

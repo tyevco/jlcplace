@@ -555,6 +555,36 @@ def test_resolve_origin(text, want):
     assert jb.resolve_origin(text, (5, 6), (7, 8)) == want
 
 
+def test_resolve_origin_takes_units():
+    """cli-13: an origin in inches or mils, as the CPL columns may be, and negative coordinates."""
+    for text, want in (("3.937in,3.937in", (99.9998, 99.9998)), ("4in, 100mil", (101.6, 2.54)),
+                       ("-5,3", (-5.0, 3.0)), ("(10 mm; -20 mm)", (10.0, -20.0)), ("10 20", (10.0, 20.0))):
+        (x, y), kind = jb.resolve_origin(text, (0, 0), (0, 0))
+        assert ((x, y), kind) == (pytest.approx(want, abs=1e-9), "user"), text
+    for bad in ("3furlong,4", "1in", "1in,2in,3in"):
+        with pytest.raises(ValueError):
+            jb.resolve_origin(bad, (0, 0), (0, 0))
+
+
+def test_fallback_warning_names_the_file_once(tmp_path, monkeypatch):
+    """cli-13: 'pcbnew could not load k10.kicad_pcb (pcbnew 9.0.9 could not load k10.kicad_pcb)' said it twice."""
+    import sys
+    import types
+    p = write_board(tmp_path, MINIMAL, "k10.kicad_pcb")
+    monkeypatch.setitem(sys.modules, "pcbnew", types.ModuleType("pcbnew"))
+
+    def refuse(path, **_):
+        raise OSError(f"pcbnew 9.0.9 could not load {path}")
+
+    monkeypatch.setattr(jb, "load_board_pcbnew", refuse)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        b = jb.load_board(p)
+    assert b.source == "sexpr"
+    msg = "; ".join(str(x.message) for x in w)
+    assert msg.count("k10.kicad_pcb") == 1 and "S-expression reader" in msg, msg
+
+
 def test_resolve_origin_rejects_garbage():
     for bad in ("1", "1,2,3", "x,y", ""):
         with pytest.raises(ValueError):

@@ -228,3 +228,5 @@ class RowResult:
     convention_sensitive: bool = False                   # an alternative bottom-side reading changes pin -> net
     row: CplRow | None = None
     expected: CplRow | None = None                       # the row jlcplace would write, when a correction is known
+    # convention_sensitive: per other reading, the EasyEDA pads that move, (ee number, KiCad pad or None = off copper)
+    reading_moves: dict[str, list[tuple[str, str | None]]] = field(default_factory=dict)

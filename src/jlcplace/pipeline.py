@@ -17,19 +17,18 @@ correction's: CI can check CPLs offline from a committed database without any Ea
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field, replace
 
 from . import geom
 from .check import check_cpl, check_row, nonpolar
-from .convention import DEFAULT, rot
+from .convention import BOTTOM_READINGS, DEFAULT, rot
 from .cpl import assembled, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
-from .parts import ee_key, kicad_hash
+from .parts import ee_key, kicad_hash, norm_number
 
 _CODE = re.compile(r"C[1-9][0-9]*", re.I)
 
@@ -46,14 +45,18 @@ class Resolved:
 
 @dataclass
 class CheckItem:
-    """One thing to look at in JLC's placement preview."""
-    category: str                  # bottom reading | not simulated | odd angle | uncertain correction
-    ref: str
+    """One thing to look at in JLC's placement preview: one part (its other categories folded in, `also`), or a
+    group of alike parts (`refs`; `ref` is the one to look at)."""
+    category: str                  # uncertain correction | not simulated | bottom reading | odd angle
+    ref: str                       # the part to look at
     lcsc: str
     layer: str
-    rotation: float | None
+    rotation: float | None         # its row's rotation (None: no row, or a group's rows differ)
     what: str
-    verdict: str = GREEN           # the row's verdict
+    verdict: str = GREEN           # the row's verdict (a group: the worst)
+    refs: list[str] = field(default_factory=list)      # every part the item stands for, natural order
+    also: list[str] = field(default_factory=list)      # the part's other categories, in `what` after "; also "
+    first: bool = False            # bottom reading: the part that settles the reading for every other
 
 
 @dataclass
@@ -147,13 +150,27 @@ def describe(c: Correction) -> str:
 
 _LATER = ("accepted manually", "verification failed", "derived from presses", "typed in by", "taken from the row",
           "the EasyEDA footprint changed")
+#: reasons that only inform (what the fit ruled out, what agrees): they never make a correction yellow
+_INFO = re.compile(r"fits by pad numbers|\d+ pin names agree|rot [^;]* also [^;]*; ruled out by"
+                   r"|the EasyEDA footprint changed .*the refit gives the same placement")
+#: yellow reasons JLC's preview cannot settle: a land-pattern residual with every pad landing (CONTRACT "Open"), and a
+#: non-90 angle (the checklist's odd-angle item has it)
+_QUIET = re.compile(r"rms [\d.]+ mm: the land patterns differ|angle \S+ deg is not a multiple of 90")
 
 
 def key_reasons(c: Correction, n: int = 2) -> list[str]:
     """The reasons that say most about a correction: what a person or a later refit added (latest first), then the
-    fit's own."""
+    fit's own, those that make it yellow or red before those that only inform ("rot 0 also lands every pad, on other
+    nets; ruled out by pad numbers")."""
     later = [r for r in reversed(c.reasons) if r.startswith(_LATER)]
-    return (later + [r for r in c.reasons if r not in later])[:n]
+    rest = [r for r in c.reasons if r not in later]
+    return (later + [r for r in rest if not _INFO.match(r)] + [r for r in rest if _INFO.match(r)])[:n]
+
+
+def needs_preview(c: Correction) -> bool:
+    """Whether JLC's preview can settle something about a correction that is not green: it is red, its choice of
+    placement is in doubt, or a reason other than a land-pattern residual or a non-90 angle makes it yellow."""
+    return c.verdict == RED or bool(c.doubt) or any(not _INFO.match(r) and not _QUIET.match(r) for r in c.reasons)
 
 
 def correction(part: Part, ee, db=None, *, snap: float = 0.5) -> tuple[Correction | None, str]:
@@ -315,36 +332,151 @@ def row_lines(path, results: list[RowResult]) -> list[int | None]:
 
 # ------------------------------------------------------------------------------------------------------- checklist
 
+CATEGORIES = ("uncertain correction", "not simulated", "bottom reading", "odd angle")      # checklist order
+_VRANK = {RED: 0, YELLOW: 1, GREEN: 2, VERIFIED: 3}
+
+
+def _off90(a) -> float:
+    """How far an angle is from the nearest multiple of 90 (0 to 45)."""
+    r = (a or 0.0) % 90.0
+    return min(r, 90.0 - r)
+
+
+def _pin_words(moved: list[tuple[str, str | None]]) -> str:
+    """What one reading does to a part, in pins: 'pins 1 and 2 would swap', 'pin 1 would land off copper (14 pins
+    move)', 'pin 2 would sit on pad 34 (60 pins move)'."""
+    if len(moved) == 2 and moved[0][1] is not None and moved[1][1] is not None \
+            and norm_number(moved[0][1]) == norm_number(moved[1][0]) \
+            and norm_number(moved[1][1]) == norm_number(moved[0][0]):
+        return f"pins {moved[0][0]} and {moved[1][0]} would swap"
+    e, k = next(((e, k) for e, k in moved if norm_number(e) == "1"), moved[0])
+    where = f"sit on pad {k}" if k is not None else "land off copper"
+    return f"pin {e or '?'} would {where}" + (f" ({len(moved)} pins move)" if len(moved) > 1 else "")
+
+
+def moves_text(res: RowResult) -> str:
+    """'as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2 would swap'
+    (the readings with the same effect said once)."""
+    said: dict[str, list[str]] = {}
+    for name in BOTTOM_READINGS:
+        if res.reading_moves.get(name):
+            said.setdefault(_pin_words(res.reading_moves[name]), []).append(name)
+    if not said:                                   # a result made without the moves: the check's own message
+        m = next((m for m in res.messages if m.startswith("bottom reading matters")), "")
+        return m.split(": ", 1)[-1] if m else "pins would move"
+    return "; ".join(f"as {' or '.join(names)}, {words}" for words, names in said.items())
+
+
+def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
+    """(category, what as an item, what as a note on another item) for every reason to look at a result's part."""
+    row = res.row
+    part = run.board.part(res.ref)
+    a = row.rotation if row else None
+    out = []
+    info = run.resolved.get(res.ref)
+    c = info.corr if info is not None else None
+    if c is not None and c.verdict in (YELLOW, RED) and info.source != "fallback" \
+            and res.status not in ("not-simulated", "no-row", "duplicate-ref") \
+            and (res.verdict not in (GREEN, VERIFIED) or needs_preview(c)):
+        # a green row with only a land-pattern residual against it: nothing the preview could settle; the reasons
+        # the preview can settle first, and only those when there are any
+        why = key_reasons(c, len(c.reasons))
+        why = [r for r in why if not _QUIET.match(r) and not _INFO.match(r)][:2] or why[:2]
+        what = f"{c.verdict} {info.source} correction ({c.status}): " + "; ".join(why)
+        out.append(("uncertain correction", what, what))
+    if res.status == "not-simulated":
+        m = res.messages[0] if res.messages else "no EasyEDA footprint"
+        out.append(("not simulated", m, m))
+    if res.convention_sensitive:
+        moves = moves_text(res)
+        out.append(("bottom reading", f"if JLC read the bottom rotation another way: {moves}",
+                    f"the bottom reading matters ({moves})"))
+    if row is not None and part is not None and _off90(a) > 1e-6:
+        out.append(("odd angle", f"rotation {a:g} is not a multiple of 90: check the part sits square on its pads",
+                    f"rotation {a:g} is not a multiple of 90"))
+    return sorted(out, key=lambda f: CATEGORIES.index(f[0]))
+
+
+def _merge(group: list[CheckItem]) -> CheckItem:
+    """One item for alike parts: one code on one side at odd angles (named: the one furthest from a multiple of 90),
+    or one code whose rows move alike under the other bottom readings, or that share a doubtful correction."""
+    it = group[0]
+    if len(group) == 1:
+        return it
+    refs = sorted((r for g in group for r in g.refs), key=natural_key)
+    rots = {g.rotation for g in group}
+    if it.category == "odd angle":
+        look = max(sorted(group, key=lambda g: natural_key(g.ref)), key=lambda g: _off90(g.rotation))
+        lo, hi = min(g.rotation for g in group), max(g.rotation for g in group)
+        what = (f"{len(refs)} parts of one code at {lo:g} to {hi:g} degrees, none a multiple of 90: check that one, "
+                f"{look.ref} at {look.rotation:g}, sits square on its pads; the others are the same part on the "
+                f"same side")
+        return replace(it, ref=look.ref, rotation=None, what=what, refs=refs)
+    what = it.what + (f" ({len(refs)} parts of one code at one rotation: they move alike)"
+                      if it.category == "bottom reading" else f" ({len(refs)} parts share this correction)")
+    return replace(it, ref=refs[0], rotation=it.rotation if len(rots) == 1 else None, what=what, refs=refs)
+
+
 def checklist(run: Run) -> list[CheckItem]:
-    """What to look at in JLC's placement preview: bottom parts whose pin -> net mapping depends on how JLC reads a
-    bottom rotation, parts not simulated, rows at angles that are not multiples of 90, and parts whose correction is
-    neither green nor verified. Sorted by category, then ref."""
+    """What to look at in JLC's placement preview, one item per part (its other reasons folded into it) or per group
+    of alike parts, in CATEGORIES order:
+      uncertain correction  a correction that is not green and that the preview can settle: red, a choice of
+                            placement in doubt (polarity, then names, then orientation first), or a reason other
+                            than a land-pattern residual or a non-90 angle (on a row that is not green, any);
+      not simulated         no EasyEDA footprint;
+      bottom reading        bottom parts whose pins move under another reading of the bottom rotation, said in pins;
+                            first a green part that moves under every other reading: it settles the reading for all;
+      odd angle             rows at angles that are not multiples of 90, one item per code and side.
+    Within a category, red rows (fix the row first) before yellow before green."""
     items: list[CheckItem] = []
+    by_ref: dict[str, RowResult] = {}
     for res in run.results:
-        row = res.row
+        found = _found(run, res)
+        if not found:
+            continue
         part = run.board.part(res.ref)
-        layer = row.layer if row else (part.layer if part else "")
-        a = row.rotation if row else None
+        layer = res.row.layer if res.row else (part.layer if part else "")
+        cat, what, _ = found[0]
+        notes = [n for _, _, n in found[1:]]
+        items.append(CheckItem(cat, res.ref, res.lcsc, layer, res.row.rotation if res.row else None,
+                               what + ("; also " + "; ".join(notes) if notes else ""), res.verdict, refs=[res.ref],
+                               also=[c for c, _, _ in found[1:]]))
+        by_ref.setdefault(res.ref, res)
+    groups: dict[tuple, list[CheckItem]] = {}
+    for it in items:
+        if not it.lcsc or it.category == "not simulated":
+            key: tuple = (id(it),)                 # every row nothing simulated needs its own look
+        elif it.category == "odd angle":
+            key = (it.category, it.lcsc, it.layer, it.verdict)
+        elif it.category == "bottom reading":
+            key = (it.category, it.lcsc, it.layer, it.verdict, it.rotation, it.what)
+        else:
+            key = (it.category, it.lcsc, it.layer, it.verdict, it.what)
+        groups.setdefault(key, []).append(it)
+    items = [_merge(g) for g in groups.values()]
 
-        def add(cat, what):
-            items.append(CheckItem(cat, res.ref, res.lcsc, layer, a, what, res.verdict))
+    # the bottom reading is one question for the whole board: a part whose pins move under every other reading
+    # answers it when its row is green; the one with the most of its pads off copper under every reading (a part
+    # off its pads is the easiest to see), then the most pads, first
+    others = len(BOTTOM_READINGS) - 1
 
-        if res.convention_sensitive:
-            m = next((m for m in res.messages if m.startswith("bottom reading matters")), "")
-            add("bottom reading", "check pin 1 / polarity: read another way, the bottom rotation would put pads "
-                                  "elsewhere (" + (m.split(": ", 1)[-1] if m else "pin -> net changes") + ")")
-        if res.status == "not-simulated":
-            add("not simulated", res.messages[0] if res.messages else "no EasyEDA footprint")
-        if row is not None and part is not None and not math.isclose((a or 0.0) % 90.0, 0.0, abs_tol=1e-6) \
-                and not math.isclose((a or 0.0) % 90.0, 90.0, abs_tol=1e-6):
-            add("odd angle", f"rotation {a:g} is not a multiple of 90: check the part sits square on its pads")
-        info = run.resolved.get(res.ref)
-        if info is not None and info.corr is not None and info.corr.verdict in (YELLOW, RED) \
-                and info.source != "fallback" and res.status not in ("not-simulated", "no-row", "duplicate-ref"):
-            add("uncertain correction", f"{info.corr.verdict} {info.source} correction ({info.corr.status}): "
-                                        + "; ".join(key_reasons(info.corr)))
-    order = {"bottom reading": 0, "not simulated": 1, "odd angle": 2, "uncertain correction": 3}
-    return sorted(items, key=lambda it: (order.get(it.category, 9), _rank_doubt(run, it), natural_key(it.ref)))
+    def settles(it: CheckItem) -> tuple | None:
+        rs = [by_ref[r] for r in it.refs]
+        if it.category != "bottom reading" or it.verdict not in (GREEN, VERIFIED) or \
+                any(len([m for m in r.reading_moves.values() if m]) < others for r in rs):
+            return None
+        r = rs[0]
+        off = min(sum(k is None for _, k in m) for m in r.reading_moves.values()) / max(1, len(r.landings))
+        return (-off, -len(r.landings), natural_key(r.ref))
+
+    lead = min((it for it in items if settles(it) is not None), key=settles, default=None)
+    if lead is not None:
+        lead.first = True
+        lead.what = ("look at this one first: it moves under every other reading, so it shows how JLC reads the "
+                     "bottom side; when it sits right, the other bottom parts follow. "
+                     + lead.what[0].upper() + lead.what[1:])
+    return sorted(items, key=lambda it: (CATEGORIES.index(it.category), not it.first, _VRANK.get(it.verdict, 0),
+                                         _rank_doubt(run, it), natural_key(it.refs[0])))
 
 
 def _rank_doubt(run: Run, it: CheckItem) -> int:
