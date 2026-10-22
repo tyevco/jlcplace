@@ -79,6 +79,11 @@ def resolve_origin(origin, aux, grid) -> ((x, y), kind)
   entry of the part's own side is used. `Pad.cu`: the board's outer copper the pad has as placed (top | bottom | both;
   "" for NPTH and paste apertures, and in snapshots made before it was recorded), from its layers in either reader:
   an edge-mount connector's pads on the far side of its part are plotted on that side (gerber.board_pads).
+* A footprint's filled graphics on its own paste layer (fp_poly, fp_rect, fp_circle on F.Paste, B.Paste when
+  flipped: stencil openings, as KiCad's ICS-43434 or SMA footprints draw them) follow its pads as paste apertures in
+  either reader: number "", kind smd, copper False, shape custom, `poly` the outline, (x, y) its box centre. KiCad
+  plots them on the paste layer, so gerber.board_pads(apertures=True) has them; board-level paste graphics are not
+  read.
 
 ## lcsc.py — find the LCSC code and other tools' correction fields
 

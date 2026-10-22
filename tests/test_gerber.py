@@ -1020,3 +1020,73 @@ def test_gerber_origin_on_kicad_plots(plotted, src, variant):
         assert {la.source for la in gs.layers} == {"name"} and not gs.x2_pins
     if variant == "regions":                        # rounded rectangles plotted as regions, not macros
         assert any(la.regions for la in gs.find("paste")) and not any(la.regions for la in sets["drill"].find("paste"))
+
+
+def paste_graphics_board(path: Path) -> None:
+    """A KiCad 9 board whose footprints draw their stencil openings as filled graphics on their paste layer, as
+    KiCad's own InvenSense ICS-43434, SMA and Garmin footprints do: an SMD pad on copper and mask only, windowed by two
+    fp_rect, a ring-like pad opened by an fp_poly and an fp_circle, none centred on a pad; on both sides, turned; and
+    ordinary parts. Its drill/place origin is (100, 140)."""
+    def pad(n, x, y, w, h, side, paste=True):
+        layers = f'"{side}.Cu" "{side}.Mask"' + (f' "{side}.Paste"' if paste else "")
+        return f'(pad "{n}" smd rect (at {x} {y}) (size {w} {h}) (layers {layers}))\n'
+
+    def fill(head, layer):
+        return f"({head} (stroke (width 0) (type solid)) (fill yes) (layer \"{layer}\"))\n"
+
+    def footprint(ref, x, y, a, side, body):
+        return (f'(footprint "T:{ref}" (layer "{side}.Cu") (at {x} {y} {a})\n'
+                f'(property "Reference" "{ref}" (at 0 0 0) (layer "{side}.SilkS"))\n'
+                f'(property "Value" "v" (at 0 0 0) (layer "{side}.Fab"))\n(attr smd)\n{body})\n')
+
+    parts = []
+    for ref, x, y, a, side in (("U1", 120, 110, 0, "F"), ("U2", 130, 112, 30, "F"), ("U3", 140, 115, 90, "B"),
+                               ("U4", 125, 125, 137.5, "B")):
+        p = f"{side}.Paste"
+        parts.append(footprint(ref, x, y, a, side, pad("1", 0, 0, 2.0, 1.2, side, paste=False)
+                               + pad("2", 3, 0.5, 1.0, 1.0, side) + pad("3", 0, 2.0, 2.4, 1.0, side, paste=False)
+                               + fill("fp_rect (start -0.9 -0.5) (end -0.1 0.1)", p)
+                               + fill("fp_rect (start 0.15 -0.5) (end 0.8 0.3)", p)
+                               + fill("fp_poly (pts (xy -1.0 1.6) (xy -0.2 1.6) (xy -0.2 2.4) (xy -0.5 2.2))", p)
+                               + fill("fp_circle (center 0.6 2.0) (end 0.9 2.0)", p)))
+    for ref, x, y, a, side in (("R1", 112, 120, 0, "F"), ("R2", 145, 125, 45, "F"), ("R3", 135, 128, 0, "B")):
+        parts.append(footprint(ref, x, y, a, side, pad("1", -0.8, 0, 0.9, 0.95, side)
+                               + pad("2", 0.8, 0, 0.9, 0.95, side)))
+    layers = "".join(f'({n} "{name}" {kind})\n' for n, name, kind in (
+        (0, "F.Cu", "signal"), (2, "B.Cu", "signal"), (13, "F.Paste", "user"), (15, "B.Paste", "user"),
+        (5, "F.SilkS", "user"), (7, "B.SilkS", "user"), (1, "F.Mask", "user"), (3, "B.Mask", "user"),
+        (25, "Edge.Cuts", "user"), (35, "F.Fab", "user"), (33, "B.Fab", "user")))
+    edge = "".join(f'(gr_line (start {a[0]} {a[1]}) (end {b[0]} {b[1]}) (stroke (width 0.1) (type solid)) '
+                   f'(layer "Edge.Cuts"))\n' for a, b in (((100, 100), (160, 100)), ((160, 100), (160, 140)),
+                                                         ((160, 140), (100, 140)), ((100, 140), (100, 100))))
+    path.write_text(f'(kicad_pcb (version 20241229) (generator "test") (generator_version "9.0")\n'
+                    f'(general (thickness 1.6))\n(paper "A4")\n(layers\n{layers})\n'
+                    f'(setup (aux_axis_origin 100 140))\n(net 0 "")\n{"".join(parts)}{edge})\n', encoding="utf-8")
+
+
+@pytest.mark.parametrize("reader", ["sexpr", "pcbnew"])
+def test_stencil_openings_drawn_as_footprint_graphics_are_the_boards_paste(tmp_path, reader):
+    """KiCad plots a footprint's filled graphics on its paste layer as paste openings: a fresh plot of a board whose
+    parts draw them is neither older than the board nor another plot, with or without attributes (JLC's guide plots
+    with --no-x2 --no-netlist)."""
+    if not KICAD_CLI:
+        pytest.skip("kicad-cli is not on this machine")
+    if reader == "pcbnew":
+        pytest.importorskip("pcbnew")
+    path = tmp_path / "paste.kicad_pcb"
+    paste_graphics_board(path)
+    board = load_board(path, reader=reader)
+    if reader == "pcbnew":                          # the two readers find the same openings
+        sexpr = load_board(path, reader="sexpr")
+        for a, b in zip(board.parts, sexpr.parts):
+            assert len(a.pads) == len(b.pads) == len(a.copper_pads()) + 4 * a.ref.startswith("U")
+            for p, q in zip(a.pads, b.pads):
+                assert (p.number, p.copper, p.x, p.y) == (q.number, q.copper, pytest.approx(q.x, abs=1e-4),
+                                                          pytest.approx(q.y, abs=1e-4))
+    for opts in ([], ["--no-x2", "--no-netlist"]):
+        out = tmp_path / ("plain" if not opts else "bare")
+        subprocess.run([KICAD_CLI, "pcb", "export", "gerbers", "-l", "F.Cu,B.Cu,F.Paste,B.Paste,Edge.Cuts",
+                        "--use-drill-file-origin", *opts, "-o", str(out), str(path)], check=True, capture_output=True)
+        res = gb.gerber_origin(board, out)
+        assert res.origin == pytest.approx((100.0, 140.0), abs=1e-3) and res.verdict == "matches"
+        assert res.coverage == 1.0 and res.extra == [] and not res.stale and res.problems == [], res.messages

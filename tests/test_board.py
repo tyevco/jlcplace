@@ -899,6 +899,32 @@ def test_custom_pad_from_primitives(tmp_path):
     assert area(pad.poly) == pytest.approx(1 + 1.5 + ring + 1.5 * 0.2 - overlap, rel=2e-3)
 
 
+def test_filled_graphics_on_the_paste_layer_are_paste_apertures(tmp_path):
+    """A footprint's filled fp_rect, fp_poly and fp_circle on its own paste layer are stencil openings, which KiCad
+    plots as it plots a paste-only pad: apertures after the pads (number "", no copper), in the library frame. An
+    outline, another layer and the far side's paste are not."""
+    text = """(kicad_pcb (version 20241229)
+  (footprint "L:M" (layer "B.Cu") (at 10 20 90) (property "Reference" "U1")
+    (pad "1" smd rect (at 1 2 90) (size 1 1) (layers "B.Cu" "B.Mask"))
+    (fp_rect (start 0.5 1.5) (end 1.5 2.5) (stroke (width 0) (type solid)) (fill yes) (layer "B.Paste"))
+    (fp_poly (pts (xy 0 0) (xy 1 0) (xy 0 1)) (stroke (width 0) (type solid)) (fill solid) (layer "B.Paste"))
+    (fp_circle (center -2 1) (end -1.5 1) (stroke (width 0) (type solid)) (fill yes) (layer "B.Paste"))
+    (fp_rect (start 3 3) (end 4 4) (stroke (width 0.1) (type solid)) (fill no) (layer "B.Paste"))
+    (fp_rect (start 3 3) (end 4 4) (stroke (width 0) (type solid)) (fill yes) (layer "F.Paste"))
+    (fp_poly (pts (xy 0 0) (xy 1 0) (xy 0 1)) (stroke (width 0) (type solid)) (fill yes) (layer "B.SilkS"))))
+"""
+    part = jb.load_board_sexpr(write_board(tmp_path, text)).parts[0]
+    pad, *apertures = part.pads
+    assert [(p.number, p.kind, p.copper, p.cu, p.shape) for p in apertures] == [("", "smd", False, "", "custom")] * 3
+    # stored as placed (flipped): library = (x, -y), as for a pad; the window is where the pad is
+    rect, tri, disc = apertures
+    assert (rect.x, rect.y, rect.w, rect.h) == (pad.x, pad.y, 1.0, 1.0) == (1.0, -2.0, 1.0, 1.0)
+    assert (tri.x, tri.y) == (0.5, -0.5) and geom.pad_contains(tri, (0.2, -0.2))
+    assert not geom.pad_contains(tri, (0.8, -0.8))
+    assert (disc.x, disc.y, disc.w) == (pytest.approx(-2.0), pytest.approx(-1.0), pytest.approx(1.0, abs=1e-3))
+    assert part.copper_pads() == [pad]
+
+
 def test_missing_files_raise(tmp_path):
     with pytest.raises(FileNotFoundError):
         jb.load_board_sexpr(tmp_path / "nope.kicad_pcb")
