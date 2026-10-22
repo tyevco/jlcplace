@@ -372,6 +372,18 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
             msgs.insert(0, f"{moved}, more than {tol:.2f} mm or {OFFSET_ANGLE:g} deg: the part sits off where the "
                            f"correction puts it" if moved else
                         f"{d:.3f} mm and {da:g} deg from the row jlcplace writes")
+    elif dev is not None and not off and as_corr and not conflicts and corr.verdict in (GREEN, YELLOW, VERIFIED) \
+            and 45.0 < dev[1] < 135.0:
+        # every pad lands as the correction puts it, a quarter turn away: only the symmetry of the lands lets it
+        # (one land: a long pad now lies across it); the landing test cannot tell, the correction can
+        issues.append(YELLOW)
+        status = "offset" if status == "ok" else status
+        moved = next((m for m in res.messages if m.startswith("differs from the row jlcplace writes")), "")
+        if moved:
+            res.messages.remove(moved)
+        msgs.insert(0, f"{moved or 'differs from the row jlcplace writes'}: a quarter turn from where the correction "
+                       f"puts the part, though every pad lands as it does (the lands are alike that way): check the "
+                       f"part's shape on its lands")
 
     if row.layer == BOTTOM and alt_readings:
         _sensitivity(res, part, row, ee, origin, reading, alt_readings, flip_ok)

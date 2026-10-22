@@ -905,3 +905,27 @@ def test_bom_agrees_with_board_and_cpl(dms):
     for name in BOARDS:
         bom = read_bom(f"{DMS}/fab/{name}/dial-me-spinner-{name}-BOM-JLCPCB.csv")
         assert check_bom(dms.boards[name], bom, read_cpl(cpl_path(name))) == [], name
+
+
+def test_a_one_pad_part_turned_a_quarter_from_its_correction_is_not_green():
+    """A one-land part puts its pad centre on the land whatever the row's angle, so the landing test passes any
+    orientation. A row a quarter turn from a verified correction (the 3.4 x 1.8 pad now across its land) was green,
+    with only a 'differs ... 90 deg away' message; half a turn puts the same copper down."""
+    from jlcplace.fit import fit_part
+    from jlcplace.model import EEPad
+    part = Part("TP1", TOP, 10.0, 10.0, 0.0, footprint="TestPoint:TestPoint_Keystone_5015_Micro_Mini", lcsc="C9999",
+                pads=[Pad("1", 0.0, 0.0, 3.4, 1.8, shape="roundrect", rr=0.25, net="/SIG")])
+    ee = EEFootprint("C9999", "TP-SMD_L3.4-W1.8", pads=[EEPad("1", 0.0, 0.0, 1.8, 3.4)])
+    fitted = fit_part(part, ee)
+    assert fitted.rot in (90.0, 270.0)
+    corr = dataclasses.replace(fitted, status="preview-verified", verdict=VERIFIED, doubt="")
+    origin = (0.0, 0.0)
+
+    def at(a):
+        return check_row(part, CplRow("TP1", 10.0, -10.0, TOP, a), ee, origin, corr=corr)
+
+    assert at(fitted.rot).verdict == VERIFIED
+    assert at((fitted.rot + 180.0) % 360.0).verdict == GREEN
+    for a in (0.0, 180.0):
+        res = at(a)
+        assert res.verdict == YELLOW and res.status == "offset" and "a quarter turn" in res.messages[0], res
