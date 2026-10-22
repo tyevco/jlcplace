@@ -297,15 +297,17 @@ jobs:
             ${{ github.event_name == 'schedule' && '--refresh' || '' }} \
             fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb \
             fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb \
-            C20916 C111548 C108023 | tee fetch.log
-          if grep -q "(fetched)" fetch.log; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+            C20916 C111548 C108023 | tee fetch.log || code=$?
+          # what a fetch cut short got is saved too (EasyEDA rate-limits the runners): the next run goes on from it
+          if grep -q "fetched)" fetch.log; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+          exit "${code:-0}"
       - name: the fetch failed
         if: steps.fetch.outcome == 'failure'
         run: >
           echo "::warning title=EasyEDA fetch failed::EasyEDA is down or rate-limits this runner: the record tests and
           the dogfood check below run with the cached records only, and their failures do not fail the job"
       - name: save EasyEDA records (this repository's Actions cache, never an artifact)
-        if: always() && steps.fetch.outcome == 'success' && steps.fetch.outputs.new == 'true' && github.event_name != 'pull_request'
+        if: always() && steps.fetch.outputs.new == 'true' && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: fixtures/jlc/ee_raw

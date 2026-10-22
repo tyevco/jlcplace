@@ -103,7 +103,9 @@ def test_ci_tests_what_the_package_claims():
     cache = re.search(r"--cache (\S+)", fetch["run"]).group(1)
     assert restore["with"]["path"] == save["with"]["path"] == cache
     assert fetch["continue-on-error"] is True and fetch["id"] == "fetch"
-    assert "steps.fetch.outcome == 'success'" in save["if"]
+    # what a fetch cut short got is saved too (EasyEDA rate-limits the runners): the step says so before it fails
+    assert "steps.fetch.outputs.new == 'true'" in save["if"] and "outcome" not in save["if"]
+    assert fetch["run"].index('echo "new=true"') < fetch["run"].index('exit "${code:-0}"')
     assert test["continue-on-error"] == "${{ steps.fetch.outcome == 'failure' }}"
     for job in jobs.values():
         for s in job["steps"]:

@@ -11,8 +11,10 @@
 #
 # The terminal summary and the preview checklist go to the job summary, and every red or yellow row becomes an
 # annotation on its CPL line. EasyEDA records are kept in the calling repository's Actions cache, keyed on the board
-# and the BOM, and `jlcplace fetch` downloads only what the cache lacks (rate-limited); EasyEDA being down makes the
-# check run with the records at hand, never fail on its own.
+# and the BOM, and `jlcplace fetch` downloads only what the cache lacks (rate-limited); what a fetch cut short got
+# (EasyEDA down, or rate-limiting the runner) is saved too, and the next run fetches the rest. The check runs with
+# the records at hand: a multi-pin or polar part without its record is red (not simulated) unless `db` holds its
+# correction, so commit one (`jlcplace fit BOARD --db DIR` stores every part's) for a step EasyEDA cannot fail.
 #
 # Licensing: the EasyEDA records (JLCEDA/EasyEDA Official Library) stay on the runner and in the Actions cache. This
 # action uploads nothing and writes no HTML report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON
@@ -45,7 +47,10 @@ inputs:
     required: false
     default: ""
   db:
-    description: The correction database directory, committed to the repository (manual and verified corrections).
+    description: >-
+      The correction database directory, committed to the repository (manual and verified corrections; `jlcplace fit
+      --db` stores every part's). A part whose EasyEDA record is not at hand is checked through its stored correction;
+      without one, a multi-pin or polar part is red (not simulated).
     required: false
     default: ""
   fail-on:
@@ -176,9 +181,11 @@ runs:
         # (and macOS's bash 3.2 turns a lone \r into an empty argument even when \r is in IFS)
         read -r -a codes <<< "$(tr -d '\r' < "$RUNNER_TEMP/jlcplace-codes.txt")"
         set +e
-        "$JLCPLACE" fetch --cache "$CACHE" "$BOARD" "${codes[@]}"
-        code=$?
+        "$JLCPLACE" fetch --cache "$CACHE" "$BOARD" "${codes[@]}" | tee "$RUNNER_TEMP/jlcplace-fetch.txt"
+        code=${PIPESTATUS[0]}
         set -e
+        # records downloaded now ("(fetched)", "not found (...; fetched)"): worth saving even when others failed
+        if grep -q 'fetched)' "$RUNNER_TEMP/jlcplace-fetch.txt"; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
         if [ "$code" = 0 ]; then
           echo "ok=true" >> "$GITHUB_OUTPUT"
         else
@@ -202,6 +209,15 @@ runs:
       with:
         path: ${{ runner.temp }}/jlcplace-easyeda
         key: jlcplace-easyeda-${{ steps.key.outputs.hash }}
+
+    # a fetch cut short (EasyEDA rate-limits the runners: a board's records may take several runs) keeps what it got
+    # under a key of this run, which the next run restores (restore-keys) and goes on from
+    - name: Save the EasyEDA records fetched so far
+      if: steps.fetch.outputs.ok != 'true' && steps.fetch.outputs.new == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/jlcplace-easyeda
+        key: jlcplace-easyeda-${{ steps.key.outputs.hash }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Check the CPL
       id: check

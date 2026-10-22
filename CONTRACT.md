@@ -625,8 +625,11 @@ results plus findings of that verdict, empty when the check could not run), `jun
 setup-python; a venv in `$RUNNER_TEMP` (reused when the spec matches; nothing written to GITHUB_PATH / GITHUB_ENV); a
 cache key from the board and BOM; actions/cache/restore; `jlcplace fetch` of the board's and BOM's codes (a failure is a
 warning: exit 2 blames EasyEDA, exit 3 says its input could not be read and the check will say what); actions/cache/save
-(only after a complete fetch, before the check: a red check fails the job); `jlcplace check ... --github-annotations
---junit --checklist --json`, the summary and checklist in the job summary, the step's exit code jlcplace's. Inputs reach
+before the check (a red check fails the job): under the board's key after a complete fetch, under a key of the run
+(`<key>-partial-<run id>-<attempt>`, which the next run restores) after one that fetched some records but not all;
+`jlcplace check ... --github-annotations --junit --checklist --json`, the summary and checklist in the job summary,
+the step's exit code jlcplace's. With records missing, a multi-pin or polar part is red (not simulated) unless `db`
+holds its correction: an EasyEDA outage on a cold cache fails the step without one. Inputs reach
 scripts only through `env:`; the inline Python scripts run with `-I`, so modules in the caller's workspace (a
 jlcplace.py, json.py) cannot shadow the real ones. Nothing is uploaded, no HTML report or overlay is written.
 `tests/test_action.py` checks it as data and runs its steps with a local runner.

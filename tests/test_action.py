@@ -387,6 +387,7 @@ if [ "$1" = "--version" ]; then echo "jlcplace 9.9.9"; exit 0; fi
 if [ "$1" = "fetch" ]; then
   printf '%s\\n' "$@" > "LOG.fetch"
   mkdir -p "$3" && echo '{}' > "$3/C25744.json"
+  cat "LOG.fetch-out" 2>/dev/null
   exit "$(cat "LOG.fetch-code" 2>/dev/null || echo 0)"
 fi
 printf '%s\\n' "$@" > "LOG"
@@ -408,8 +409,8 @@ exit CODE
 
 
 def fake_jlcplace(tmp_path, code: int = 2) -> tuple[Path, Path]:
-    """A stand-in jlcplace (the check exits with `code`; the fetch with the number in <log>.fetch-code, else 0)
-    that logs its arguments: (its path, the log)."""
+    """A stand-in jlcplace (the check exits with `code`; the fetch prints <log>.fetch-out and exits with the number
+    in <log>.fetch-code, else 0) that logs its arguments: (its path, the log)."""
     log, fake = tmp_path / "args.txt", tmp_path / "fake-jlcplace"
     fake.write_text(FAKE_JLCPLACE.replace("LOG", posix(log)).replace("CODE", str(code)), encoding="utf-8",
                     newline="\n")
@@ -604,6 +605,47 @@ def test_the_whole_action_in_order_with_stand_ins(tmp_path):
     assert len(pip.read_text(encoding="utf-8").splitlines()) == 1                                 # venv reused
     for f in ("github_path", "github_env"):
         assert not (r.temp / f).exists() or not (r.temp / f).read_text(encoding="utf-8")
+
+
+def test_a_fetch_cut_short_keeps_what_it_got_for_the_next_run(tmp_path):
+    """EasyEDA rate-limits GitHub's runners after a few dozen records: a fetch that got some records but not all saves
+    them under a key of its own run, the next run restores them (restore-keys) and fetches the rest, and a complete
+    fetch saves the board's own key. A fetch that got nothing saves nothing."""
+    need_bash()
+    fake, log = fake_jlcplace(tmp_path)
+    r = Runner(tmp_path, github={"run_id": "17", "run_attempt": "1"},
+               bash_env=FAKE_VENV.replace("LOG", posix(tmp_path / "pip.txt")).replace("PY", posix(sys.executable))
+               .replace("FAKE", posix(fake)))
+    inputs = {"board": "b.kicad_pcb", "cpl": "c.csv", "python-version": ""}
+    Path(f"{log}.fetch-code").write_text("2", encoding="utf-8")
+    Path(f"{log}.fetch-out").write_text("C25744: R0402, 2 pads (fetched)\nC7519: failed: HTTP 403\n",
+                                        encoding="utf-8")
+    res = r.run(inputs)
+    key = f"jlcplace-easyeda-{res.steps['key']['outputs']['hash']}"
+    assert res.steps["fetch"]["outputs"] == {"ok": "false", "new": "true"} and SAVE not in res.ran
+    assert "Save the EasyEDA records fetched so far" in res.ran and r.saved == [f"{key}-partial-17-1"]
+    Path(f"{log}.fetch-out").write_text("C25744: R0402, 2 pads (cached)\nC7519: failed: HTTP 403\n",
+                                        encoding="utf-8")
+    r.github["run_id"] = "18"
+    res = r.run(inputs)                                        # nothing new: nothing saved
+    assert res.steps["restore"]["outputs"] == {"cache-hit": "false", "cache-matched-key": f"{key}-partial-17-1"}
+    assert res.steps["fetch"]["outputs"] == {"ok": "false"} and r.saved == [f"{key}-partial-17-1"]
+    Path(f"{log}.fetch-code").write_text("0", encoding="utf-8")
+    Path(f"{log}.fetch-out").write_text("C7519: not found (no such part; fetched)\n", encoding="utf-8")
+    r.github["run_id"] = "19"
+    res = r.run(inputs)
+    assert SAVE in res.ran and r.saved == [f"{key}-partial-17-1", key]
+
+
+def test_the_docs_say_what_a_missing_record_does():
+    """Without its record a multi-pin or polar part is red unless the database holds its correction: an EasyEDA
+    outage on a cold cache fails the step, and the action's comment, its db input and the README say so."""
+    text = ACTION.read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    action = readme[readme.index("### GitHub Action"):readme.index("## Limits")]
+    assert "never fail" not in text and "never fails" not in action
+    for doc in (text, load()["inputs"]["db"]["description"], action):
+        assert "red (not simulated)" in " ".join(doc.split()) and "jlcplace fit" in doc
 
 
 # ------------------------------------------------------------------------------------------------------- for real
