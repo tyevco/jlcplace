@@ -38,8 +38,8 @@ from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound, printable
 from .parts import ee_key, kicad_hash
-from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, is_code, lookup_ee, \
-    resolve, row_lines
+from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, is_code, key_reasons, \
+    lookup_ee, resolve, row_lines
 from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -340,7 +340,7 @@ def cmd_fit(args) -> int:
         verdicts.append(corr.verdict)
         data.append(_fit_dict(part, ee, corr, stored))
         if not args.quiet:
-            what = corr.reasons[0] if corr.reasons else ""
+            what = key_reasons(corr, 1)[0] if corr.reasons else ""     # why it is yellow or red first
             print(printable(f"{corr.verdict.upper():<6}  {part.ref:<{w}}  {part.lcsc:<10} {part.layer:<6}  "
                             + (f"rot {corr.rot:g}, dx {corr.dx:.4f}, dy {corr.dy:.4f}"
                                f"{', mirrored' if corr.mirror else ''} ({corr.method}, rms {corr.rms:.3f}, "

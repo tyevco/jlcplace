@@ -524,6 +524,19 @@ def test_database_entries_follow_the_pin_functions(env, capsys):
     assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["D5"] == 180.0, out
 
 
+def test_fit_shows_why_a_fit_is_yellow(env, capsys):
+    """`fit` printed a correction's first reason: U2/U21 on the dial-me-spinner board read 'YELLOW ... rot 0 also lands
+    every pad, on other nets; ruled out by pad numbers', which says nothing against the fit, while the check's
+    summary (key_reasons) named the rms residual that makes it yellow."""
+    write_records(env, C1007=record([(n, -x * 1.25, -y, 1.3, 0.6, 0) for n, x, y in SOT], uuid="sotw"))
+    u3 = sot("U3", TOP, 150.0, 80.0, 0.0)
+    u3.lcsc = "C1007"
+    env.make(u3)
+    code, out, _ = run(capsys, "fit", env.board, "--ref", "U3", *offline(env))
+    line = next(ln for ln in out.splitlines() if ln.startswith("YELLOW  U3"))
+    assert "rms 0.284 mm: the land patterns differ" in line and "ruled out by pad numbers" not in line, line
+
+
 def test_fit_does_not_let_a_second_part_replace_the_first_ones_entry(env, capsys, monkeypatch):
     """truth-1: should two parts with one database key (code, EasyEDA footprint, KiCad pads and pin functions) ever
     fit differently, the second must not replace the first one's entry behind its back."""
