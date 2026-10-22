@@ -566,6 +566,24 @@ def test_the_bom_code_is_the_part_jlc_places(env, capsys):
     assert code == 0
 
 
+def test_the_bom_code_reaches_the_part_jlc_places_under_a_shared_reference(env, capsys):
+    """apply_bom_codes gave the BOM's code to the first part with the reference only. With a DNP alternate footprint
+    of U3 first on the board, the placed U3 kept the board's C1001 and its row was simulated with it, green, while
+    the BOM message said 'checked with C1006'."""
+    write_records(env, C1006=record([(n, x, y, 1.3, 0.6, 0) for n, x, y in SOT], uuid="sot0"))
+    alt = sot("U3", TOP, 150.0, 70.0, 0.0)
+    alt.dnp = True
+    env.make(alt, sot("U3", TOP, 150.0, 80.0, 0.0))
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))          # U3 at rot 180, right for C1001
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nSOT,\"U1,U2\",SOT-23-6,C1001\nSOT,U3,SOT-23-6,C1006\n"
+                   "R,\"R1,R2\",0402,C1002\n", encoding="utf-8")
+    code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "r.json")
+    res = {r["ref"]: r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"]}
+    assert code == 2 and res["U3"]["lcsc"] == "C1006" and res["U3"]["verdict"] == RED, out
+    assert out.count("U3: JLC places C1006 from the BOM") == 1, out
+
+
 def test_cpl_refuses_rows_nothing_vouches_for(env, capsys):
     """logic-1: KiCad numbers the diode K / A, EasyEDA 1 / 2 with no telling pin names: the fit is red
     ("ambiguous"), the row written from it was green and `cpl` kept the file."""

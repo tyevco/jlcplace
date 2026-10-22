@@ -516,6 +516,13 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
     return out
 
 
+def jlc_part(board: Board, ref: str) -> Part | None:
+    """The part JLC places for a reference: the first one assembled, else the first placed, else the first (a board
+    can carry a reference twice, a DNP alternate footprint for one; Board.part gives the first)."""
+    ps = [p for p in board.parts if p.ref == ref]
+    return next((p for p in ps if assembled(p)), next((p for p in ps if p.placed), ps[0] if ps else None))
+
+
 def check_bom(board: Board, bom_rows: list[dict], cpl_rows: list[CplRow]) -> list[str]:
     """Consistency of a JLC BOM (cpl.read_bom rows) with the board and the CPL, as messages: every CPL ref in the
     BOM and every BOM designator in the CPL; BOM code == board code; DNP/excluded parts not in the BOM and assembled
@@ -536,7 +543,7 @@ def check_bom(board: Board, bom_rows: list[dict], cpl_rows: list[CplRow]) -> lis
             msgs.append(f"{label}: {raw!r} is not an LCSC code" if raw else f"{label}: no LCSC code")
         for d in des:
             seen[d] += 1
-            part = board.part(d)
+            part = jlc_part(board, d)
             if part is None:
                 msgs.append(f"{d}: in the BOM but not on the board")
                 continue

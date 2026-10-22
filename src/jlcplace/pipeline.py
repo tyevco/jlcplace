@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 from . import geom
-from .check import check_cpl, check_row, nonpolar
+from .check import check_cpl, check_row, jlc_part, nonpolar
 from .convention import BOTTOM_READINGS, DEFAULT, rot
 from .cpl import assembled, natural_key, read_text
 from .easyeda import EEError
@@ -103,17 +103,20 @@ def is_code(text: str) -> bool:
 def apply_bom_codes(board: Board, bom_rows: list[dict]) -> list[tuple[str, str, str]]:
     """Give every part its BOM line's code: JLC assembles from the BOM's LCSC column and never sees the board, so
     the BOM's code is the part JLC places, and the one to simulate, even where the board names another. Returns
-    (ref, board code or "", BOM code) for every part changed."""
+    (ref, board code or "", BOM code) for every reference changed, the board code of the part JLC places. Every
+    part with the reference takes the code: the first one can be a DNP alternate footprint of the placed one."""
     changed = []
     for b in bom_rows:
         code = (b.get("lcsc") or "").upper()
         if not is_code(code):
             continue
         for ref in b.get("designators") or []:
-            part = board.part(ref)
-            if part is not None and part.lcsc != code:
-                changed.append((ref, part.lcsc, code))
-                part.lcsc, part.lcsc_field = code, "BOM"
+            main = jlc_part(board, ref)
+            if main is not None and main.lcsc != code:
+                changed.append((ref, main.lcsc, code))
+            for part in board.parts:
+                if part.ref == ref and part.lcsc != code:
+                    part.lcsc, part.lcsc_field = code, "BOM"
     return changed
 
 
@@ -288,7 +291,7 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
                                 f"{why}")
             results[i] = res = new
             info.proxy = True
-        part = board.part(res.ref)
+        part = jlc_part(board, res.ref)
         if (bom_rows is not None and part is not None and not part.lcsc and res.ref not in bom_refs
                 and res.status == "not-simulated"):
             res.verdict = YELLOW
@@ -370,7 +373,7 @@ def moves_text(res: RowResult) -> str:
 def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
     """(category, what as an item, what as a note on another item) for every reason to look at a result's part."""
     row = res.row
-    part = run.board.part(res.ref)
+    part = jlc_part(run.board, res.ref)
     a = row.rotation if row else None
     out = []
     info = run.resolved.get(res.ref)
@@ -435,7 +438,7 @@ def checklist(run: Run) -> list[CheckItem]:
         found = _found(run, res)
         if not found:
             continue
-        part = run.board.part(res.ref)
+        part = jlc_part(run.board, res.ref)
         layer = res.row.layer if res.row else (part.layer if part else "")
         cat, what, _ = found[0]
         notes = [n for _, _, n in found[1:]]
