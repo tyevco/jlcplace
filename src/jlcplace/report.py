@@ -259,7 +259,8 @@ def _origin_dict(run: Run) -> dict:
         "belongs": g.belongs, "stale": g.stale, "notes": gerber_notes(g)}
     offset = None if off is None else {
         "dx": off.dx, "dy": off.dy, "rows": off.rows, "total": off.total, "origin": list(off.origin),
-        "origin_kind": off.origin_kind, "scale": off.scale, "unit": off.unit, "y_up": off.y_up, "refs": off.refs}
+        "origin_kind": off.origin_kind, "scale": off.scale, "unit": off.unit, "y_up": off.y_up, "refs": off.refs,
+        "in_place": off.in_place, "origin_error": off.origin_error}
     lines = origin_lines(run)
     return {"x": b.origin[0], "y": b.origin[1], "kind": b.origin_kind, "from_gerbers": b.origin_kind == "gerber",
             "verdict": (RED if any(f.status == "origin" for f in run.findings) else

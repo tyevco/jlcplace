@@ -569,10 +569,10 @@ def origin_lines(run) -> list[(verdict, text)]
   `origin` {x, y, kind, from_gerbers, verdict (green | red | unchecked), note, gerbers (the OriginCheck's derived
   numbers: origin, named, method, flip, scale, residual, matched, board_pads, gerber_pads, pin_pairs, compared,
   coverage, missing (<= 50), extra (a count), mismatched (<= 50), belongs, stale, notes) | null, offset (Offset's
-  fields) | null}. `junit`: one test case per finding, or a passing "origin" case when the Gerbers were checked;
-  `github_annotations`: one per finding, on the CPL file; `html`: a banner per finding and the origin line above the
-  checklist; the Markdown checklist an "**Origin:**" paragraph before the items, the CSV a last row of category
-  `origin`. A pinout item is flagged "(red: the LCSC part or the symbol is wrong)".
+  fields, in_place and origin_error among them) | null}. `junit`: one test case per finding, or a passing "origin" case
+  when the Gerbers were checked; `github_annotations`: one per finding, on the CPL file; `html`: a banner per finding
+  and the origin line above the checklist; the Markdown checklist an "**Origin:**" paragraph before the items, the CSV a
+  last row of category `origin`. A pinout item is flagged "(red: the LCSC part or the symbol is wrong)".
 * Overlays: `overlay_svg(run, side, *, outline=None, gerber_origin=None, notes=(), width=OVERLAY_WIDTH)` one standalone
   SVG (px) of a side as JLC's preview shows it (the bottom seen from below, x mirrored): board outline (board-frame
   polylines, closed rings filled), KiCad copper, the EasyEDA pads where JLC puts them per row in the row's verdict

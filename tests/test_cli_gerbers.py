@@ -272,6 +272,16 @@ def test_a_fixed_cpl_that_cannot_be_written_leaves_the_other_outputs_written(mad
         "its path is a file (not a directory)" in err, err
 
 
+def test_the_json_offset_says_whether_it_is_an_origin_error_and_which_rows_sit_in_place(made, capsys):
+    """A consumer of --json tells an origin error (every row moved: --fixed-cpl applies) from rows displaced alike
+    beside rows in place (test_offset), and sees which rows the fix keeps."""
+    e = made
+    page = shifted(e.out, e.tmp / "page.csv", ORIGIN[0], -ORIGIN[1])
+    run(capsys, "check", e.board, page, *offline(e), "-q", "--json", e.tmp / "r.json")
+    off = json.loads((e.tmp / "r.json").read_text(encoding="utf-8"))["origin"]["offset"]
+    assert (off["in_place"], off["origin_error"], off["rows"], off["total"]) == ([], True, 4, 4), off
+
+
 def test_kicads_page_origin_cpl_over_page_origin_gerbers_is_consistent(made, capsys):
     """KiCad's position file and Gerbers both from the page origin: one origin, nothing to say about it."""
     e = made

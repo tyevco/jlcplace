@@ -126,6 +126,10 @@ def test_rows_displaced_alike_beside_rows_in_place_are_no_origin_mismatch():
     assert len(hint) == 1 and hint[0].startswith("jlcplace: 7 of 10 rows are displaced alike from where they belong, "
                                                  "by (+5.000, +5.000) mm ("), hint
     assert "while 3 sit on their parts (a CPL from another origin would move them all)" in hint[0]
+    from jlcplace import report
+    run.offset = off
+    d = report.to_dict(run)["origin"]["offset"]               # what a --json consumer reads
+    assert (d["origin_error"], sorted(d["in_place"]), d["rows"]) == (False, sorted(r.ref for r in rows[7:]), 7), d
     assert "--origin" not in hint[0] and "every row" not in hint[0] and "origin mismatch:" not in hint[0]
 
 
