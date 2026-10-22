@@ -357,6 +357,30 @@ def test_directories_zips_job_files_and_other_files(tmp_path):
         gb.read_gerbers(tmp_path / "absent")
 
 
+def test_macos_metadata_is_not_part_of_the_set(tmp_path):
+    """A zip made by macOS Finder holds an AppleDouble twin (__MACOSX/<dir>/._name) of every file with extended
+    attributes, the job file's among them: listed as macOS metadata, not a second plot. A .gbrjob that is not a job
+    file's JSON is no job file either."""
+    need(DIAL / "fab/main/gerbers")
+    stub = b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        " + bytes(64)
+    z = tmp_path / "finder.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        for f in sorted((DIAL / "fab/main/gerbers").iterdir()):
+            zf.write(f, f"gerbers/{f.name}")
+            zf.writestr(f"__MACOSX/gerbers/._{f.name}", stub)
+        zf.writestr("gerbers/.DS_Store", stub)
+        zf.writestr("gerbers/old-job.gbrjob", b"not JSON")
+    gs = gb.read_gerbers(z)
+    why = dict(gs.skipped)
+    assert why["__MACOSX/gerbers/._dial-me-spinner-main-job.gbrjob"] == "macOS metadata, not a Gerber file"
+    assert why["gerbers/.DS_Store"] == "macOS metadata, not a Gerber file"
+    assert why["gerbers/old-job.gbrjob"].startswith("not a Gerber job file")
+    assert why["gerbers/dial-me-spinner-main-job.gbrjob"] == "Gerber job file"
+    assert not any("__MACOSX" in la.name for la in gs.layers)
+    res = gb.gerber_origin(load_board(pcb("main"), reader="sexpr"), gs)
+    assert res.problems == [] and res.ok, res.messages
+
+
 def _patched_zip(path: Path, src: Path, *, flags: int = 0, method: int | None = None) -> Path:
     """A copy of zip `src` whose members' central directory entries carry other flag bits or another compression
     method: what an encrypted zip (bit 0) or a Deflate64 one (method 9, Windows Explorer and 7-Zip) says."""

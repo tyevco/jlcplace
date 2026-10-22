@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -92,10 +93,24 @@ def verdicts(d, verdict):
 
 # ------------------------------------------------------------------------------------------------------- released
 
-@pytest.mark.parametrize("zipped", [False, True], ids=["dir", "zip"])
-def test_released_cpl_over_the_released_gerbers_has_no_origin_problem(cache, tmp_path, capsys, zipped):
-    need(gerbers("main", zipped=zipped))
-    code, out, d = check(capsys, tmp_path, pcb("main"), fab("main", "CPL"), "--gerbers", gerbers("main", zipped=zipped),
+def finder_zip(src: Path, path: Path) -> Path:
+    """The files of directory src zipped as macOS Finder zips them: each under gerbers/, with its AppleDouble twin
+    (extended attributes, as nearly every file carries them) under __MACOSX/gerbers/._name."""
+    stub = b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        " + bytes(64)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(src.iterdir()):
+            z.write(f, f"gerbers/{f.name}")
+            z.writestr(f"__MACOSX/gerbers/._{f.name}", stub)
+    return path
+
+
+@pytest.mark.parametrize("packed", ["dir", "zip", "finder-zip"])
+def test_released_cpl_over_the_released_gerbers_has_no_origin_problem(cache, tmp_path, capsys, packed):
+    need(gerbers("main", zipped=packed == "zip"))
+    path = gerbers("main", zipped=packed == "zip")
+    if packed == "finder-zip":
+        path = finder_zip(path, tmp_path / "gerbers.zip")
+    code, out, d = check(capsys, tmp_path, pcb("main"), fab("main", "CPL"), "--gerbers", path,
                          "--bom", fab("main", "BOM"), cache=cache)
     assert code == 0 and d["findings"] == [], out
     o = d["origin"]

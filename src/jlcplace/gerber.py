@@ -1076,6 +1076,13 @@ def _head(f: Path) -> bytes:
         return fh.read(65536)
 
 
+def _apple(name: str) -> bool:
+    """A file macOS adds, not one of the set's: Finder's zips hold an AppleDouble twin (._name, under __MACOSX/) of
+    every file with extended attributes, the job file's among them; volumes without them get ._name and .DS_Store."""
+    parts = name.replace("\\", "/").split("/")
+    return "__MACOSX" in parts[:-1] or parts[-1].startswith("._") or parts[-1] == ".DS_Store"
+
+
 def _read_zip(p: Path) -> list[tuple[str, bytes]]:
     files = []
     try:
@@ -1096,11 +1103,11 @@ def _read_zip(p: Path) -> list[tuple[str, bytes]]:
 
 def read_gerbers(path) -> GerberSet:
     """The Gerber files of a directory (its files, not its subdirectories), of a .zip (every member), or one file.
-    Files that are not Gerber (Excellon drill files, the job file, documents) are listed in `skipped`; a .gbrjob
-    job file names the functions of files that carry no X2 attributes. Only the layers the check uses are parsed:
-    outer copper, paste, the profile, and files whose function nothing names; the others (inner copper, mask,
-    legend, drawings: named by their own TF.FileFunction or G04 #@! comment, the job file, or their name) are
-    listed in `skipped` unread. A directory that holds no Gerber files names its subdirectories that do.
+    Files that are not Gerber (Excellon drill files, the job file, documents, macOS metadata) are listed in
+    `skipped`; a .gbrjob job file names the functions of files that carry no X2 attributes. Only the layers the check
+    uses are parsed: outer copper, paste, the profile, and files whose function nothing names; the others (inner
+    copper, mask, legend, drawings: named by their own TF.FileFunction or G04 #@! comment, the job file, or their
+    name) are listed in `skipped` unread. A directory that holds no Gerber files names its subdirectories that do.
     GerberError for a file that cannot be read as Gerber, or a zip that cannot be read."""
     p = Path(path)
     files: list[tuple[str, bytes]] = []
@@ -1118,15 +1125,23 @@ def read_gerbers(path) -> GerberSet:
     else:
         raise FileNotFoundError(f"no such file or directory: {os.fspath(path)}")
     gs = GerberSet(path=os.fspath(path))
+    gs.skipped = [(name, "macOS metadata, not a Gerber file") for name, _ in files if _apple(name)]
+    files = [(name, data) for name, data in files if not _apple(name)]
     jobs: dict[str, str] = {}
     kinds = [_what(name, data) for name, data in files]
-    for (_, data), what in zip(files, kinds):
-        if what == "job":
+    for i, (_, data) in enumerate(files):
+        if kinds[i] == "job":
             try:
                 job = json.loads(_decode(data))
+            except ValueError:
+                job = None
+            if not (isinstance(job, dict) and ("Header" in job or "FilesAttributes" in job)):
+                kinds[i] = "not-job"               # a job file is JSON with KiCad's (or X2's) keys
+                continue
+            try:
                 for f in job.get("FilesAttributes", []):
                     jobs[Path(f.get("Path", "")).name] = f.get("FileFunction", "")
-            except (ValueError, AttributeError, TypeError):
+            except (AttributeError, TypeError):
                 pass
     for (name, data), what in zip(files, kinds):
         if what == "job":
@@ -1146,6 +1161,7 @@ def read_gerbers(path) -> GerberSet:
             gs.layers.append(la)
         else:
             gs.skipped.append((name, {"excellon": "Excellon drill file", "archive": "archive: pass it as the path",
+                                      "not-job": "not a Gerber job file (not its JSON)",
                                       "other": "not a Gerber file"}[what]))
     if not gs.layers:
         for q in subdirs:
