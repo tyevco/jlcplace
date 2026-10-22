@@ -111,7 +111,9 @@ correction replaces the stored one when they differ. If you had to move a part i
 pressed (`--space N --right N --up N`): they are relative to the uploaded row, never to the stored correction. Parts
 that share a database entry (one code on one footprint) must agree on it, and a verified entry is not given other
 numbers until its own row is recorded as failed (`--failed`). `--source board` (the assembled board) also takes the
-uploaded CPL; `--source manual` does not need one.
+uploaded CPL; `--source manual` does not need one. `confirm` needs the part's EasyEDA record in the cache (or
+`--online`): a verification is stored under the EasyEDA footprint it was made with, so that a later version of the
+footprint makes it stale.
 
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.

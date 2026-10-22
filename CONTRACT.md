@@ -400,8 +400,10 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board
   [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need
   --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one
-  entry must agree on it, a reference two placed parts carry is refused, and everything is checked before anything
-  is written); `show CODE | BOARD --ref REF [--json]`;
+  entry must agree on it, a reference two placed parts carry is refused, the part's EasyEDA record must be at hand
+  (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they were verified with; EasyEDA's
+  own not-found answer gives an entry with no EasyEDA key), and everything is checked before anything is written);
+  `show CODE | BOARD --ref REF [--json]`;
   `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
   default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache lacked
   and say how to fetch them; `check` also says `--units in` (or mil) when most rows are red and would sit within 2

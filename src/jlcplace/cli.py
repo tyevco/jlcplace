@@ -445,7 +445,14 @@ def cmd_confirm(args) -> int:
         part = _part(board, ref)
         if not part.lcsc:
             raise BadInput(f"{ref} has no LCSC code")
-        ee = lookup_ee(client, part.lcsc)
+        try:
+            # a verification is stored under the EasyEDA footprint it was made with (a later version makes it stale):
+            # a record the cache lacks, or that cannot be fetched, is not "EasyEDA has no footprint" (NotFound)
+            ee = client.get(part.lcsc)
+        except EEError as e:
+            raise BadInput(f"{ref}: the EasyEDA record of {part.lcsc} is not at hand ({e}); a verification is stored "
+                           f"under the EasyEDA footprint it was made with: `jlcplace fetch BOARD` downloads it, or "
+                           f"pass --online") from None
         key = ee_key(ee) if isinstance(ee, EEFootprint) else ""
         h = kicad_hash(part)
         uploaded = None

@@ -269,6 +269,33 @@ def test_confirm_presses_and_show(env, capsys):
     assert code == 0 and out.startswith("R3 C1005: manual, yellow: rot 0")
 
 
+def test_confirm_needs_the_easyeda_record_it_verifies(env, capsys):
+    """confirm reads only the cache since net-1. A record the cache lacks was taken for 'EasyEDA has no footprint':
+    the verification was stored under no EasyEDA key, so it stood for every later version of the footprint (never
+    stale, against the README), without a word. A record EasyEDA does not have (C1005) still gives a keyless entry."""
+    env.make()
+    db = env.tmp / "db"
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    for extra in (["--cpl", env.out], ["--rot", "180"]):
+        code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source",
+                             "preview", *extra, *offline(env, env.empty))
+        assert code == 3 and "C1001" in err and "jlcplace fetch" in err and "--online" in err, (extra, out, err)
+        assert not (db / "C1001.json").exists(), extra
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                       "--cpl", env.out, *offline(env))
+    entry = CorrectionDB(db).entries("C1001")[0]
+    assert code == 0 and entry["ee"]["key"] == ee_key(correction_ee(env, "C1001")) and entry["ee"]["title"]
+    env.make(two("R3", TOP, 112.0, 70.0, 0.0, "C1005"))
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "R3", "--db", db, "--by", "me", "--source", "manual",
+                       "--rot", "0", *offline(env))
+    assert code == 0 and CorrectionDB(db).entries("C1005")[0]["ee"]["key"] == ""
+
+
+def correction_ee(env, code):
+    from jlcplace.easyeda import EEClient
+    return EEClient(env.cache, offline=True).get(code)
+
+
 def test_bad_input_is_exit_3(env, capsys):
     env.make()
     bad = env.tmp / "bad.csv"
