@@ -1204,7 +1204,7 @@ def paste_graphics_board(path: Path) -> None:
                     f'(setup (aux_axis_origin 100 140))\n(net 0 "")\n{"".join(parts)}{edge})\n', encoding="utf-8")
 
 
-@pytest.mark.parametrize("reader", ["sexpr", "pcbnew"])
+@pytest.mark.parametrize("reader", ["sexpr", pytest.param("pcbnew", marks=pytest.mark.pcbnew)])
 def test_stencil_openings_drawn_as_footprint_graphics_are_the_boards_paste(tmp_path, reader):
     """KiCad plots a footprint's filled graphics on its paste layer as paste openings: a fresh plot of a board whose
     parts draw them is neither older than the board nor another plot, with or without attributes (JLC's guide plots
