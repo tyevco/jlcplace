@@ -384,7 +384,8 @@ def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
         why = [r for r in why if not _QUIET.match(r) and not _INFO.match(r)][:2] or why[:2]
         what = f"{c.verdict} {info.source} correction ({c.status}): " + "; ".join(why)
         out.append(("uncertain correction", what, what))
-    if res.status == "not-simulated":
+    if res.status == "not-simulated" and res.lcsc:
+        # a part without a code is no item: JLC places nothing it has no code for, so its preview never shows it
         m = res.messages[0] if res.messages else "no EasyEDA footprint"
         out.append(("not simulated", m, m))
     if res.convention_sensitive:
@@ -423,7 +424,7 @@ def checklist(run: Run) -> list[CheckItem]:
       uncertain correction  a correction that is not green and that the preview can settle: red, a choice of
                             placement in doubt (polarity, then names, then orientation first), or a reason other
                             than a land-pattern residual or a non-90 angle (on a row that is not green, any);
-      not simulated         no EasyEDA footprint;
+      not simulated         no EasyEDA footprint (a part with a code: JLC places no other);
       bottom reading        bottom parts whose pins move under another reading of the bottom rotation, said in pins;
                             first a green part that moves under every other reading: it settles the reading for all;
       odd angle             rows at angles that are not multiples of 90, one item per code and side.

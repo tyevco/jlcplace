@@ -361,18 +361,18 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   it yellow or red before those that only inform ("rot 0 also lands every pad, on other nets; ruled out by pad
   numbers", "N pin names agree"). `needs_preview`: the correction is red, its `doubt` is set, or a reason other than
   an rms residual ("rms 0.213 mm: the land patterns differ") or a non-90 angle makes it yellow.
-* Checklist, in this order of categories: uncertain correction (correction yellow or red, not a fallback, on a
-  simulated row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can
-  settle shown first), not simulated, bottom reading (convention-sensitive, said in pins with `moves_text`: "as
-  ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2 would swap"), odd
-  angle (row rotation not a multiple of 90). A part is one item, under its first category; its other categories
-  are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and `ref`
-  the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
+* Checklist, in this order of categories: uncertain correction (correction yellow or red, not a fallback, on a simulated
+  row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can settle shown
+  first), not simulated (a part with a code: JLC places no other), bottom reading (convention-sensitive, said in pins
+  with `moves_text`: "as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2
+  would swap"), odd angle (row rotation not a multiple of 90). A part is one item, under its first category; its other
+  categories are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and
+  `ref` the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
   `rotation` None; bottom reading per (code, side, verdict, rotation, what); uncertain correction per (code, side,
-  verdict, what); never a not-simulated row or a part without a code. `first`: the bottom-reading item of a green
-  row whose pins move under every other reading (the most of its pads off copper under each, then the most pads),
-  `what` starting "look at this one first": it settles the reading for every bottom part. Sorted by category, then
-  `first`, row verdict (red first), the correction's doubt (polarity, names, orientation), natural ref.
+  verdict, what); never a not-simulated row or a part without a code. `first`: the bottom-reading item of a green row
+  whose pins move under every other reading (the most of its pads off copper under each, then the most pads), `what`
+  starting "look at this one first": it settles the reading for every bottom part. Sorted by category, then `first`, row
+  verdict (red first), the correction's doubt (polarity, names, orientation), natural ref.
 
 ## report.py and cli.py
 
