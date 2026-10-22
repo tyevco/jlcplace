@@ -113,7 +113,7 @@ class Board:
     parts: list[Part]
     source: str = ""               # "pcbnew" | "sexpr" | "json"
     kicad_version: str = ""
-    origin_kind: str = "aux"       # aux | absolute | grid | user
+    origin_kind: str = "aux"       # aux | absolute | grid | user | gerber (the Gerbers' (0, 0): JLC reads rows from it)
 
     def part(self, ref: str) -> Part | None:
         return next((p for p in self.parts if p.ref == ref), None)
@@ -219,8 +219,8 @@ class PadLanding:
 class RowResult:
     ref: str
     lcsc: str = ""
-    status: str = "ok"             # ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row
-                                   # | not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref
+    status: str = "ok"             # ok | offset | off-copper | wrong-pad | renumbered | pinout | not-simulated
+                                   # | no-row | not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref
     verdict: str = GREEN
     landings: list[PadLanding] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)   # KiCad soldered pads no EE pad lands in

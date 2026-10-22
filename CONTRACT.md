@@ -15,10 +15,12 @@ Conventions for every module:
 * References from boards, CPLs and BOMs that `model.ref_problem` refuses (a control character; a leading = + - @, a
   spreadsheet formula) are bad input: the readers raise ValueError naming them escaped. Text printed to a terminal or
   log goes through `model.printable` (control characters as \xNN): a newline in it would start a GitHub workflow
-  command.
+  command. Text read from Gerber files (layer functions, attribute values, net and reference names) is untrusted
+  alike: it goes through `model.printable` before it is printed, and is escaped in SVG and HTML.
 * Never write EasyEDA geometry anywhere except the user's cache directory (EasyEDA claims copyright over its
-  library; the correction database stores derived numbers and hashes only). The one exception is the HTML report,
-  a local review file that draws EasyEDA pad outlines and states their source (the JLCEDA/EasyEDA Official Library).
+  library; the correction database stores derived numbers and hashes only). The exceptions are the HTML report and
+  the overlay images (`--overlay`), local review files that draw EasyEDA pad outlines and state their source (the
+  JLCEDA/EasyEDA Official Library).
 * Tests: `tests/test_<module>.py`, pytest, deterministic (seeded random), markers `pcbnew`, `cache`, `network`
   (see pyproject). Tests that need a file that may be absent skip with a reason. Run with
   `/home/user/jlcplace/.venv/bin/python -m pytest -q -p no:cacheprovider`.
@@ -138,6 +140,47 @@ class EEClient:
   TL TR BL BR RD FD CW BI. `title` = packageDetail.title (else c_para.package). `uuid` =
   packageDetail.uuid, `utime` = packageDetail.updateTime (else head.utime).
 
+## gerber.py — read Gerber sets and find where their origin lies on the board
+
+```python
+class GerberError(ValueError)                # "file: block N: why"
+def read_gerbers(path) -> GerberSet          # a directory (its files), a .zip (every member, <= 512 MB), or one file
+def parse_gerber(text, name="") -> GerberLayer; def read_gerber_text({name: text}) -> GerberSet
+def classify(name) -> str; def function_kind(function) -> (kind, side)
+class GerberSet(path, layers, skipped): find(kind, side=None), pads(side, kinds=("copper", "paste")), outline,
+    extents, x2_pins
+class GerberLayer(name, function, kind, side, source, polarity, units, software, attributes, flashes, regions, draws,
+    notes): pads(), bbox()
+class GPad(x, y, w, h, poly, kind, aperture, params, at, dark, function, ref, pin, pin_name, net, shapes): contains(q)
+class GDraw(x1, y1, x2, y2, width, arc, dark, function, ref, pin, net): points()
+def board_pads(board, *, apertures=False) -> list[BoardPad]      # board frame, copper box centres, DNP parts too
+def board_origins(board) -> {kind: (x, y)}  # its CPL origin under its kind, "absolute", "aux" / "grid" from the file
+def gerber_origin(board, gerbers, cpl_origin=None, *, cpl_origin_kind=None, tol=MATCH_TOL) -> OriginCheck
+def gerber_to_board(g, origin, flip="none", scale=1.0); def board_to_gerber(b, origin, flip="none", scale=1.0)
+def shifted_rows(rows, check) -> list[CplRow]                     # ValueError for a mirrored or scaled set
+MATCH_TOL = 0.02; ORIGIN_TOL = 0.01; MIN_FRACTION = 0.3; MIN_MATCHED = 3; BELONGS = 0.5; FLIPS; SCALES
+```
+* Frame **gerber**: a file's coordinates in mm (inch files converted), y UP. KiCad plots board point b with plot
+  origin o at g = (bx - ox, oy - by) = `convention.board_to_cpl(b, o)`, proven pad by pad on kicad-cli sets of the
+  dial-me-spinner boards and five KiCad demos, from the drill/place and the page origin, with and without X2. JLC
+  lays a CPL over the Gerbers from their (0, 0): a CPL is right only when written from that origin.
+* Reader: FS (L/T zero omission, absolute or incremental, explicit decimals), MO / G70 / G71, AD (C, R, O, P with
+  holes, macros), AM (primitives 1, 2/20, 21, 22, 4, 5, 6, 7, variables, arithmetic), D01-D03, G01-G03 with G74 /
+  G75, regions, LP, LM / LR / LS, SR, AB, OF / SF, X2 TF / TA / TO / TD and KiCad's `G04 #@!` X1 comments. Layer
+  function from TF.FileFunction, else a .gbrjob, else the file name (Protel, Eagle, KiCad names). Excellon, job files,
+  documents and nested zips go to `skipped`. A pad is what TO.P or a *Pad AperFunction (not ViaPad) says; without
+  attributes every flash, and a region on paste, with TO.C or at most 10 mm across. Pads compare by the centre of
+  their outline's bounding box (it commutes with every flip).
+* `gerber_origin` fits g = s . F . b + t over F in FLIPS (none = KiCad's diag(1, -1), y, x, xy) and s in {1, 25.4,
+  1/25.4}: from (ref, pin, side) pairs when the copper carries TO.P and at least half agree (method x2-pins), else by
+  translation voting with 48 anchors per side, refined by median (pad-voting); the sound map wins ties. `origin` =
+  the board point that is Gerber (0, 0) (None when fewer than MIN_FRACTION of the board's pads, and MIN_MATCHED,
+  match), `named` the board origin it is (aux | absolute | grid | user | ""). Against `cpl_origin` (default
+  board.origin): `verdict` matches | does-not-match (any flip or scale too) | unknown, `shift` = (cx - ox, oy - cy)
+  to add to every row. Coverage: the fraction of the board's SMD pads (on a side the set has copper or paste for)
+  with a Gerber pad at their place; `belongs` >= BELONGS; `stale` = belongs and pads missing or paste pads on no
+  board pad. `messages` start with the verdict; a side without layers is a note, not stale.
+
 ## parts.py — shared by fit, check and the pipeline
 
 ```python
@@ -152,6 +195,11 @@ def norm_number(s) -> str      # upper case, '01' -> '1'
 def ref_prefix(ref) -> str
 def ee_key(ee) -> str          # "ee-" + geom.pad_hash(ee.pads): the database key of an EasyEDA footprint
 def kicad_hash(part) -> str    # geom.pad_hash of the copper pads, with the pin functions' name tokens when informative
+class Pin(NamedTuple): number, name, tokens, net=None   # name as written (messages); net: the KiCad side's net key
+class PinDiff: ee_number, ee_name, kicad_number, kicad_name, kind     # kind: swapped | same net | differs
+def pin(number, name, net=None) -> Pin
+def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]  # pairs [(EasyEDA Pin, KiCad Pin)] of the pads on copper
+def pinout_text(diffs, n=4) -> str   # "pad 2 is S on the LCSC part, D on the board; pad 2 (EasyEDA pad 4) is ..."
 ```
 * `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI)
   or a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
@@ -168,6 +216,11 @@ def kicad_hash(part) -> str    # geom.pad_hash of the copper pads, with the pin 
 * `uncovered_exemption`: KiCad copper no EasyEDA pad lands on that belongs to a covered pin (thermal vias inside a
   covered pad, a via-sized plated hole numbered like a covered SMD pad, a much smaller pad of a covered pad's number
   and net such as a DPAK's cut lead): fit and check both use it. Two equal pads of a number are never exempt.
+* `pin_diffs`: the pads where `compare_names` < 0, in the order of `pairs`. "swapped": the EasyEDA name is the
+  function of another KiCad pad on another net and the KiCad function the name of another EasyEDA pad (the names are
+  permuted: a pin sits on the net meant for another); "same net": a KiCad pad with the EasyEDA name is on the net the
+  pad lands on (harmless); "differs": everything else (B/E/C against G/D/S). Names equal up to a trailing index
+  compare as unknown, so they are never diffs.
 * `ee_key` replaces `EEFootprint.key()` (uuid:updateTime) as the key corrections are stored and looked up under:
   updateTime also moves when EasyEDA edits only a record's metadata, which would make every verified correction
   stale. `kicad_hash` keys the KiCad side: the fit decides polarity and orientation by pin names too, so parts whose
@@ -200,7 +253,8 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
    * green = the number fit lands every pad with no numbering conflict, names agree or are uninformative, and every
      other member of S is equivalent or ruled out by the pad numbers (for a polar two-terminal part, by the names
      or the + mark as well; otherwise yellow "polarity decided by pad numbers only");
-   * yellow = names pick a member the numbers do not (the names win; for a polar two-terminal part only when the +
+   * yellow = pin names that differ otherwise (the reason names the pads: "N pin name(s) differ (M agree): ...");
+     names pick a member the numbers do not (the names win; for a polar two-terminal part only when the +
      mark sides with them, and the numbers win when it sides with them); numbering differs but the members are
      equivalent or the names (or the + mark) pick one; rms above max(0.1 mm, a quarter of the smallest KiCad pad
      the pads land on); < 80 % of the EasyEDA pads *whose number KiCad has* matched; a non-90 angle (kept
@@ -213,7 +267,12 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
      separates ("ambiguous"); a polar two-terminal part whose names and numbers disagree and no + mark settles it,
      or whose + mark contradicts the numbers (or the names) that are its only other evidence; the mirror wins (only
      a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
-     far more exact) -> `mirror=True`, never placed.
+     far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA
+     names are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S does better
+     by the names (not for a non-polar two-terminal part, nor a polar one whose drawn + the member puts on KiCad's
+     positive pad): reason "pinout differs from the symbol: pad N is X on the LCSC part, Y on the board; ...: no
+     placement that lands every pad puts the pins on their own functions, so the part is wired wrong whatever the
+     rotation; check the LCSC part's pinout against the symbol".
    Angles within `snap` of a multiple of 90 are snapped and the translation refitted. `dx, dy` (4 decimals) = the
    EasyEDA origin in the library frame. Pairs for the number fit and translation hypotheses use copper centres
    (a custom / polygon KiCad pad's outline box centre, an EasyEDA polygon pad's point-list box centre: SOT-89's tab
@@ -261,6 +320,17 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   from a correction that is not red, with every pad on copper, it is yellow, status "offset", the message first, and
   so is a row a quarter turn (45 to 135 deg) from it whose pads all land as the correction puts them (alike lands:
   one land, whose long pad would lie across it); a row matching a verified correction's expected row is VERIFIED.
+* Pin names (`_pinout`): with the EasyEDA record (not a proxy) and every pad on copper, the symbol's pin names
+  through the row are compared with the KiCad pin functions of the pads they land on (`parts.pin_diffs`), whatever
+  the correction says. Red, status "pinout" (the message first): names permuted ("swapped") with no placement known
+  to do better by them (the correction's own, a non-mirror alternative by its "names" score) on a part with more than
+  two terminals (a two-terminal part's half turn always lands it the other way round: its names are its polarity).
+  Yellow: names that a known placement would put right ("through this row the pin names differ from the symbol
+  (...); another placement puts them on their own functions"), or that differ otherwise ("N pin names differ from
+  the symbol: ...: check the LCSC part's pinout against the symbol"). Same-net differences and a polar two-terminal
+  part whose drawn + the row puts on KiCad's positive pad: a message. A row landing as a manual correction: yellow,
+  "accepted by the manual correction"; as a board-verified one: a message; a preview verification settles only a
+  two-terminal part (JLC's preview does not show pin functions).
 * `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
   JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. A reference that more than one part
   JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
@@ -271,7 +341,7 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   designators a JLC BOM lists) lists it: then it is simulated like any other row, with a message. A row for a part
   with no code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
-* Statuses: ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row | not-on-board |
+* Statuses: ok | offset | off-copper | wrong-pad | renumbered | pinout | not-simulated | no-row | not-on-board |
   layer-mismatch | not-placed | duplicate | duplicate-ref.
 
 ## cpl.py — read and write CPL / BOM files
@@ -349,8 +419,18 @@ def apply_bom_codes(board, bom_rows) -> list[(ref, board code, BOM code)]; def b
 def bom_listed(part, bom_rows) -> bool; def lookup_ee(client, code); def key_reasons(corr, n=2)
 def needs_preview(corr) -> bool; def moves_text(res) -> str
 class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, resolved, reading, cpl_path,
-    bom_messages, row_lines): counts(), worst(), exit_code(fail_on), checklist() -> list[CheckItem]
+    bom_messages, row_lines, findings, gerbers, gerbers_path, offset): counts(), worst(), exit_code(fail_on),
+    checklist() -> list[CheckItem]
 class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also, first)
+class Finding(status, verdict, message)       # about the whole run: origin | gerbers
+OFFSET_TOL = 0.25; OFFSET_SHARE = 0.6; OFFSET_MIN = 3
+class Offset(dx, dy, rows, total, origin, origin_kind, scale, unit, y_up, refs): fix(row) -> CplRow
+def common_offset(run, *, units="mm", origins=None) -> Offset | None
+def offset_hints(run, *, units="mm", origins=None, off=<computed>) -> list[str]
+def jlc_origin(check) -> (x, y) | None; def gerber_notes(check) -> list[str]
+def gerber_findings(check) -> list[Finding]
+def origin_findings(run, *, given=None, given_kind="", units="mm", origins=None) -> list[Finding]
+def origin_lines(run) -> list[(verdict, text)]
 ```
 * A part with no EasyEDA record (offline miss or not found) but a database correction is simulated with
   `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
@@ -361,11 +441,39 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   replaced (the code of the part JLC places, `check.jlc_part`), `bom_overrides` makes their BOM messages.
   `resolve(bom_rows=...)` also resolves the parts the board only excludes from its BOM but the BOM lists
   (`bom_listed`), and `check` simulates their rows.
+* Common offset. Where a row belongs (cpl frame): `cpl_row_for(part, corr)` with a non-mirror correction, else the
+  part's anchor (not-on-board and duplicate-ref results skipped). Hypotheses, simplest first: the rows as read, Mid Y
+  not negated, then each other unit in `cpl.UNITS` than `units`, Y negated or not; for each, the densest cluster of
+  (s x, f s y) - belongs within OFFSET_TOL (the point with the most neighbours, then the median twice). It needs
+  max(OFFSET_MIN, ceil(OFFSET_SHARE * rows with a known part)) rows; the rows as read within OFFSET_TOL of where they
+  belong are in place (None); otherwise the hypothesis with the most rows wins, ties to the simpler. `Offset.dx, dy`
+  = displacement (mm, cpl frame), `origin` = the writer's origin (O.x - dx, O.y + dy) in the board frame, named by
+  `origins` after the board's own CPL origin and "absolute"; `fix(row)` = (s x - dx, f s y - dy), positions only.
+  `offset_hints`: one "jlcplace: " line ("origin mismatch: N of M rows would sit on their parts if shifted by
+  (-dx, -dy) mm: the CPL was written from ..., not the board's ...: ... check with --origin absolute"; or "... if
+  the CPL's numbers were in inches: pass --units in"; or "... with Mid Y negated"), or [].
+* Gerbers (with `--gerbers`). JLC reads the rows from the Gerbers' (0, 0): `jlc_origin(check)` is `check.origin` when
+  the set is this board's (`belongs`) and a plain shift (flip none, scale 1), else None; the command line then checks
+  the rows from a copy of the board with that origin and `origin_kind` "gerber". `gerber_findings`: a red "gerbers"
+  finding when there is no such origin or the set is `stale` (its messages about the set itself, `gerber_notes`:
+  not its verdict against the CPL origin it was asked about). `origin_findings` (sets `run.offset`), on a run checked
+  from the Gerbers' origin: a red "origin" finding when the common offset puts the writer's origin more than
+  OFFSET_TOL from it ("origin mismatch: JLC lays the CPL over the Gerbers from their (0, 0), board (0, 0) (the page
+  origin), but the CPL was written from the aux (drill/place file) origin (100, 100) (184 of 184 rows): JLC would put
+  every part 141.42 mm off, displaced by (-100.000, +100.000) mm; fix: plot the Gerbers and drill files from ...,
+  or write the CPL from the Gerbers' origin (...), or shift every row by (+100.000, -100.000) mm"; for a unit or Y
+  mix-up the fixes name --units or negating Mid Y), else when `given` (an explicit --origin) is not the Gerbers'
+  origin. `Run.worst()` and `exit_code` count findings. `origin_lines`: the findings; else the Gerbers' check ("the
+  Gerbers' (0, 0) is this CPL's origin, ..."); else a reminder that the Gerbers were not checked and must be plotted
+  from the CPL's origin.
 * `key_reasons`: what a person or a later refit added (latest first), then the fit's own reasons, those that make
   it yellow or red before those that only inform ("rot 0 also lands every pad, on other nets; ruled out by pad
   numbers", "N pin names agree"). `needs_preview`: the correction is red, its `doubt` is set, or a reason other than
   an rms residual ("rms 0.213 mm: the land patterns differ") or a non-90 angle makes it yellow.
-* Checklist, in this order of categories: uncertain correction (correction yellow or red, not a fallback, on a simulated
+* Checklist, in this order of categories: pinout (a row of status "pinout", or with a message asking for the LCSC
+  part's pinout to be checked that no manual or verified correction accepted; the datasheet settles it, not the
+  preview; an uncertain correction of that part keeps only its other reasons the preview can settle), uncertain
+  correction (correction yellow or red, not a fallback, on a simulated
   row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can settle shown
   first), not simulated (a part with a code: JLC places no other), bottom reading (convention-sensitive, said in pins
   with `moves_text`: "as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2
@@ -394,31 +502,72 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   legend above the cards; the checklist table with the row's verdict, stacked on narrow screens; the EasyEDA
   source, the JLCEDA/EasyEDA Official Library with links to https://lceda.cn/ and https://easyeda.com, declared
   above the board views and above the part cards, and in the footer).
+* Findings and the origin in the reports: the summary's header names the CPL origin ("origin aux 100, 100", or "origin
+  100, 100 from the Gerbers (aux)") and the Gerber set ("over the Gerbers gerbers.zip"); each finding is the first
+  line after it (`headline`), the count line ends "; origin red"; without --gerbers and without findings one line
+  reminds that the Gerbers were not checked. `to_dict` adds `findings` [{status, verdict, message}],
+  `summary.findings`, and `origin` {x, y, kind, from_gerbers, verdict (green | red | unchecked), note, gerbers (the
+  OriginCheck's derived numbers: origin, named, method, flip, scale, residual, matched, board_pads, gerber_pads,
+  pin_pairs, smd_pads, coverage, missing (<= 50), extra (a count), belongs, stale, notes) | null, offset (Offset's
+  fields) | null}. `junit`: one test case per finding, or a passing "origin" case when the Gerbers were checked;
+  `github_annotations`: one per finding, on the CPL file; `html`: a banner per finding and the origin line above the
+  checklist; the Markdown checklist an "**Origin:**" paragraph before the items, the CSV a last row of category
+  `origin`. A pinout item is flagged "(red: the LCSC part or the symbol is wrong)".
+* Overlays: `overlay_svg(run, side, *, outline=None, gerber_origin=None, notes=(), width=OVERLAY_WIDTH)` one
+  standalone SVG (px) of a side as JLC's preview shows it (the bottom seen from below, x mirrored): board outline
+  (board-frame polylines, closed rings filled), KiCad copper, the EasyEDA pads where JLC puts them per row in the
+  row's verdict colour, red and yellow parts circled (yellow dashed) and labelled, a second circle round pads put
+  far from their part, none past CIRCLES (40) on a side; the CPL origin (+), the Gerbers' (0, 0) (x); a header with
+  file names (never paths) and `notes`; legend, problem list (12), and the EasyEDA source notice in visible text and
+  `<desc>`. `write_overlays(run, directory, ..., png=False) -> {name: path}` (top.svg, bottom.svg; the PNGs when
+  a renderer is at hand), `svg_to_png(svg, png) -> renderer | ""` (RuntimeError when it fails), `png_renderer()`
+  (cairosvg, else a headless Chromium: $JLCPLACE_CHROMIUM, Playwright's headless shell, Chrome / Chromium on PATH),
+  `board_outline(path)` (a .kicad_pcb's Edge.Cuts, footprints' too; None for a snapshot), `gerber_outline(gerbers,
+  check)` (the profile layer through the check's map).
 * cli (`jlcplace`, also `python -m jlcplace`):
-  `check BOARD CPL [--bom] [--db] [--online|--offline] [--cache] [--origin] [--reading] [--fail-on red|yellow]
-  [--report] [--json PATH|-] [--junit] [--checklist .md|.csv] [--github-annotations] [--lcsc-field]... [--reader]
-  [--units] [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless
-  --force: an existing CPL is left unchanged and the note says so, under -q naming the red refs; the reports of a
-  run that wrote nothing name no CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint
-  or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`;
-  `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board
-  [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need
-  --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one
-  entry must agree on it, a reference two placed parts carry is refused, the part's EasyEDA record must be at hand
-  (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they were verified with; EasyEDA's
-  own not-found answer gives an entry with no EasyEDA key), and everything is checked before anything is written);
-  `show CODE | BOARD --ref REF [--json]`;
-  `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
+  `check BOARD CPL [--bom] [--gerbers DIR|ZIP] [--db] [--online|--offline] [--cache] [--origin] [--reading] [--fail-on
+  red|yellow] [--report] [--overlay DIR] [--json PATH|-] [--junit] [--checklist .md|.csv] [--github-annotations]
+  [--lcsc-field]... [--reader] [--units] [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file,
+  keeps no file when red unless --force: an existing CPL is left unchanged and the note says so, under -q naming the red
+  refs; the reports of a run that wrote nothing name no CPL, "the rows jlcplace would write"; `-o -` is bad input; parts
+  without a footprint or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`; `fetch BOARD|CODE...`
+  [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board [--cpl UPLOADED [--units]]
+  [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need --cpl or --rot, presses need
+  --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one entry must agree on it, a
+  reference two placed parts carry is refused, the part's EasyEDA record must be at hand (a cache miss or a failed fetch
+  is bad input: entries are keyed by the footprint they were verified with; EasyEDA's own not-found answer gives an
+  entry with no EasyEDA key), and everything is checked before anything is written); `show CODE | BOARD --ref REF
+  [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
   default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache lacked
-  and say how to fetch them; `check` also says `--units in` (or mil) when most rows are red and would sit within 2 mm of
-  their parts in that unit, or `--origin absolute` when they would from the page origin. `-v` is taken before or after
-  the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl` and `show` warn on stderr when `--db` does not
-  exist (`fit` and `confirm` create it); a `--db` that exists and is not a directory is bad input. Exit codes: 0 clean,
-  1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch: records that could not be fetched), 3 bad input
-  (argparse errors, unreadable or unwritable files and database files included; when one output cannot be written the
-  others still are), 4 an internal error (the traceback is printed): no crash exits 1; 130 interrupted (ctrl-C,
-  "jlcplace: interrupted"); 141 a broken pipe on stdout (quiet). stdout/stderr escape what their encoding cannot
-  hold (backslashreplace).
+  and say how to fetch them; `check` and `cpl` print `pipeline.offset_hints` (origin mismatch, units, Y not negated)
+  unless an origin finding says it. `--gerbers` (check, cpl): read with `gerber.read_gerbers` (unreadable: bad input),
+  checked with `gerber.gerber_origin` against the board as --origin (default aux) gives it; with `jlc_origin` the rows
+  are checked (cpl: written) from the Gerbers' (0, 0); findings from `gerber_findings` and `origin_findings` (`given` =
+  the --origin point when --origin was given; origins named by `gerber.board_origins`). Under -q the findings are still
+  printed ("jlcplace: red: origin mismatch: ..."). `cpl` with a red finding and no red row says "not written: the origin
+  is red". `--overlay DIR` (check, cpl): `report.write_overlays` with the Gerbers' outline (else the board's Edge.Cuts),
+  the Gerbers' (0, 0), and the findings and offset hints as notes; PNGs when a renderer is at hand, else a note on
+  stderr; a renderer that fails is a warning, a directory that cannot be written bad input (after the other outputs).
+  `-v` is taken before or after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl` and `show` warn
+  on stderr when `--db` does not exist (`fit` and `confirm` create it); a `--db` that exists and is not a directory is
+  bad input. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch: records that could
+  not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and database files included; when one
+  output cannot be written the others still are), 4 an internal error (the traceback is printed): no crash exits 1; 130
+  interrupted (ctrl-C, "jlcplace: interrupted"); 141 a broken pipe on stdout (quiet). stdout/stderr escape what their
+  encoding cannot hold (backslashreplace).
+
+## action.yml — the GitHub Action
+
+A composite action at the repository root (not in the wheel): inputs `board`, `cpl` (required), `bom`, `gerbers`,
+`db`, `fail-on` (red), `args` (more check arguments, split at whitespace), `python-version` ("3.12"; "" the runner's),
+`version` ("": the action's own ref, installed from its files); outputs `exit-code`, `red` and `yellow` (red and
+yellow results plus findings of that verdict, empty when the check could not run), `junit`, `checklist`, `json`.
+Steps: setup-python; a venv in `$RUNNER_TEMP` (reused when the spec matches; nothing written to GITHUB_PATH /
+GITHUB_ENV); a cache key from the board and BOM; actions/cache/restore; `jlcplace fetch` of the board's and BOM's
+codes (a failure is a warning); actions/cache/save (only after a complete fetch, before the check: a red check
+fails the job); `jlcplace check ... --github-annotations --junit --checklist --json`, the summary and checklist in
+the job summary, the step's exit code jlcplace's. Inputs reach scripts only through `env:`. Nothing is uploaded, no
+HTML report or overlay is written. `tests/test_action.py` checks it as data and runs its steps with a local runner.
 
 ## Open
 
@@ -432,3 +581,18 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   name-against-number cases in JLC's preview data; where it reads nothing, such a part is red until confirmed.
 * `EEPad` has no plated flag (unplated holed pads are dropped); slot geometry is parsed but not exposed.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.
+* Gerbers: Excellon drill files are skipped, not read (a set whose copper carries no pads, or a check against the
+  drill holes, would need an Excellon reader). Only flips, a half turn and the 25.4 scales are tried: a set turned a
+  quarter turn or scaled otherwise reads as not this board's. Deprecated MI / IR / AS image commands are noted and
+  ignored; the order of LM / LR / LS and the polarity of an AB block flashed under LPC follow the specification as
+  read, untested against a reference renderer (KiCad uses neither). A board whose pads form one regular grid with
+  many Gerber pads missing could make pad-voting pick a pitch-shifted translation (X2 pin attributes settle it).
+* Common offset: a part with neither a correction nor a record counts at its KiCad anchor, so a board of mostly
+  identical off-centre connectors with no records could show a false common vector; bottom rows written with X
+  negated (KiCad's "negative X for bottom") have no hypothesis.
+* Pinout: names equal up to a trailing index (INT1 / INT2, P1.01 / P1.03) compare as unknown, so swaps between them
+  are not seen; a board without pin functions (none filled from the schematic) is not compared. A multi-pin part
+  whose preview-verified entry has a permuted pinout stays red: only `confirm --source board`, or editing the entry,
+  settles it. An entry stored before the pinout rule keeps its old yellow verdict until `jlcplace fit --db` refits
+  it (the check of the row, with the record, is red anyway).
+* The action is tested with a local runner on Linux only: not on GitHub's runners, Windows (Git Bash) or macOS.

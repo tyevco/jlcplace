@@ -28,6 +28,16 @@ A row that lands the pads as a fitted correction does whose choice among several
 (Correction.doubt: a polarity only the pad numbers decide, an orientation the pads do not fix) is yellow. A row that
 lands every pad on its own pad but sits off where a (not red) correction puts the part is yellow ("offset").
 
+Pin names
+---------
+With the EasyEDA record, the symbol's pin names through the row are compared with the KiCad pin functions of the pads
+they land on (parts.pin_diffs), whatever the correction says. Names permuted (a pin on the net of another pin's
+function) with no placement known to do better by them (the correction's own, its alternatives; a two-terminal part's
+half turn always does: its names are its polarity) are red, status "pinout": the part is wired wrong whatever the
+rotation. Other differences are yellow ("check the LCSC part's pinout against the symbol"). Names swapped between pads
+of one net, a non-polar two-terminal part's names, and a polar one's whose drawn + sits on KiCad's positive pad say
+nothing against the row. A manual or board-verified correction that the row lands as settles them (manual: yellow).
+
 Bottom rows are placed again under every other reading in convention.BOTTOM_READINGS: a row whose pin -> net mapping
 changes, or whose pads leave copper, under one of them is `convention_sensitive` (look at it in JLC's preview), and
 `reading_moves` says, per such reading, which EasyEDA pads move and where to (the checklist says it in pins).
@@ -47,8 +57,9 @@ from .cpl import assembled, correction_for, natural_key
 from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
+from .parts import compare_names, ee_positive_pad, kicad_positive_pad, norm_number, pad_size, pin, pin_diffs, \
+    pinout_text, uncovered_exemption
 from .parts import nonpolar as _nonpolar
-from .parts import norm_number, pad_size, uncovered_exemption
 
 LAND_TOL = 1e-3            # mm: a centre this close outside a pad's edge is on it (CPL values carry 1e-4 mm)
 ROW_TOL = 0.05             # mm: a row further than this from the one jlcplace writes gets a message ...
@@ -202,7 +213,8 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     non-polar two-pad part whose row point is on it, red otherwise. A row that matches the expected row of a verified
     correction and has no issue is VERIFIED. A row more than ROW_TOL / ANGLE_TOL from the expected row gets a
     message; more than OFFSET_FLOOR mm and OFFSET_PAD of the smallest pad it lands on, or OFFSET_ANGLE degrees, from
-    that of a correction that is not red, it is yellow ("offset")."""
+    that of a correction that is not red, it is yellow ("offset"). With every pad on copper, pin names that the row
+    permutes beyond what any known placement fixes are red ("pinout"), and other name differences yellow (_pinout)."""
     if reading not in BOTTOM_READINGS:
         raise ValueError(f"unknown reading {reading!r}: one of {', '.join(BOTTOM_READINGS)}")
     if alt_readings is not True and alt_readings:
@@ -385,6 +397,16 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
                        f"puts the part, though every pad lands as it does (the lands are alike that way): check the "
                        f"part's shape on its lands")
 
+    if not off and not flip_ok:
+        issue, msg, red = _pinout(part, ee, placed, corr, as_corr, polar2)
+        if red:
+            issues.append(RED)
+            status = "pinout" if status in ("ok", "renumbered", "offset") else status
+            msgs.insert(0, msg)
+        elif msg:
+            issues += [issue] if issue else []
+            msgs.append(msg)
+
     if row.layer == BOTTOM and alt_readings:
         _sensitivity(res, part, row, ee, origin, reading, alt_readings, flip_ok)
 
@@ -392,6 +414,68 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     res.verdict = _worst(top, *issues)
     res.messages[:0] = msgs
     return res
+
+
+def _pinout(part: Part, ee: EEFootprint, placed, corr: Correction | None, as_corr: bool, polar2: bool
+            ) -> tuple[str, str, bool]:
+    """(issue verdict or "", message, red) for the EasyEDA symbol's pin names through the row against the KiCad pin
+    functions of the pads they land on (parts.pin_diffs), read from the record whatever the correction says.
+    Red ("pinout"): names permuted (a pin on the net of another pin's function) and no placement known to do better
+    by the names: not the correction's, not one of its alternatives, and the part has more than two terminals (a
+    two-terminal part's half turn always lands it the other way round: its names are its polarity). A polar
+    two-terminal part whose drawn + the row puts on KiCad's positive pad is vouched for (its polarity follows the +).
+    Yellow: names that differ otherwise, or that a known placement would put right. Same-net differences are a
+    message. A row that lands as a manual or board-verified correction is settled by it (yellow for a manual one);
+    JLC's preview shows a polarity but not pin functions, so a preview verification settles only a two-terminal
+    part's names."""
+    if ee.source == "kicad-proxy" or not ee.pin_names:
+        return "", "", False
+    names = {norm_number(k): v for k, v in ee.pin_names.items()}
+    ee_pins = [pin(e.number, names.get(norm_number(e.number), "")) for e in _ee_pads(ee)]
+    pads = part.copper_pads()
+    kicad = {id(p): pin(p.number, p.pin_name, _key(p.number, p.net)) for p in pads}
+    pairs = [(ee_pins[i], kicad[id(p)]) for i, (_, _, p) in enumerate(placed) if p is not None]
+    diffs = pin_diffs(pairs, ee_pins, kicad.values())
+    harmful = [d for d in diffs if d.kind != "same net"]
+    if not harmful:
+        return "", ("EasyEDA pin names on KiCad pads of other functions, on their own nets: " + pinout_text(diffs)
+                    if diffs else ""), False
+
+    def score(ps) -> int:
+        return sum(compare_names(e.tokens, k.tokens) for e, k in ps)
+
+    # a two-terminal part's half turn always lands its pads the other way round: its names are its polarity
+    better = polar2
+    if corr is not None and not better:
+        own = [(ep, kicad[id(p)]) for e, ep in zip(_ee_pads(ee), ee_pins)
+               for p in [_land(pads, ee_to_library(corr, (e.x, e.y)), e.number)[0]] if p is not None]
+        better = (not corr.mirror and score(own) > score(pairs)) or any(
+            isinstance(a, dict) and not a.get("mirror") and a.get("names", -math.inf) > score(pairs)
+            for a in corr.alternatives)
+    e_pos, k_pos = ee_positive_pad(ee), kicad_positive_pad(part)
+    on_pos = [norm_number(k.number) == k_pos[0] for e, k in pairs if norm_number(e.number) == e_pos] if k_pos else []
+    if polar2 and on_pos and all(on_pos):
+        return "", (f"the pin names differ from the symbol ({pinout_text(harmful)}), but the + drawn on the EasyEDA "
+                    f"footprint is on KiCad's positive pad {k_pos[0]} (by {k_pos[1]}): the polarity follows the +"
+                    ), False
+    swapped = [d for d in harmful if d.kind == "swapped"]
+    n = len(harmful)
+    if swapped and not better:
+        text = f"pinout differs from the symbol: {pinout_text(swapped)}"
+    elif swapped:
+        text = (f"through this row the pin names differ from the symbol ({pinout_text(harmful)}); another placement "
+                f"puts them on their own functions")
+    else:
+        text = (f"{n} pin name{'s differ' if n > 1 else ' differs'} from the symbol: {pinout_text(harmful)}: check the "
+                f"LCSC part's pinout against the symbol")
+    if as_corr and (corr.status in ("manual", "board-verified") or polar2 and corr.status == "preview-verified"):
+        return (YELLOW if corr.status == "manual" else ""), f"{text}: accepted by the {corr.status} correction", False
+    if not (swapped and not better):
+        return YELLOW, text, False
+    text += ": the LCSC part's pins land on the nets of other pins; check the LCSC part's pinout against the symbol"
+    if corr is not None and corr.status == "preview-verified":
+        text += "; JLC's preview does not show pin functions, so its verification does not settle this"
+    return RED, text, True
 
 
 def _corr_keys(part: Part, ee: EEFootprint, corr: Correction) -> list[str | None]:

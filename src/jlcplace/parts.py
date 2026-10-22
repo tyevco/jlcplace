@@ -6,6 +6,8 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+from dataclasses import dataclass
+from typing import NamedTuple
 
 from . import geom
 
@@ -90,6 +92,63 @@ def compare_names(a: frozenset, b: frozenset) -> int:
     if a & b:
         return 1
     return 0 if _stem(a) & _stem(b) else -1
+
+
+class Pin(NamedTuple):
+    """One side's pin at a pad: its number, its name as written (for messages), name_tokens of it, and on the KiCad
+    side the net key of its pad (a pad without a net is its own net)."""
+    number: str
+    name: str
+    tokens: frozenset
+    net: object = None
+
+
+@dataclass(frozen=True)
+class PinDiff:
+    """An EasyEDA pad whose pin name disagrees with the pin function of the KiCad pad it lands on.
+    kind: "swapped"  the EasyEDA name is the function of another KiCad pad, on another net, and the KiCad function the
+                     name of another EasyEDA pad: the names are permuted, and the part's pin sits on the net meant for
+                     another of its pins (a MOSFET's S on the board's D);
+          "same net" the EasyEDA name is the function of a KiCad pad on the net it lands on: harmless;
+          "differs"  neither: the libraries name the pins differently (VIN / IN+, B/C/E against G/S/D)."""
+    ee_number: str
+    ee_name: str
+    kicad_number: str
+    kicad_name: str
+    kind: str
+
+
+def pin(number, name, net=None) -> Pin:
+    return Pin(str(number or ""), str(name or ""), name_tokens(name, number), net)
+
+
+def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]:
+    """The pads whose names disagree (compare_names < 0) through a placement, in the order of `pairs`: (EasyEDA Pin,
+    KiCad Pin) for every EasyEDA pad on copper. `ee_pins` and `kicad_pins` are every Pin of each side (the KiCad ones
+    with their nets), where a name is looked for on the other pads."""
+    ee_pins, kicad_pins = list(ee_pins), list(kicad_pins)
+    out = []
+    for e, k in pairs:
+        if compare_names(e.tokens, k.tokens) >= 0:
+            continue
+        homes = [q.net for q in kicad_pins if compare_names(e.tokens, q.tokens) > 0]
+        if k.net in homes:
+            kind = "same net"
+        elif homes and any(compare_names(q.tokens, k.tokens) > 0 for q in ee_pins):
+            kind = "swapped"
+        else:
+            kind = "differs"
+        out.append(PinDiff(e.number, e.name, k.number, k.name, kind))
+    return out
+
+
+def pinout_text(diffs: list[PinDiff], n: int = 4) -> str:
+    """'pad 2 is S on the LCSC part, D on the board; pad 3 (EasyEDA pad 2) is ...' for the first n."""
+    def one(d):
+        where = f"pad {d.kicad_number}" + (f" (EasyEDA pad {d.ee_number})"
+                                           if norm_number(d.ee_number) != norm_number(d.kicad_number) else "")
+        return f"{where} is {d.ee_name} on the LCSC part, {d.kicad_name} on the board"
+    return "; ".join(one(d) for d in diffs[:n]) + (f"; {len(diffs) - n} more" if len(diffs) > n else "")
 
 
 def _terminal_names(part) -> dict[str, frozenset[str]]:

@@ -40,6 +40,7 @@ env:
   DMS_OLD: 8816f0b662914a1e1aea03265aba6b4ec9f2c327
   KIKIT: 958abd031e3d254d9777f6c192badbdb1c1c3757          # KiCad 5-8 test boards (tests/test_board.py OLDER)
   JLCCHECK: d95f9e0ade6a5d9218bcdeb8b107769be8db0a5f       # z2amiller's JLC-preview ground truth, KiCad 10 boards
+  JLCPCB_TOOLS: 14bf352cc9b1b953aa781c49d9a32805aeb72bd0   # Bouni's golden Gerbers and CPLs (tests/test_gerber.py)
 
 jobs:
   unit:
@@ -166,6 +167,13 @@ jobs:
           path: fixtures/jlc/src/z2amiller_jlccheck
           sparse-checkout: tests/fixtures/jlcfootprint
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bouni/kicad-jlcpcb-tools
+          ref: ${{ env.JLCPCB_TOOLS }}
+          path: fixtures/jlc/src/Bouni_kicad-jlcpcb-tools
+          sparse-checkout: tests/golden
+          persist-credentials: false
       - name: fixture locations
         run: |
           mkdir -p fixtures/jlc/fab-before
@@ -248,6 +256,13 @@ jobs:
           ref: ${{ env.JLCCHECK }}
           path: fixtures/jlc/src/z2amiller_jlccheck
           sparse-checkout: tests/fixtures/jlcfootprint
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bouni/kicad-jlcpcb-tools
+          ref: ${{ env.JLCPCB_TOOLS }}
+          path: fixtures/jlc/src/Bouni_kicad-jlcpcb-tools
+          sparse-checkout: tests/golden
           persist-credentials: false
       - name: fixture locations
         run: |

@@ -1,6 +1,6 @@
 """The jlcplace command line.
 
-    jlcplace check BOARD CPL       simulate a CPL from any tool against the board
+    jlcplace check BOARD CPL       simulate a CPL from any tool against the board (and its Gerbers: --gerbers)
     jlcplace cpl BOARD -o CPL      write the CPL (corrections from the database, else fitted), check it, refuse if red
     jlcplace fit BOARD             fit corrections (and store them with --db)
     jlcplace fetch BOARD|CODE ...  download EasyEDA records into the cache
@@ -9,7 +9,9 @@
     jlcplace snapshot BOARD -o board.json
 
 BOARD is a .kicad_pcb file or a JSON snapshot. Only `fetch`, and the other commands with --online, use the network
-(the EasyEDA API); otherwise records come from the cache. Exit codes: 0 clean; 1 something yellow and --fail-on
+(the EasyEDA API); otherwise records come from the cache. JLC lays the CPL over the Gerbers from the Gerbers' own
+(0, 0): with --gerbers, `check` and `cpl` take that point as the CPL origin, and a CPL written from another origin
+(or an --origin that names another) is red for the whole run. Exit codes: 0 clean; 1 something yellow and --fail-on
 yellow; 2 something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a
 database file that cannot be read, bad options); 4 an internal error (a bug), never 1; 130 interrupted (ctrl-C);
 141 the reader of stdout went away (`jlcplace ... | head`).
@@ -33,15 +35,16 @@ from pathlib import Path
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
 from .check import ANGLE_TOL, ROW_TOL, check_bom
-from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, cpl_to_board, norm_angle, row_correction
-from .cpl import UNITS, assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
+from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
+from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
+from .gerber import board_origins, gerber_origin, read_gerbers
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound, printable
 from .parts import ee_key, kicad_hash
-from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, is_code, key_reasons, \
-    lookup_ee, resolve, row_lines
+from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, gerber_findings, \
+    is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, origin_findings, resolve, row_lines
 from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -65,7 +68,7 @@ def _board(args):
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            board = load_board(args.board, origin=args.origin, lcsc_fields=tuple(args.lcsc_field),
+            board = load_board(args.board, origin=args.origin or "aux", lcsc_fields=tuple(args.lcsc_field),
                                reader=args.reader)
     except FileNotFoundError:
         raise BadInput(f"{args.board}: no such file") from None
@@ -158,11 +161,15 @@ def _stdout_once(args) -> None:
         raise BadInput("--json - and --github-annotations both write to stdout; give --json a file")
 
 
-def _finish(args, run, notes=()) -> int:
-    """Print the summary (to stderr when --json - takes stdout), write the requested reports, return the exit code."""
+def _finish(args, run, notes=(), outline=None) -> int:
+    """Print the summary (to stderr when --json - takes stdout), write the requested reports, return the exit code.
+    Under -q the run's findings are still printed: they make every row wrong."""
     out = sys.stderr if args.json == "-" else sys.stdout
     if not args.quiet:
         out.write(report.summary(run, color=_color(out)))
+    else:
+        for f in run.findings:
+            print(printable(f"jlcplace: {f.verdict}: {report.headline(f)}"), file=out)
     for n in notes:
         print(printable(n), file=out)
     if args.github_annotations:
@@ -179,9 +186,71 @@ def _finish(args, run, notes=()) -> int:
                 _write(path, text())
             except BadInput as e:                  # write the other outputs anyway, then say so (exit 3)
                 failed.append(str(e))
+    if args.overlay:
+        try:
+            _overlays(args, run, notes, outline)
+        except BadInput as e:
+            failed.append(str(e))
     if failed:
         raise BadInput("; ".join(failed))
     return run.exit_code(args.fail_on)
+
+
+def _overlays(args, run, notes, outline) -> None:
+    """--overlay DIR: top.svg and bottom.svg, and their PNGs when a renderer is at hand (report.svg_to_png). Like the
+    HTML report they draw EasyEDA pad outlines: for the user's own review, written only where asked."""
+    g = run.gerbers
+    notes = [f.message for f in run.findings] + [n.removeprefix("jlcplace: ") for n in notes
+                                                 if n.startswith("jlcplace: ") and "would sit on their parts" in n]
+    if outline is None:
+        outline = report.board_outline(args.board)
+    try:
+        wrote = report.write_overlays(run, args.overlay, outline=outline, notes=notes,
+                                      gerber_origin=g.origin if g is not None and g.origin is not None else None,
+                                      png=True)
+    except OSError as e:
+        raise BadInput(f"--overlay {args.overlay}: cannot write: {e.strerror or e}") from None
+    except RuntimeError as e:                  # the renderer failed: the SVGs are written, the PNGs are a bonus
+        print(printable(f"jlcplace: warning: --overlay: no PNG ({e}); the SVGs are in {args.overlay}"),
+              file=sys.stderr)
+        return
+    if not any(k.endswith(".png") for k in wrote):
+        print(printable(f"jlcplace: --overlay: SVGs only in {args.overlay} (no PNG renderer: pip install cairosvg, or "
+                        "install Chrome or Chromium, or set JLCPLACE_CHROMIUM)"), file=sys.stderr)
+
+
+def _gerbers(args, board):
+    """--gerbers: (the board with the CPL origin JLC reads the rows from, the Gerbers' origin check, its findings).
+    The Gerbers' (0, 0) is the CPL origin when the set is this board's and a plain shift of it; otherwise the board
+    keeps --origin (default aux) and the set's problem is a red finding. Without --gerbers: (board, None, [])."""
+    path = getattr(args, "gerbers", None)
+    if not path:
+        return board, None, []
+    try:
+        gs = read_gerbers(path)
+    except FileNotFoundError:
+        raise BadInput(f"--gerbers {path}: no such file or directory") from None
+    except (OSError, ValueError) as e:         # GerberError is a ValueError naming the file and the block
+        raise BadInput(f"--gerbers {path}: {e}") from None
+    chk = gerber_origin(board, gs)
+    og = jlc_origin(chk)
+    if og is not None:
+        board = replace(board, origin=og, origin_kind="gerber")
+    return board, (gs, chk), gerber_findings(chk)
+
+
+def _judge_origin(args, run, board, gerbers, found) -> list[str]:
+    """Fill in the run's Gerbers, findings and common offset; the terminal hints that remain (pipeline.offset_hints:
+    an origin mismatch without Gerbers to tell which origin is JLC's, a unit or a Y axis)."""
+    given = (board.origin, board.origin_kind) if args.origin else (None, "")
+    origins = board_origins(board)
+    if gerbers is not None:
+        run.gerbers, run.gerbers_path = gerbers[1], str(args.gerbers)
+    run.findings = found + origin_findings(run, given=given[0], given_kind=given[1], units=getattr(args, "units", "mm"),
+                                           origins=origins)
+    if any(f.status == "origin" for f in run.findings):
+        return []                              # the finding says it, with the Gerbers' origin
+    return offset_hints(run, units=getattr(args, "units", "mm"), origins=origins, off=run.offset)
 
 
 def _codeless_hint(run, bom) -> list[str]:
@@ -196,32 +265,11 @@ def _codeless_hint(run, bom) -> list[str]:
     return []
 
 
-def _units_hint(run, units: str) -> list[str]:
-    """A hint when most rows lie far from their parts but would sit on them were the CPL's bare numbers in inches or
-    mils (KiCad's CSV position file does not say its unit), or relative to the page origin (KiCad's position file
-    without "use drill/place file origin")."""
-    if units != "mm" or run.worst() != RED:
-        return []
-    pairs = [(r.row, run.board.part(r.ref)) for r in run.results if r.row is not None and run.board.part(r.ref)]
-
-    def on_parts(scale: float) -> int:
-        return sum(1 for row, p in pairs
-                   if math.dist(cpl_to_board((row.x * scale, row.y * scale), run.board.origin), (p.x, p.y)) <= 2.0)
-
-    here = on_parts(1.0)
-    for unit in ("in", "mil"):
-        n = on_parts(UNITS[unit])
-        if 2 * n > len(pairs) and n > 2 * here:
-            return [f"jlcplace: {n} of {plural(len(pairs), 'row')} would sit on their parts if the CPL's numbers were "
-                    f"in {'inches' if unit == 'in' else 'mils'}: pass --units {unit}"]
-    # KiCad's position file is relative to the page origin unless "use drill/place file origin" is ticked
-    if run.board.origin != (0.0, 0.0):
-        n = sum(1 for row, p in pairs if math.dist(cpl_to_board((row.x, row.y), (0.0, 0.0)), (p.x, p.y)) <= 2.0)
-        if 2 * n > len(pairs) and n > 2 * here:
-            return [f"jlcplace: {n} of {plural(len(pairs), 'row')} would sit on their parts if the CPL were relative "
-                    f"to the page origin, not the board's {run.board.origin_kind} origin: pass --origin absolute (and "
-                    f"check that the Gerbers use the same origin)"]
-    return []
+def _outline(gerbers):
+    """The board outline JLC sees: the Gerbers' profile through their origin check (None: read Edge.Cuts)."""
+    if gerbers is None or jlc_origin(gerbers[1]) is None:
+        return None
+    return report.gerber_outline(*gerbers)
 
 
 def cmd_check(args) -> int:
@@ -229,18 +277,23 @@ def cmd_check(args) -> int:
     board = _board(args)
     rows = _rows(args.cpl, args.units)
     bom = _bom(args.bom)
+    jlc, gerbers, found = _gerbers(args, board)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
     resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom)
-    run = check(board, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
+    run = check(jlc, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
-    return _finish(args, run, _units_hint(run, args.units) + _codeless_hint(run, bom) + _misses_note(client))
+    hints = _judge_origin(args, run, board, gerbers, found)
+    return _finish(args, run, hints + _codeless_hint(run, bom) + _misses_note(client), _outline(gerbers))
 
 
 def _no_dash(args, what: str) -> None:
     if args.output == "-":
         raise BadInput(f"-o -: {what} writes a file; give it a name (--json - prints the results)")
+
+
+_FINDING_WORDS = {"origin": "the origin", "gerbers": "the Gerbers"}
 
 
 def _refs(results) -> str:
@@ -255,10 +308,11 @@ def cmd_cpl(args) -> int:
     _no_dash(args, "cpl")
     board = _board(args)
     bom = _bom(args.bom)
+    jlc, gerbers, found = _gerbers(args, board)   # with --gerbers, the rows are written from the Gerbers' origin
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
     resolved = resolve(board, client, _db(args), snap=args.snap, use_fallback=True)
-    rows, _ = rows_for_board(board, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
+    rows, _ = rows_for_board(jlc, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
     out = Path(args.output)
     tmp = str(out.parent / f".{out.name}.jlcplace-check.tmp")
     try:
@@ -268,13 +322,20 @@ def cmd_cpl(args) -> int:
         except OSError as e:
             raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
         written = read_cpl(tmp)                    # check what is in the file, not what was meant to be
-        run = check(board, written, resolved, reading=args.reading, bom_rows=bom)
+        run = check(jlc, written, resolved, reading=args.reading, bom_rows=bom)
         if bom is not None:
             run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, written)
+        hints = _judge_origin(args, run, board, gerbers, found)
         red = run.worst() == RED
         if red and not args.force:
             # the reports name no file (there is none): "the rows jlcplace would write"
-            why = _refs(r for r in run.results if r.verdict == RED) if args.quiet else "the rows above are red"
+            bad = [r for r in run.results if r.verdict == RED]
+            if bad:
+                why = _refs(bad) if args.quiet else "the rows above are red"
+            else:                                  # every row lands, but not on the board JLC is sent
+                what = list(dict.fromkeys(_FINDING_WORDS.get(f.status, f.status) for f in run.findings
+                                          if f.verdict == RED))
+                why = " and ".join(what) + (" is" if what == ["the origin"] else " are") + " red"
             note = f"jlcplace: {out} not written: {why} (--force writes it anyway)"
             if out.exists():
                 note += f"; the existing {out} is left unchanged"
@@ -288,7 +349,7 @@ def cmd_cpl(args) -> int:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    return _finish(args, run, [note] + _misses_note(client))
+    return _finish(args, run, [note] + hints + _misses_note(client), _outline(gerbers))
 
 
 # ------------------------------------------------------------------------------------------------------- fit
@@ -639,8 +700,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     board = argparse.ArgumentParser(add_help=False, parents=[common])
     g = board.add_argument_group("board")
-    g.add_argument("--origin", default="aux",
-                   help="CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil')")
+    g.add_argument("--origin", default=None,
+                   help="CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); "
+                        "check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red")
     g.add_argument("--lcsc-field", action="append", default=[], metavar="NAME",
                    help="footprint field holding the LCSC code, searched before the usual names (repeatable)")
     g.add_argument("--reader", default="auto", choices=("auto", "pcbnew", "sexpr", "json"),
@@ -678,6 +740,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--checklist", metavar="PATH", help="write the preview checklist (.md, or .csv)")
     g.add_argument("--github-annotations", action="store_true", help="print GitHub Actions annotations")
     g.add_argument("--bom", metavar="CSV", help="the JLC BOM: codes for parts that lack one, and consistency checks")
+    g.add_argument("--gerbers", metavar="GERBERS",
+                   help="the Gerbers ordered with the CPL (a directory, a .zip or one file): JLC lays the CPL over "
+                        "them from their own (0, 0), which becomes the CPL origin; red when the CPL was written from "
+                        "another origin or the Gerbers are not this board's as it is")
+    g.add_argument("--overlay", metavar="DIR",
+                   help="write top.svg and bottom.svg (and PNGs when a renderer is at hand) of the board as JLC's "
+                        "preview shows it, problem parts circled (draws EasyEDA outlines: for your own review)")
     g.add_argument("-q", "--quiet", action="store_true", help="no terminal summary")
 
     p = _Parser(prog="jlcplace", description="Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards "

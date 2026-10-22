@@ -1,12 +1,12 @@
 # jlcplace
 
 Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards. jlcplace puts JLC's own EasyEDA footprint down
-exactly where each CPL row tells JLC to put it, and reports which KiCad pad and net every EasyEDA pad lands on. It
-works on a CPL from any tool, and it can write the CPL itself.
+exactly where each CPL row tells JLC to put it, over the Gerbers you order with, and reports which KiCad pad and net
+every EasyEDA pad lands on. It works on a CPL from any tool, and it can write the CPL itself.
 
 ```
-$ jlcplace check board.kicad_pcb board-CPL.csv
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+$ jlcplace check board.kicad_pcb board-CPL.csv --gerbers gerbers.zip
+jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin 100, 100 from the Gerbers (aux)) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows) over the Gerbers gerbers.zip, bottom reading jlc-2022
 RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
 RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
 RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
@@ -23,10 +23,15 @@ Preview checklist (12 items, 99 parts): look at these in JLC's placement preview
 
 ## Why
 
-JLC assembles with the footprints of its EasyEDA library, not yours. An EasyEDA footprint's zero angle and origin
-often differ from KiCad's, so a CPL that is right for KiCad's footprint puts JLC's part turned or shifted. The usual
-ways of getting this wrong:
+JLC lays the CPL's coordinates over the Gerbers, from the Gerbers' own (0, 0), and assembles with the footprints of
+its EasyEDA library, not yours. Nothing is matched by pad shape: a wrong origin or angle is placed exactly as written.
+An EasyEDA footprint's zero angle and origin often differ from KiCad's, so a CPL that is right for KiCad's footprint
+puts JLC's part turned or shifted. The usual ways of getting this wrong:
 
+* **Every part shifted** by one vector: the Gerbers and the CPL were exported from different origins (KiCad's page
+  origin for one, the drill/place file origin for the other). The Y axis is a second trap: the sheet's y grows
+  downward, the CPL's Mid Y upward from its origin. `--gerbers` finds where the Gerbers' (0, 0) lies on the board and
+  checks the CPL from there, as JLC does.
 * **Turned parts.** KiCad's position file carries KiCad's angles. EasyEDA draws many packages at another angle
   (SOT-23 variants, LGA sensors, drivers, connectors).
 * **Shifted parts.** The EasyEDA origin is not KiCad's anchor. Connectors are the usual case: on the board below,
@@ -35,6 +40,9 @@ ways of getting this wrong:
   top can be wrong on the bottom.
 * **Pads that land on copper but on the wrong pins.** A SOT-23-6 turned 180 degrees still puts all six pads on copper,
   so a check that only asks "is it on copper?" passes it. The pins are on the wrong nets.
+* **Pinout, not rotation.** Two parts in one package can have different pin functions: a MOSFET whose pins are G, S,
+  D on a symbol whose pads are G, D, S lands every pad on copper at every rotation that fits, and the board does not
+  work. jlcplace compares the LCSC part's pin names, through the row, with the symbol's pin functions.
 * **Guessed corrections.** Existing plugins correct rotations from tables keyed by footprint names or regular
   expressions. They never look at the footprint JLC actually uses for the LCSC code, so they cannot tell when the
   guess is wrong, and they cannot check a CPL.
@@ -66,6 +74,11 @@ jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv \
     --report report.html --checklist checklist.md
 ```
 
+`--gerbers` (a directory, a `.zip` or one file) is the Gerber set you order with. JLC reads the CPL from the
+Gerbers' own (0, 0), so with `--gerbers` that point is the CPL origin of the check, whatever `--origin` says; see
+[The Gerbers' origin](#the-gerbers-origin). Without it, the summary reminds you once that the Gerbers must be plotted
+from the CPL's origin.
+
 `fetch` is the one command that uses the network unasked. `check`, `cpl`, `fit`, `show` and `confirm` read the
 record cache and download nothing unless `--online` is given (then they fetch what the cache lacks, as `fetch` does).
 A check that lacks records says which and how to get them ("no EasyEDA record in the cache ... for 2 codes (C1001,
@@ -79,11 +92,24 @@ only excludes from its BOM are checked too when the BOM lists them, since JLC pl
 `--bom`, a board whose parts mostly have no LCSC code gets a hint to pass the BOM or `--lcsc-field NAME`. The CPL may use JLC's header (Designator, Mid X, Mid Y, Layer, Rotation) or any common spelling. It may also be
 a KiCad position file (CSV or ASCII). UTF-8, cp1252 and UTF-16 (Excel's "Unicode Text") files are read, with any
 line ends (also Excel for Mac's CR-only "CSV (Macintosh)"); a value that is not a finite number ("nan", "inf") is bad
-input. Use `--units in` for a CSV position file exported in inches (`check` suggests it when most rows would sit
-on their parts in inches). The CPL origin is the board's aux (drill/place file) origin; use
-`--origin grid|absolute|X,Y` for other origins (X,Y in mm, or with a unit: `--origin 4in,-500mil`). `check`
-suggests `--origin absolute` when most rows would sit on their parts from the page origin (KiCad's position file
-without "use drill/place file origin").
+input. Use `--units in` for a CSV position file exported in inches. Without `--gerbers`, the CPL origin is the board's
+aux (drill/place file) origin; use `--origin grid|absolute|X,Y` for other origins (X,Y in mm, or with a unit:
+`--origin 4in,-500mil`).
+
+**The common offset.** When at least 60 % of the rows (and 3) are displaced alike from where they belong, `check`
+says so in one line: the vector, the origin the CPL was written from (the page origin, the grid origin, or a point
+that is none of the board's origins), or a unit (`--units in`), or a Y axis left pointing down, with the fix: the
+exact `--origin` to pass when the Gerbers use that origin too, or to export the Gerbers, drill files and CPL again
+from one origin:
+
+```
+$ jlcplace check board.kicad_pcb board-pos.csv          # KiCad's position file, from the page origin
+...
+jlcplace: origin mismatch: 182 of 184 rows would sit on their parts if shifted by (-100.000, 100.000) mm: the CPL was
+written from the page origin (0, 0), not the board's aux origin (100, 100). JLC lays the CPL over the Gerbers from the
+Gerbers' own origin: export the Gerbers, drill files and CPL from one origin (KiCad: 'Use drill/place file origin' in
+all three); if the Gerbers use that origin too, check with --origin absolute
+```
 
 **Write the CPL:**
 
@@ -92,8 +118,9 @@ jlcplace cpl board.kicad_pcb -o board-CPL.csv
 ```
 
 `cpl` takes each part's correction from the database (`--db`) or fits one, writes the rows, and checks the file it
-wrote. If any row is red, it exits with code 2 and writes no file: a CPL already at that path is left unchanged,
-and the run says so. `--force` writes the file anyway. `-o -` is refused: the CPL is a file (`--json -` prints the
+wrote. With `--gerbers` it writes the rows relative to the Gerbers' (0, 0), the origin JLC will read them from. If
+any row is red, it exits with code 2 and writes no file: a CPL already at that path is left unchanged, and the run
+says so. `--force` writes the file anyway. `-o -` is refused: the CPL is a file (`--json -` prints the
 results).
 
 **When the records cannot decide.** Some parts need a person to decide. For example, the TS-1187A switch is numbered
@@ -120,23 +147,80 @@ footprint makes it stale.
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
 
+## The Gerbers' origin
+
+JLC lays the CPL's Mid X / Mid Y over the Gerbers from the Gerbers' own (0, 0). KiCad plots board point b, with plot
+origin o (the drill/place file origin when "Use drill/place file origin" is ticked, else the page origin), at
+g = (bx - ox, oy - by): Gerber y up, as the CPL's. So a CPL is right only when it was written from the origin the
+Gerbers were plotted from.
+
+`--gerbers DIR|ZIP` reads the Gerber set (RS-274X, with or without X2 attributes; Excellon drill files are listed and
+skipped) and finds the board point that is its (0, 0): from KiCad's pin attributes (`TO.P`) when it has them, else by
+matching pad positions. That point becomes the CPL origin of the check, as it is JLC's; the summary header says so
+("origin 100, 100 from the Gerbers (aux)"). Then, red for the whole run, said first:
+
+* **origin**: the rows are displaced alike (the common offset above) from where they belong from the Gerbers' origin,
+  so the CPL was written from another origin; or `--origin` names another point than the Gerbers' (0, 0):
+
+  ```
+  RED     origin mismatch: JLC lays the CPL over the Gerbers from their (0, 0), board (0, 0) (the page origin), but the
+          CPL was written from the aux (drill/place file) origin (100, 100) (184 of 184 rows): JLC would put every
+          part 141.42 mm off, displaced by (-100.000, +100.000) mm; fix: plot the Gerbers and drill files from the aux
+          (drill/place file) origin (KiCad: 'Use drill/place file origin' ticked), or write the CPL from the Gerbers'
+          origin (`jlcplace cpl BOARD --gerbers GERBERS` does; KiCad's position file: 'Use drill/place file origin'
+          unticked), or shift every row by (+100.000, -100.000) mm
+  ```
+
+  Every row below it is red too: they are checked as JLC will read them.
+* **gerbers**: the set is mirrored (y not inverted, x mirrored, half a turn), 25.4 times too large or too small, not
+  this board's (under half of its SMD pads have a Gerber pad at their place), or older than the board (pads moved,
+  came or went since it was plotted: re-plot it). Without a trustworthy origin, the rows are checked from `--origin`
+  (default aux).
+
+`jlcplace cpl --gerbers` writes the rows from the Gerbers' (0, 0), so the CPL matches the Gerbers it is ordered with.
+
+## KiCad export checklist
+
+One origin for everything JLC gets, and JLC's units and axes:
+
+1. Place the drill/place file origin (Place > Drill/Place File Origin), usually at the board's bottom-left corner.
+2. **Plot** (Gerbers): tick *Use drill/place file origin*
+   (`kicad-cli pcb export gerbers --use-drill-file-origin`).
+3. **Generate Drill Files**: origin *Drill/place file origin* (`kicad-cli pcb export drill --drill-origin plot`).
+4. **Component Placement** (or write the CPL with `jlcplace cpl`): units **mm**, format **CSV**, tick *Use
+   drill/place file origin*, both sides in one file (`kicad-cli pcb export pos --format csv --units mm
+   --use-drill-file-origin`). KiCad's position file has KiCad's angles and anchors, not JLC's: check it, or let
+   `jlcplace cpl` write the rows.
+5. The Y axis: the sheet's y grows downward, the CPL's Mid Y upward from its origin. KiCad's position file negates y
+   for you; a CPL written from sheet coordinates is mirrored top to bottom (`check` says "with Mid Y negated").
+6. Check before upload: `jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv --gerbers gerbers.zip`.
+
 ## Results
 
 Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise (check the LCSC part's pinout); a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
+
+With `--gerbers`, the run as a whole can be red too, said before the rows (a **finding**): `origin` when the CPL was
+written from another origin than the Gerbers' (or `--origin` names another), with what JLC will do, by how much
+every part moves and the fix; `gerbers` when the Gerbers are not this board's as it is (mirrored, in the wrong unit,
+another board's, or older than it: pads moved, came or went since they were plotted).
 
 Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input (a file
 that cannot be read or written, a database file that cannot be read, a bad option or value, a reference that cannot
 be a designator, a `--db` that is a file), 4 an internal error (a bug: the traceback is printed), 130 interrupted
 (ctrl-C), 141 the reader of stdout went away (`jlcplace ... | head`). `-v` (before or after the command) logs what the EasyEDA client does. Outputs:
-`--report` (one self-contained HTML page, for your own review: see below), `--json`, `--junit`, `--checklist`
-(`.md` or `.csv`) and `--github-annotations`.
+`--report` (one self-contained HTML page, for your own review: see below), `--overlay DIR` (images of the board as
+JLC's preview shows it, for your own review: see below), `--json`, `--junit`, `--checklist` (`.md` or `.csv`) and
+`--github-annotations`. A finding is the first line of the summary (also under `-q`), a `findings` entry and an
+`origin` object in the JSON (the CPL origin used, the Gerbers' check, the rows' common offset), a JUnit test case
+(`origin`, a passing one when the Gerbers' origin is the CPL's), an annotation on the CPL, a banner in the HTML report,
+and the checklists' origin line.
 
 Text from the files and from EasyEDA reaches terminals, CI logs and reports, so a reference with a control character
 (a newline would start a GitHub workflow command in the log) or one that starts with `= + - @` (a formula in a
@@ -152,10 +236,22 @@ bottom is drawn seen from below, as JLC's preview shows it. The header names the
 Above the board views and above the part cards the report declares the source of the outlines, the JLCEDA/EasyEDA
 Official Library, with links to https://lceda.cn/ and https://easyeda.com, as the records' licence asks.
 
+`--overlay DIR` writes `top.svg` and `bottom.svg`, one image per side like JLC's placement preview (the bottom seen
+from below): the board outline (from the Gerbers with `--gerbers`, else the board's Edge.Cuts), the KiCad copper, the
+EasyEDA pads where JLC puts them in their row's verdict colour, red and yellow parts circled and labelled (none past
+40 on a side: a CPL from another origin makes every row red, and the header says why), the CPL origin (+) and the
+Gerbers' (0, 0) (x), a header with the findings, and the source of the outlines. `top.png` and `bottom.png` are
+written too when a renderer is at hand (`pip install cairosvg`, or Chrome or Chromium on the PATH, or
+`JLCPLACE_CHROMIUM`); otherwise a note says so.
+
 The **preview checklist** lists what only JLC's preview can settle, short enough to work through. Each part is
 listed once, its other reasons folded into its item, and alike parts share one item that names the part to look at.
-In this order:
+It starts with the origin: the Gerbers' check (or the finding), or, without `--gerbers`, a reminder to plot them
+from the CPL's origin. Then, in this order:
 
+* **pinout**: parts whose LCSC pin names differ from the symbol's pin functions (red for a permutation no placement
+  fixes). The part's datasheet settles it, not the preview: JLC's preview shows where pads land, not what the pins
+  are.
 * **uncertain correction**: parts whose correction is not green for a reason the preview can settle: red, a choice
   of placement in doubt (a polarity, names against numbers, an orientation the pads do not fix; those first), or a
   bare KiCad pad, a numbering, a manual decision. A green row whose fit is yellow only because the land patterns
@@ -170,8 +266,9 @@ In this order:
   item), naming the part furthest from a multiple of 90.
 
 Within each (after the bottom reading's first part), red rows come first and are flagged: fix the row before
-looking at it. The Markdown, CSV, JSON and HTML
-checklists carry the same items; the CSV and JSON list every part an item stands for (`refs`).
+looking at it (for a pinout: the LCSC part or the symbol is wrong). The Markdown, CSV, JSON and HTML checklists carry
+the same items and the origin line (the CSV's last row, category `origin`); the CSV and JSON list every part an item
+stands for (`refs`).
 
 ## How the check works
 
@@ -200,6 +297,13 @@ part categories (tantalum, electrolytic, diode, LED, TVS, ...) and pin names. Fr
 The check runs the other way. For each row it computes where JLC puts every EasyEDA pad centre, finds the KiCad
 copper pad that point lands in, and compares nets. Comparing nets rather than pad numbers is what catches a SOT-23-6
 turned 180 degrees: every pad lands on copper, but on the wrong pins.
+
+**Pin names.** With the EasyEDA record at hand, the LCSC part's symbol pin names, through the row, are compared with
+the KiCad pin functions of the pads they land on. Names that are a permutation of the symbol's (a pin on the net of
+another pin's function) with no placement known to do better by them are red, status `pinout`, in the fit and in the
+check, whatever the correction says: no rotation wires that part right. Other name differences are yellow. Names
+swapped between pads of one net, and a two-terminal part's names (its polarity, decided by the + mark and the pad
+numbers), are not a pinout.
 
 **The bottom-side caveat.** JLC does not document how it reads a bottom-side rotation. The reading jlcplace uses,
 `jlc-2022` (180 - theta + rot, viewed from below), is the one every open tool uses. It also matches the JLC
@@ -274,6 +378,34 @@ Without KiCad on the runner, the board is read with the S-expression reader. Pas
 fail the job as well (with the records missing, routine yellows such as "not simulated" fail it too). The check
 itself downloads nothing: drop the cache and fetch steps to check from the committed database alone.
 
+### GitHub Action
+
+From another repository, after the job (or step) that writes the fab outputs, the action does all of the above in one
+step: it installs jlcplace in a virtual environment of its own, restores the EasyEDA records from the calling
+repository's Actions cache (keyed on the board and the BOM), fetches what the cache lacks (rate-limited; EasyEDA
+being down never fails the step by itself), saves the cache, and runs `jlcplace check` with annotations on the CPL's
+lines, the summary and the preview checklist in the job summary, and JUnit, JSON and checklist files:
+
+```yaml
+      - uses: tyevco/jlcplace@main            # or a commit SHA
+        id: cpl
+        with:
+          board: hardware/board.kicad_pcb
+          cpl: fab/board-CPL.csv
+          bom: fab/board-BOM.csv                # optional: JLC places the BOM's codes
+          gerbers: fab/gerbers.zip              # optional, recommended: the Gerbers the CPL is ordered with
+          db: jlcplace-db                       # optional: the committed correction database
+          fail-on: red                          # or yellow
+          args: --lcsc-field LCSC_PN            # optional: more `jlcplace check` arguments, split at whitespace
+```
+
+Inputs: `board` and `cpl` (required), `bom`, `gerbers`, `db`, `fail-on` (default `red`), `args`, `python-version`
+(default `"3.12"`; empty uses the runner's Python) and `version` (default: the action's own ref). Outputs:
+`exit-code`, `red` and `yellow` (counts, a red finding such as an origin mismatch included; empty when the check
+could not run), and the paths `junit`, `checklist` and `json`. The step fails as `jlcplace check` does; add
+`continue-on-error: true` to read the outputs in a later step anyway. The action uploads nothing and writes no HTML
+report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON and checklist files hold derived data only.
+
 ## Limits
 
 * Only pad centres are placed. A row slightly off but still with every centre on its own pad passes; a known
@@ -299,6 +431,13 @@ itself downloads nothing: drop the cache and fetch steps to check from the commi
   run after 5 failures in a row or once its retry waits add up to 10 minutes.
 * KiCad 10 variant overrides are ignored, and pcbnew from KiCad 6 to 8 is untested; the S-expression reader covers
   those files.
+* The pinout check needs pin functions on the board's pads (KiCad fills them from the schematic: "Update PCB from
+  Schematic"); a board without them is checked by pads and nets only. Names equal up to a trailing index (INT1 /
+  INT2, OUT1 / OUT2, CC1 / CC2) are not compared, so a swap between them is not seen.
+* `--gerbers` reads the Gerber layers, not the Excellon drill files, and tries plain shifts, mirrors, a half turn and
+  the inch / mm mix-ups: a set turned by a quarter turn, or scaled otherwise, is reported as not this board's. The
+  common offset needs 60 % of the rows (and 3) displaced alike; rows wrong each in their own way are judged one by
+  one.
 
 ## Data and licensing
 
@@ -312,7 +451,8 @@ and never redistributes them. The JSON, JUnit, checklist and annotation outputs 
 hashes; the correction database holds those and the EasyEDA footprint's title (a package name such as
 `SOIC-8_L5.3-W5.3-P1.27-LS8.0-BL`), and the JSON report and `fit --json` name it too.
 
-The HTML report draws EasyEDA pad outlines. It declares their source prominently, with both links, above the board
-views and the part cards and again in its footer, and asks search engines not to index it. It is meant for your own
-review: do not publish it, for example as a CI artifact of a public repository. This repository contains no EasyEDA
+The HTML report and the overlay images draw EasyEDA pad outlines. They declare their source prominently, with both
+links (the report above the board views and the part cards and again in its footer, an image under its drawing), and
+the report asks search engines not to index it. They are meant for your own review: do not publish them, for example
+as a CI artifact of a public repository. This repository contains no EasyEDA
 data: its tests build their EasyEDA records by hand, or read a local cache when one is present.

@@ -13,19 +13,29 @@ Without an EasyEDA record (offline and not cached, or not found) a part with a d
 its KiCad copper pads are taken through the inverse correction, e = M . R(-rot) . (l - d), and stand in for the
 EasyEDA pads. That simulation is exactly as good as the stored correction, so the row's verdict is capped by the
 correction's: CI can check CPLs offline from a committed database without any EasyEDA data.
+
+JLC lays the CPL over the Gerbers from the Gerbers' own origin. A CPL exported from another origin than the board's
+CPL origin moves every part by one vector: common_offset finds it (and a Y left pointing down, and numbers in another
+unit) with the origin the CPL was written from, and offset_hints says it. With the Gerbers (gerber.gerber_origin), the
+rows are checked from the Gerbers' (0, 0), as JLC reads them, and a CPL written from elsewhere, or Gerbers that are
+not the board's, are a red Finding for the whole run (origin_findings, gerber_findings).
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, replace
 
+import numpy as np
+
 from . import geom
 from .check import check_cpl, check_row, jlc_part, nonpolar
-from .convention import BOTTOM_READINGS, DEFAULT, rot
-from .cpl import assembled, natural_key, read_text
+from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, rot
+from .cpl import UNITS, assembled, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
+from .gerber import ORIGIN_TOL, OriginCheck
 from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
 from .parts import ee_key, kicad_hash, norm_number
@@ -60,6 +70,14 @@ class CheckItem:
 
 
 @dataclass
+class Finding:
+    """Something wrong with the run as a whole rather than with one row (origin_findings, gerber_findings)."""
+    status: str                    # origin (the CPL is not relative to the Gerbers' origin) | gerbers (not usable)
+    verdict: str
+    message: str                   # what JLC will do, by how much, and the fix
+
+
+@dataclass
 class Run:
     """A CPL checked against a board."""
     board: Board
@@ -70,6 +88,10 @@ class Run:
     cpl_path: str = ""
     bom_messages: list[str] = field(default_factory=list)
     row_lines: list[int | None] = field(default_factory=list)     # CPL file line of each result (None: no row)
+    findings: list[Finding] = field(default_factory=list)         # about the whole run: origin, gerbers
+    gerbers: OriginCheck | None = None                             # the --gerbers set's origin check
+    gerbers_path: str = ""
+    offset: Offset | None = None                                   # common_offset of the rows, once computed
 
     def counts(self) -> dict[str, int]:
         c = {RED: 0, YELLOW: 0, GREEN: 0, VERIFIED: 0}
@@ -78,13 +100,14 @@ class Run:
         return c
 
     def worst(self) -> str:
-        v = min((r.verdict for r in self.results), key=lambda x: VERDICT_ORDER.get(x, 0), default=VERIFIED)
+        v = min([r.verdict for r in self.results] + [f.verdict for f in self.findings],
+                key=lambda x: VERDICT_ORDER.get(x, 0), default=VERIFIED)
         if self.bom_messages and VERDICT_ORDER.get(v, 0) > VERDICT_ORDER[YELLOW]:
             v = YELLOW
         return v
 
     def exit_code(self, fail_on: str = RED) -> int:
-        """2 if any row is red, 1 if something is yellow (rows or BOM) and fail_on is yellow, else 0."""
+        """2 if any row or finding is red, 1 if something is yellow (rows or BOM) and fail_on is yellow, else 0."""
         w = self.worst()
         if w == RED:
             return 2
@@ -335,8 +358,13 @@ def row_lines(path, results: list[RowResult]) -> list[int | None]:
 
 # ------------------------------------------------------------------------------------------------------- checklist
 
-CATEGORIES = ("uncertain correction", "not simulated", "bottom reading", "odd angle")      # checklist order
+CATEGORIES = ("pinout", "uncertain correction", "not simulated", "bottom reading", "odd angle")    # checklist order
 _VRANK = {RED: 0, YELLOW: 1, GREEN: 2, VERIFIED: 3}
+
+
+#: a row message that asks for the LCSC part's pinout to be checked (check._pinout), and a fit reason about pin names
+_PINOUT = re.compile(r"check the LCSC part's pinout against the symbol")
+_PIN_REASON = re.compile(r"pinout differs|\d+ pin name\S* differ")
 
 
 def _off90(a) -> float:
@@ -378,15 +406,25 @@ def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
     out = []
     info = run.resolved.get(res.ref)
     c = info.corr if info is not None else None
+    pins = [m for m in res.messages if _PINOUT.search(m) and "accepted by the" not in m]
+    if res.status == "pinout" or pins:
+        # the datasheet settles it, not the preview: JLC's preview shows where pads land, not what the pins are
+        m = res.messages[0] if res.status == "pinout" else pins[0]
+        out.append(("pinout", f"{m} (in its datasheet: JLC's preview does not show pin functions)",
+                    "the pinout differs from the symbol"))
     if c is not None and c.verdict in (YELLOW, RED) and info.source != "fallback" \
             and res.status not in ("not-simulated", "no-row", "duplicate-ref") \
             and (res.verdict not in (GREEN, VERIFIED) or needs_preview(c)):
         # a green row with only a land-pattern residual against it: nothing the preview could settle; the reasons
-        # the preview can settle first, and only those when there are any
+        # the preview can settle first, and only those when there are any (with a pinout item, only those other than
+        # its pin names)
         why = key_reasons(c, len(c.reasons))
+        if out:
+            why = [r for r in why if not _PIN_REASON.match(r) and not _QUIET.match(r) and not _INFO.match(r)]
         why = [r for r in why if not _QUIET.match(r) and not _INFO.match(r)][:2] or why[:2]
-        what = f"{c.verdict} {info.source} correction ({c.status}): " + "; ".join(why)
-        out.append(("uncertain correction", what, what))
+        if why:
+            what = f"{c.verdict} {info.source} correction ({c.status}): " + "; ".join(why)
+            out.append(("uncertain correction", what, what))
     if res.status == "not-simulated" and res.lcsc:
         # a part without a code is no item: JLC places nothing it has no code for, so its preview never shows it
         m = res.messages[0] if res.messages else "no EasyEDA footprint"
@@ -424,6 +462,8 @@ def _merge(group: list[CheckItem]) -> CheckItem:
 def checklist(run: Run) -> list[CheckItem]:
     """What to look at in JLC's placement preview, one item per part (its other reasons folded into it) or per group
     of alike parts, in CATEGORIES order:
+      pinout                the LCSC part's pin names differ from the symbol's (red: a permutation no placement
+                            fixes): its datasheet settles it, the preview cannot;
       uncertain correction  a correction that is not green and that the preview can settle: red, a choice of
                             placement in doubt (polarity, then names, then orientation first), or a reason other
                             than a land-pattern residual or a non-90 angle (on a row that is not green, any);
@@ -490,6 +530,250 @@ def _rank_doubt(run: Run, it: CheckItem) -> int:
     if it.category != "uncertain correction" or info is None or info.corr is None:
         return 0
     return {"polarity": 0, "names": 1, "orientation": 2}.get(info.corr.doubt, 3)
+
+
+# ------------------------------------------------------------------------------------------------------- offset
+
+OFFSET_TOL = 0.25          # mm: rows displaced by vectors this close are displaced alike (and this little, not at all)
+OFFSET_SHARE = 0.6         # ... it is the CPL's when this share of the rows with a known part position are ...
+OFFSET_MIN = 3             # ... and at least this many
+_ORIGIN_WORDS = {"absolute": "page origin", "grid": "grid origin", "aux": "aux origin", "user": "given origin",
+                 "gerber": "Gerbers' origin"}
+_UNIT_WORDS = {"in": "inches", "mil": "mils", "mm": "millimetres"}
+
+
+@dataclass
+class Offset:
+    """Most rows of a CPL displaced from where they belong by one vector: the CPL was written from another origin,
+    possibly also in another unit or with its y axis pointing down. With s = scale and f = 1 if y_up else -1, a row
+    (x, y) as read belongs at (s x, f s y) - (dx, dy) in the cpl frame of the board's CPL origin O; the writer's
+    origin is then origin = (O.x - dx, O.y + dy) in the board frame."""
+    dx: float                      # mm, cpl frame (y up): the displacement, after the scale and y corrections
+    dy: float
+    rows: int                      # rows displaced by it (within OFFSET_TOL)
+    total: int                     # rows with a known part position
+    origin: tuple[float, float]    # the origin the CPL was written from, board frame
+    origin_kind: str = ""          # the named origin that is (absolute, grid, aux, ...), "" none
+    scale: float = 1.0             # the CPL's numbers, as read, times this are mm (25.4: written in inches, read as mm)
+    unit: str = ""                 # the unit the numbers were written in, when scale is not 1
+    y_up: bool = True              # False: written with y growing downward (sheet coordinates, y not negated)
+    refs: list[str] = field(default_factory=list)      # the displaced rows' references
+
+    def fix(self, row: CplRow) -> CplRow:
+        """The row as it would be written from the board's CPL origin, in mm, y up (positions only: a writer that
+        got the origin wrong got the angles right)."""
+        f = 1.0 if self.y_up else -1.0
+        return replace(row, x=round(self.scale * row.x - self.dx, 4) + 0.0,
+                       y=round(f * self.scale * row.y - self.dy, 4) + 0.0)
+
+
+def _belongs(run: Run, res: RowResult) -> tuple[float, float] | None:
+    """Where a result's row belongs in the cpl frame: the row of its correction, else its part's anchor; None when
+    the reference names no one part."""
+    if res.status in ("not-on-board", "duplicate-ref"):
+        return None
+    info = run.resolved.get(res.ref)
+    part = info.part if info is not None else jlc_part(run.board, res.ref)
+    if part is None:
+        return None
+    if info is not None and info.corr is not None and not info.corr.mirror:
+        x, y, _ = cpl_row_for(part, info.corr, run.board.origin, run.reading)
+        return x, y
+    return board_to_cpl((part.x, part.y), run.board.origin)
+
+
+def _densest(P: np.ndarray, tol: float) -> tuple[np.ndarray, np.ndarray]:
+    """(centre, members) of the densest group of points P (n x 2) within tol of a centre: the point with the most
+    others within tol, then the median of those, twice."""
+    counts = np.concatenate([(np.linalg.norm(P[k:k + 256, None] - P[None], axis=2) <= tol).sum(1)
+                             for k in range(0, len(P), 256)])
+    c = P[int(np.argmax(counts))]
+    for _ in range(2):
+        c = np.median(P[np.linalg.norm(P - c, axis=1) <= tol], axis=0)
+    return c, np.linalg.norm(P - c, axis=1) <= tol
+
+
+def common_offset(run: Run, *, units: str = "mm", origins: dict | None = None) -> Offset | None:
+    """The vector by which most rows are displaced from where they belong (_belongs), or None: at least OFFSET_SHARE
+    of the rows with a known part position, and OFFSET_MIN, within OFFSET_TOL of one vector. The hypotheses, simplest
+    first (the one explaining the most rows wins): the rows as read, displaced by more than OFFSET_TOL; Mid Y not
+    negated; the numbers in another unit than `units` (the one they were read in), Y negated or not. A CPL whose rows
+    are where they belong as read has none, and so has one whose errors are scattered. `origins`: the board's named
+    origins (board frame) to name the writer's by, after the board's own CPL origin and the page origin
+    (absolute)."""
+    pts = [(r.row, b) for r in run.results if r.row is not None for b in [_belongs(run, r)] if b is not None]
+    need = max(OFFSET_MIN, math.ceil(OFFSET_SHARE * len(pts) - 1e-9))
+    if len(pts) < need:
+        return None
+    R = np.array([(row.x, row.y) for row, _ in pts], float)
+    B = np.array([b for _, b in pts], float)
+    hyps = [(1.0, True, ""), (1.0, False, "")] + [(UNITS[u] / UNITS[units], y, u) for u in UNITS if u != units
+                                                 for y in (True, False)]
+    best = None
+    for s, y_up, unit in hyps:
+        c, members = _densest(R * (s, s if y_up else -s) - B, OFFSET_TOL)
+        n = int(members.sum())
+        if n < need:
+            continue
+        if (s, y_up) == (1.0, True) and math.hypot(*c) <= OFFSET_TOL:
+            return None                                 # the rows are where they belong
+        if best is None or n > best[0]:
+            best = (n, s, y_up, unit, c, members)
+    if best is None:
+        return None
+    n, s, y_up, unit, c, members = best
+    O = run.board.origin
+    origin = (round(float(O[0] - c[0]), 4) + 0.0, round(float(O[1] + c[1]), 4) + 0.0)
+    named = {run.board.origin_kind: O, "absolute": (0.0, 0.0), **(origins or {})}
+    kind = next((k for k, q in named.items() if math.dist(q, origin) <= OFFSET_TOL), "")
+    return Offset(round(float(c[0]), 4) + 0.0, round(float(c[1]), 4) + 0.0, n, len(pts), origin, kind, s, unit, y_up,
+                  [row.ref for (row, _), m in zip(pts, members) if m])
+
+
+_UNSET = object()
+
+
+def offset_hints(run: Run, *, units: str = "mm", origins: dict | None = None, off=_UNSET) -> list[str]:
+    """The common offset (common_offset, or `off` when already computed) as a line for the terminal: what the rows
+    would need to sit on their parts, the origin the CPL was written from, and how to fix it; [] when there is
+    none."""
+    if off is _UNSET:
+        off = common_offset(run, units=units, origins=origins)
+    if off is None:
+        return []
+    b = run.board
+    n = f"{off.rows} of {off.total} row{'' if off.total == 1 else 's'} would sit on their parts"
+    word = _ORIGIN_WORDS.get(b.origin_kind, b.origin_kind + " origin")
+    own = f"the board's {word} ({b.origin[0]:g}, {b.origin[1]:g})"
+    ox, oy = off.origin
+    where = (f"the {_ORIGIN_WORDS.get(off.origin_kind, off.origin_kind + ' origin')} ({ox:g}, {oy:g})"
+             if off.origin_kind else f"({ox:.3f}, {oy:.3f}) on the board, which is none of its origins")
+    option = (f"--origin {off.origin_kind}" if off.origin_kind in ("absolute", "grid", "aux") else
+              f"--origin {round(ox, 3):g},{round(oy, 3):g}")
+    moved = off.scale == 1.0 and off.y_up or math.dist(off.origin, b.origin) > OFFSET_TOL
+    needs = ([f"if shifted by ({-off.dx:.3f}, {-off.dy:.3f}) mm"] if off.scale == 1.0 and off.y_up else
+             [f"if the CPL's numbers were in {_UNIT_WORDS.get(off.unit, off.unit)}"] if off.scale != 1.0 else [])
+    needs += [] if off.y_up else ["with Mid Y negated"]
+    fixes = [f"pass --units {off.unit}"] if off.scale != 1.0 else []
+    if not off.y_up:
+        fixes.append("the CPL's y grows downward, as the sheet's does, but JLC's Mid Y grows upward from the origin: "
+                     "write it again with Y negated (KiCad's position file does)")
+    text = f"{n} " + " and ".join(needs)
+    if moved:
+        text = (f"origin mismatch: {text}" + (f": the CPL was written from {where}" if off.scale == 1.0 and off.y_up
+                                              else f" and relative to {where}") + f", not {own}")
+    line = f"jlcplace: {text}" + (": " + "; ".join(fixes) if fixes else "")
+    if moved:
+        line += (". JLC lays the CPL over the Gerbers from the Gerbers' own origin: export the Gerbers, drill files "
+                 "and CPL from one origin (KiCad: 'Use drill/place file origin' in all three); if the Gerbers use "
+                 f"that origin too, check with {option}")
+    return [line]
+
+
+# ------------------------------------------------------------------------------------------------------- Gerbers
+#
+# JLC lays the CPL over the Gerbers from the Gerbers' own (0, 0) (gerber.gerber_origin finds that board point): with
+# --gerbers, that point is the CPL origin of the check, whatever --origin says, and the run is red when the CPL was
+# evidently written from another origin, when --origin names another, or when the Gerbers are not this board's as
+# it is (mirrored, scaled, another board's, older than it).
+
+#: what the board origins are called, and how KiCad plots or writes from them
+_PLACES = {"aux": "the aux (drill/place file) origin", "absolute": "the page origin", "grid": "the grid origin"}
+_TICK = {"aux": "ticked", "absolute": "unticked"}
+
+
+def _place(kind: str, at) -> str:
+    """'board (100, 100) (the aux (drill/place file) origin)': a board point, and the origin it is."""
+    name = _PLACES.get(kind, "" if kind else "none of the board's origins")      # user: the point says it
+    return f"board ({at[0]:g}, {at[1]:g})" + (f" ({name})" if name else "")
+
+
+def jlc_origin(check: OriginCheck | None) -> tuple[float, float] | None:
+    """The board point JLC reads the CPL's rows from: the Gerbers' (0, 0), when the set is this board's and a plain
+    shift of it (not mirrored, not scaled); None otherwise (no origin JLC's placement can be judged from)."""
+    if check is None or check.origin is None or check.flip != "none" or abs(check.scale - 1.0) > 1e-9 \
+            or not check.belongs:
+        return None
+    return check.origin
+
+
+def gerber_notes(check: OriginCheck) -> list[str]:
+    """The check's messages about the set itself: not its verdict against the CPL origin it was asked about (with
+    --gerbers the CPL origin is the Gerbers' own, and origin_findings judges the rows against it)."""
+    return [m for m in check.messages if not m.startswith(("origin mismatch:", "the Gerbers' (0, 0) is the CPL"))]
+
+
+def gerber_findings(check: OriginCheck) -> list[Finding]:
+    """A red "gerbers" finding when the set cannot be what JLC makes this board from: nothing on it matches the
+    board, it is mirrored or scaled, it is another board's, or pads moved, came or went since it was plotted."""
+    if jlc_origin(check) is not None and not check.stale:
+        return []
+    notes = [m for m in gerber_notes(check) if "were not checked" not in m and not m.startswith("the Gerbers' pin")]
+    return [Finding("gerbers", RED, "; ".join(notes or check.messages or ["no Gerber pads to compare"]))]
+
+
+def origin_findings(run: Run, *, given=None, given_kind: str = "", units: str = "mm",
+                    origins: dict | None = None) -> list[Finding]:
+    """For a run checked from the Gerbers' origin (board.origin_kind "gerber"): a red "origin" finding when the rows
+    are displaced alike from where they belong (common_offset, also stored as run.offset) by the vector between the
+    Gerbers' origin and the one the CPL was written from, or, failing that, when `given` (the --origin point, board
+    frame; `given_kind` its kind) is not the Gerbers' origin. Every part then lands off by one vector d (cpl frame):
+    the message says d, |d|, and the fixes (one origin for the Gerbers and the CPL, or every row shifted by -d)."""
+    b = run.board
+    off = run.offset = common_offset(run, units=units, origins=origins)
+    if b.origin_kind != "gerber":
+        return []
+    at, named = b.origin, run.gerbers.named if run.gerbers is not None else ""
+    gerbers = f"JLC lays the CPL over the Gerbers from their (0, 0), {_place(named, at)}"
+    if off is not None and math.dist(off.origin, at) > OFFSET_TOL:
+        plain = off.scale == 1.0 and off.y_up
+        x, y = off.origin
+        where = (f"{_PLACES[off.origin_kind]} ({x:g}, {y:g})" if off.origin_kind in _PLACES
+                 else f"the --origin point ({x:g}, {y:g})" if off.origin_kind == "user"
+                 else f"board ({x:.3f}, {y:.3f}), none of the board's origins")
+        how = ([f"in {_UNIT_WORDS.get(off.unit, off.unit)}"] if off.scale != 1.0 else []) + \
+            ([] if off.y_up else ["with Mid Y growing downward"])
+        fixes = []
+        if off.origin_kind in _TICK:
+            fixes.append(f"plot the Gerbers and drill files from {_PLACES[off.origin_kind]} (KiCad: 'Use drill/place "
+                         f"file origin' {_TICK[off.origin_kind]})")
+        fixes.append("write the CPL from the Gerbers' origin (`jlcplace cpl BOARD --gerbers GERBERS` does"
+                     + (f"; KiCad's position file: 'Use drill/place file origin' {_TICK[named]})" if named in _TICK
+                        else ")"))
+        if plain:
+            fixes.append(f"shift every row by ({-off.dx:+.3f}, {-off.dy:+.3f}) mm")
+        else:
+            fixes += ([f"pass --units {off.unit}"] if off.scale != 1.0 else []) + \
+                ([] if off.y_up else ["negate Mid Y (JLC's y grows upward from the origin)"])
+        does = (f"JLC would put every part {math.hypot(off.dx, off.dy):.2f} mm off, displaced by ({off.dx:+.3f}, "
+                f"{off.dy:+.3f}) mm" if plain else "JLC would put the parts off their pads")
+        return [Finding("origin", RED, f"origin mismatch: {gerbers}, but the CPL was written from {where}"
+                        + (" " + " and ".join(how) if how else "") + f" ({off.rows} of {off.total} rows): {does}; "
+                        "fix: " + ", or ".join(fixes))]
+    if given is not None and math.dist(given, at) > ORIGIN_TOL:
+        d = (at[0] - given[0], given[1] - at[1])         # where a row written from `given` lands, less where it belongs
+        return [Finding("origin", RED, f"origin mismatch: --origin puts the CPL's origin at {_place(given_kind, given)}"
+                        f", but {gerbers}: a CPL written from --origin's point would put every part "
+                        f"{math.hypot(*d):.2f} mm off, displaced by ({d[0]:+.3f}, {d[1]:+.3f}) mm; the rows are "
+                        "checked from the Gerbers' origin, as JLC reads them: drop --origin, or plot the Gerbers "
+                        "from that origin too")]
+    return []
+
+
+def origin_lines(run: Run) -> list[tuple[str, str]]:
+    """(verdict, text) about the origin for the checklist: the findings; else what the Gerbers' check found; else a
+    reminder that the Gerbers must be plotted from the CPL's origin (they were not given)."""
+    if run.findings:
+        return [(f.verdict, f.message) for f in run.findings]
+    b = run.board
+    if b.origin_kind == "gerber":
+        named = run.gerbers.named if run.gerbers is not None else ""
+        return [(GREEN, f"the Gerbers' (0, 0) is this CPL's origin, {_place(named, b.origin)}: the rows were checked "
+                        "from it, as JLC reads them")]
+    word = _ORIGIN_WORDS.get(b.origin_kind, b.origin_kind + " origin")
+    return [("", f"the Gerbers were not checked: plot them and the drill files from this CPL's origin, the {word} "
+                 f"({b.origin[0]:g}, {b.origin[1]:g}), as JLC lays the CPL over the Gerbers from their own (0, 0) "
+                 "(--gerbers checks it)")]
 
 
 # ------------------------------------------------------------------------------------------------------- misc
