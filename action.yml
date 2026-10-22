@@ -66,7 +66,9 @@ inputs:
     required: false
     default: ""
   python-version:
-    description: The Python to run jlcplace on, set up with actions/setup-python; empty uses the runner's own.
+    description: >-
+      The Python to run jlcplace on, set up with actions/setup-python for the action alone (the job's PATH and Python
+      stay as they were); empty uses the runner's own.
     required: false
     default: "3.12"
   version:
@@ -99,11 +101,15 @@ outputs:
 runs:
   using: composite
   steps:
+    # update-environment false: the caller's PATH, Python and environment stay as they were (setup-python would put
+    # its Python first on the caller's PATH for the rest of the job); the venv is made from its python-path
     - name: Set up Python
+      id: setup-python
       if: inputs.python-version != ''
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
+        update-environment: false
 
     # a virtual environment of its own: the caller's Python, PATH and packages stay as they were (a second use of the
     # action in the job reuses it)
@@ -111,6 +117,7 @@ runs:
       id: install
       shell: bash
       env:
+        BASE_PY: ${{ steps.setup-python.outputs.python-path }}
         VERSION: ${{ inputs.version }}
         ACTION_REF: ${{ github.action_ref }}
         ACTION_REPOSITORY: ${{ github.action_repository }}
@@ -123,7 +130,7 @@ runs:
         fi
         if [ ! -f "$venv/jlcplace-spec.txt" ] || [ "$(cat "$venv/jlcplace-spec.txt")" != "$spec" ]; then
           rm -rf "$venv"
-          "$(command -v python || command -v python3)" -m venv "$venv"
+          "${BASE_PY:-$(command -v python || command -v python3)}" -m venv "$venv"
           bin="$venv/bin"; [ -d "$venv/Scripts" ] && bin="$venv/Scripts"
           "$bin/python" -m pip install --disable-pip-version-check --quiet "$spec"
           printf '%s' "$spec" > "$venv/jlcplace-spec.txt"

@@ -289,6 +289,9 @@ def test_every_step_output_used_is_written_by_its_step():
         if sid == "restore":
             assert key == "cache-hit"                          # actions/cache/restore's own output
             continue
+        if sid == "setup-python":
+            assert key == "python-path"                        # actions/setup-python's own output
+            continue
         assert re.search(rf'echo "{re.escape(key)}=|print\(f?"{re.escape(key)}=', runs[sid]), (sid, key)
 
 
@@ -381,6 +384,28 @@ def test_install_puts_the_actions_own_ref_or_the_version_asked_for_in_a_venv(tmp
     r.run({"board": "b", "cpl": "c", "version": "v9.9.9"}, only="install")
     repo = github.get("action_repository") or "tyevco/jlcplace"
     assert log.read_text(encoding="utf-8").splitlines()[-1].endswith(f"git+https://github.com/{repo}@v9.9.9")
+
+
+def test_setup_python_leaves_the_callers_environment_alone(tmp_path):
+    """actions/setup-python puts its Python first on the caller's PATH and exports pythonLocation, LD_LIBRARY_PATH,
+    ... for the rest of the job unless told not to: the action tells it not to and makes its venv from the Python it
+    set up (its python-path output); with python-version '' the runner's own Python makes it."""
+    need_bash()
+    setup = next(s for s in steps() if s.get("uses", "").startswith("actions/setup-python@"))
+    assert setup["id"] == "setup-python" and setup["with"]["update-environment"] in (False, "false")
+    assert step("install")["env"]["BASE_PY"] == "${{ steps.setup-python.outputs.python-path }}"
+    log = tmp_path / "log.txt"
+    base = tmp_path / "set-up-python"
+    base.write_text(f'#!/usr/bin/env bash\necho "set-up python $*" >> "{posix(log)}"\nmkdir -p "$3/bin"\n'
+                    f'printf \'#!/usr/bin/env bash\\necho "jlcplace 9.9.9"\\n\' > "$3/bin/jlcplace"\n'
+                    f'printf \'#!/usr/bin/env bash\\nexit 0\\n\' > "$3/bin/python"\nchmod +x "$3/bin/"*\n',
+                    encoding="utf-8", newline="\n")
+    base.chmod(0o755)
+    r = Runner(tmp_path, bash_env=FAKE_PYTHON.replace("LOG", posix(log)))
+    done = {"setup-python": {"outputs": {"python-path": posix(base)}}}
+    res = r.run({"board": "b", "cpl": "c"}, only="install", done=done)
+    assert res.code == 0, res.stderr
+    assert log.read_text(encoding="utf-8").splitlines()[0] == f"set-up python -m venv {r.temp}/jlcplace-venv"
 
 
 FAKE_JLCPLACE = """#!/usr/bin/env bash
@@ -626,7 +651,7 @@ def test_the_whole_action_in_order_with_stand_ins(tmp_path):
     inputs = {"board": "b.kicad_pcb", "cpl": "c.csv"}
     Path(f"{log}.fetch-code").write_text("2", encoding="utf-8")
     res = r.run(inputs)                                                  # EasyEDA down: nothing saved
-    assert res.ran == ["Set up Python", "install", "key", "restore", "fetch", "check"] and r.saved == []
+    assert res.ran == ["setup-python", "install", "key", "restore", "fetch", "check"] and r.saved == []
     assert res.code == 2 and (res.outputs["exit-code"], res.outputs["red"], res.outputs["yellow"]) == ("2", "3", "2")
     assert pip.read_text(encoding="utf-8").splitlines() == [f"-m pip install --disable-pip-version-check --quiet "
                                                             f"{ROOT}"]
@@ -730,7 +755,7 @@ def test_the_action_runs_on_the_dial_me_spinner_boards(real, capsys):
     r = real
     # the old main CPL: J1, J20 and J40 misplaced
     res = r.run({"board": board("main"), "cpl": fab("main", "CPL", before=True)})
-    assert res.ran == ["Set up Python", "install", "key", "restore", "fetch",
+    assert res.ran == ["setup-python", "install", "key", "restore", "fetch",
                        "Save the EasyEDA records (this repository's Actions cache, never an artifact)", "check"], \
         res.stderr
     assert res.steps["fetch"]["outputs"]["ok"] == "true" and "(fetched)" not in res.stdout

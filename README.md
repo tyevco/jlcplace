@@ -426,11 +426,12 @@ fit BOARD --db jlcplace-db` stores every part's) so that the step does not depen
 ```
 
 Inputs: `board` and `cpl` (required), `bom`, `gerbers`, `db`, `fail-on` (default `red`), `args`, `python-version`
-(default `"3.12"`; empty uses the runner's Python) and `version` (default: the action's own ref). Outputs:
-`exit-code`, `red` and `yellow` (counts, a red finding such as an origin mismatch included; empty when the check
-could not run), and the paths `junit`, `checklist` and `json`. The step fails as `jlcplace check` does; add
-`continue-on-error: true` to read the outputs in a later step anyway. The action uploads nothing and writes no HTML
-report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON and checklist files hold derived data only.
+(default `"3.12"`, set up for the action alone: the job's PATH and Python stay as they were; empty uses the runner's
+Python) and `version` (default: the action's own ref). Outputs: `exit-code`, `red` and `yellow` (counts, a red finding
+such as an origin mismatch included; empty when the check could not run), and the paths `junit`, `checklist` and `json`.
+The step fails as `jlcplace check` does; add `continue-on-error: true` to read the outputs in a later step anyway. The
+action uploads nothing and writes no HTML report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON and
+checklist files hold derived data only.
 
 ## Limits
 
