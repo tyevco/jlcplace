@@ -11,7 +11,8 @@
 BOARD is a .kicad_pcb file or a JSON snapshot. Only `fetch`, and the other commands with --online, use the network
 (the EasyEDA API); otherwise records come from the cache. Exit codes: 0 clean; 1 something yellow and --fail-on
 yellow; 2 something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a
-database file that cannot be read, bad options); 4 an internal error (a bug), never 1; 130 interrupted (ctrl-C).
+database file that cannot be read, bad options); 4 an internal error (a bug), never 1; 130 interrupted (ctrl-C);
+141 the reader of stdout went away (`jlcplace ... | head`).
 """
 
 from __future__ import annotations
@@ -676,7 +677,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = _Parser(prog="jlcplace", description="Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards "
                                              "by simulating JLC's placement with its own EasyEDA footprints.",
                 epilog="Exit codes: 0 clean, 1 yellow with --fail-on yellow, 2 red, 3 bad input, 4 internal error, "
-                       "130 interrupted.")
+                       "130 interrupted, 141 stdout closed by its reader.")
     p.add_argument("--version", action="version", version=f"jlcplace {__version__}")
     p.add_argument("-v", "--verbose", action="store_true", default=False, help="log what the EasyEDA client does")
     sub = p.add_subparsers(dest="command", required=True, parser_class=_Parser)
@@ -684,8 +685,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("check", parents=[board, ee, db, reading, out], help="simulate a CPL against the board",
                        description="Simulate every CPL row with JLC's EasyEDA footprint and report where its "
                                    "pads land.")
-    s.add_argument("board", metavar="BOARD")
-    s.add_argument("cpl", metavar="CPL")
+    s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
+    s.add_argument("cpl", metavar="CPL", help="the CPL to check: from any tool (CSV/TSV, or KiCad's .pos)")
     s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
                    help="unit of bare numbers in the CPL (KiCad's CSV position file does not say; default mm)")
     s.set_defaults(func=cmd_check)
@@ -693,21 +694,22 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("cpl", parents=[board, ee, db, reading, out], help="write a corrected CPL and check it",
                        description="Write the CPL JLC needs (corrections from --db, else fitted), check the written "
                                    "file, and refuse to keep it when a row is red.")
-    s.add_argument("board", metavar="BOARD")
-    s.add_argument("-o", "--output", required=True, metavar="CPL")
+    s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
+    s.add_argument("-o", "--output", required=True, metavar="CPL", help="where to write the CPL")
     s.add_argument("--force", action="store_true", help="write the CPL even when rows are red (exit code still 2)")
     s.set_defaults(func=cmd_cpl)
 
     s = sub.add_parser("fit", parents=[board, ee, db], help="fit corrections (store them with --db)")
-    s.add_argument("board", metavar="BOARD")
+    s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
     s.add_argument("--ref", action="append", metavar="REF", help="only these parts (repeatable)")
     s.add_argument("--json", metavar="PATH", help="write the fits as JSON ('-' for stdout)")
-    s.add_argument("--fail-on", default=RED, choices=(RED, YELLOW))
-    s.add_argument("-q", "--quiet", action="store_true")
+    s.add_argument("--fail-on", default=RED, choices=(RED, YELLOW), help="exit 1 on a yellow fit too (default: red only)")
+    s.add_argument("-q", "--quiet", action="store_true", help="no terminal summary")
     s.set_defaults(func=cmd_fit)
 
     s = sub.add_parser("fetch", parents=[board], help="download EasyEDA records into the cache")
-    s.add_argument("targets", nargs="+", metavar="BOARD|CODE")
+    s.add_argument("targets", nargs="+", metavar="BOARD|CODE",
+                   help="boards (every LCSC code on them) and/or LCSC codes such as C7519")
     s.add_argument("--cache", default=None, metavar="DIR", help=f"record cache (default {default_cache_dir()})")
     s.add_argument("--refresh", action="store_true", help="fetch again even when cached")
     s.add_argument("--min-interval", type=float, default=0.7, metavar="S", help="seconds between requests")
@@ -719,34 +721,35 @@ def build_parser() -> argparse.ArgumentParser:
                                    "of the CPL that was uploaded (--cpl, needed for preview and board), moved by the "
                                    "keys pressed in the preview; its correction is stored when it differs from the "
                                    "database's. Fits and stores a correction first when the database has none.")
-    s.add_argument("board", metavar="BOARD")
-    s.add_argument("--ref", action="append", required=True, metavar="REF")
+    s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
+    s.add_argument("--ref", action="append", required=True, metavar="REF", help="the part that was checked (repeatable)")
     s.add_argument("--cpl", metavar="CPL",
                    help="the CPL that was uploaded to JLC (what was checked; the presses are relative to its rows)")
     s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
                    help="unit of bare numbers in the CPL (default mm)")
-    s.add_argument("--db", required=True, metavar="DIR")
+    s.add_argument("--db", required=True, metavar="DIR", help="correction database directory to record it in")
     s.add_argument("--by", required=True, metavar="NAME", help="who checked it")
-    s.add_argument("--source", required=True, choices=[k for k in SOURCES if "-" not in k])
-    s.add_argument("--note", default="")
+    s.add_argument("--source", required=True, choices=[k for k in SOURCES if "-" not in k],
+                   help="what was checked: manual (datasheet), preview (JLC's preview) or board (assembled)")
+    s.add_argument("--note", default="", help="free text stored with the verification")
     s.add_argument("--failed", action="store_true", help="the check showed the placement wrong (marks it red)")
     s.add_argument("--space", type=int, default=0, help="space presses in JLC's preview (90 deg ccw each)")
     s.add_argument("--right", type=int, default=0, help="right-arrow presses (negative: left)")
     s.add_argument("--up", type=int, default=0, help="up-arrow presses (negative: down)")
     s.add_argument("--rot", type=float, help="type the correction in: rot (degrees) ...")
     s.add_argument("--dx", type=float, default=0.0, help="... and the EasyEDA origin in the library frame, mm")
-    s.add_argument("--dy", type=float, default=0.0)
+    s.add_argument("--dy", type=float, default=0.0, help="... in mm (with --rot and --dx)")
     s.set_defaults(func=cmd_confirm)
 
     s = sub.add_parser("show", parents=[board, ee, db, reading], help="show what jlcplace knows about a code or part")
-    s.add_argument("target", metavar="CODE|BOARD")
+    s.add_argument("target", metavar="CODE|BOARD", help="an LCSC code, or a board with --ref")
     s.add_argument("--ref", metavar="REF", help="with BOARD: the part to show")
     s.add_argument("--json", metavar="PATH", help="write it as JSON ('-' for stdout)")
     s.set_defaults(func=cmd_show)
 
     s = sub.add_parser("snapshot", parents=[board], help="save the board as JSON (checks without KiCad)")
-    s.add_argument("board", metavar="BOARD")
-    s.add_argument("-o", "--output", required=True, metavar="JSON")
+    s.add_argument("board", metavar="BOARD", help="the KiCad board (.kicad_pcb) or a JSON snapshot of it")
+    s.add_argument("-o", "--output", required=True, metavar="JSON", help="where to write the snapshot")
     s.set_defaults(func=cmd_snapshot)
     return p
 

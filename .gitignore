@@ -7,3 +7,6 @@ build/
 dist/
 /out/
 .ruff_cache/
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
