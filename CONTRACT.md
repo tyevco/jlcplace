@@ -186,12 +186,13 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
   Gerber text is untrusted: the files of a set that would expand together (step and repeat, blocks, macros, apertures,
   the samples of arcs in regions; a stroke that is a pad counts as its outline) past MAX_OBJECTS objects or MAX_VERTICES
   vertices (one budget for the set, spent as objects are made), a macro primitive past MAX_PRIMITIVE vertices (or moire
-  rings), an outline naming more points than it gives, or an aperture past MAX_APERTURE vertices is a GerberError;
-  `check --gerbers` reports a MemoryError while reading as bad input too. Extents and bounding boxes use an arc's ends
-  and axis extremes, sampling nothing. A directory with no Gerber files names its subdirectories that hold some ("a
-  directory of Gerber files: pass it as the path"). A pad is what TO.P or a *Pad AperFunction (not ViaPad) says; without
-  attributes every flash, and a region on paste, with TO.C or at most 10 mm across. Pads compare by the centre of their
-  outline's bounding box (it commutes with every flip).
+  rings), an outline naming more points than it gives, an extended block never closed, a command at the end of the file
+  without its '*' (truncated: read in one pass, never in time quadratic in it), or an aperture past MAX_APERTURE
+  vertices is a GerberError; `check --gerbers` reports a MemoryError while reading as bad input too. Extents and
+  bounding boxes use an arc's ends and axis extremes, sampling nothing. A directory with no Gerber files names its
+  subdirectories that hold some ("a directory of Gerber files: pass it as the path"). A pad is what TO.P or a *Pad
+  AperFunction (not ViaPad) says; without attributes every flash, and a region on paste, with TO.C or at most 10 mm
+  across. Pads compare by the centre of their outline's bounding box (it commutes with every flip).
 * `gerber_origin` fits g = s . F . b + t over F in FLIPS (none = KiCad's diag(1, -1), y, x, xy) and s in {1, 25.4,
   1/25.4}: from (ref, pin, side) pairs when the copper carries TO.P and at least half agree (method x2-pins; when they
   agree only at another scale, the message says it: an FS that does not match the data), else by translation voting with

@@ -96,6 +96,22 @@ def test_coordinate_formats_units_and_modal_coordinates():
     assert [round(p.x, 9) for p in la.flashes] == [25.4, 1.0]
 
 
+def test_a_long_run_without_a_terminator_is_read_in_linear_time_and_is_an_error():
+    """A truncated or corrupt file whose tail has no '*' (160 KB of commands without one here) is read in one pass,
+    not in time quadratic in the tail, and is an error, not a file whose tail is silently dropped; a block never
+    closed is one too. A well-formed file of the same size reads as fast."""
+    import time
+    head = MM + "%ADD10C,0.1*%\nD10*\nX0Y0D03*\n"
+    t0 = time.perf_counter()
+    with pytest.raises(gb.GerberError, match=r"no '\*' at the end of the file"):
+        one(head + "X1Y1D03\n" * 20000, "t.gtl")
+    with pytest.raises(gb.GerberError, match="never closed"):
+        one(head + "%ADD11C,0.2*" + "X1Y1D03*" * 20000, "t.gtl")
+    la = one(head + "X1000000Y1000000D03*\n" * 20000 + "M02", "t.gtl")
+    assert time.perf_counter() - t0 < 5 and len(la.flashes) == 20001
+    assert len(one(MM + "junk%ADD10C,0.1*%D10*X0Y0D03*M02*").flashes) == 1        # stray text before a block
+
+
 def test_errors_name_the_file_and_the_block():
     with pytest.raises(gb.GerberError, match=r"x\.gtl: block \d+: .*D11 is not defined"):
         one(MM + "%ADD10C,0.1*%D11*X0Y0D03*", "x.gtl")

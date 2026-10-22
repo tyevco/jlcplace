@@ -503,7 +503,6 @@ def _standard_shapes(t: str, a: list[float]) -> list[tuple[bool, np.ndarray]]:
 
 # ------------------------------------------------------------------------------------------------------- parser
 
-_TOKENS = re.compile(r"%([^%]*)%|([^%*]*)\*")
 _WORD = re.compile(r"([A-Z])([+-]?[0-9.]*)")
 _ESC = re.compile(r"\\u([0-9a-fA-F]{4})|\\U([0-9a-fA-F]{8})")
 
@@ -558,11 +557,42 @@ class _Parser:
                       "blocks, macros or arcs; with the set's files before it): not a plot of a board")
 
     # -------------------------------------------------------------------- top level
+    def commands(self, text: str):
+        """(extended command, None) for each %...% block and (None, word command) for each command up to its '*', in
+        one pass (a regular expression retried at every position made a long run without '*' quadratic). Characters
+        before a '%' that end no command are skipped; a block never closed, or a command at the end of the file
+        without its '*' (a truncated or corrupt file), is an error."""
+        i, n = 0, len(text)
+        pct = -1                                   # the next '%' at or after i (n: none)
+        while i < n:
+            if pct < i:
+                pct = text.find("%", i)
+                pct = n if pct < 0 else pct
+            if i == pct:
+                j = text.find("%", i + 1)
+                if j < 0:
+                    self.block_no += 1
+                    self.fail(f"an extended command that is never closed: {text[i:i + 40]!r}")
+                yield text[i + 1:j], None
+                i = j + 1
+                continue
+            star = text.find("*", i, pct)
+            if star >= 0:
+                yield None, text[i:star]
+                i = star + 1
+            elif pct < n:
+                i = pct
+            else:
+                tail = text[i:].strip()
+                if tail and not re.fullmatch(r"M0*[02]", tail):
+                    self.block_no += 1
+                    self.fail(f"a command with no '*' at the end of the file (truncated?): {tail[:40]!r}")
+                return
+
     def parse(self, text: str) -> GerberLayer:
         text = text.replace("\r", "").replace("\n", "")
-        for m in _TOKENS.finditer(text):
+        for ext, word in self.commands(text):
             self.block_no += 1
-            ext, word = m.group(1), m.group(2)
             try:
                 if ext is not None:
                     self.extended(ext)
