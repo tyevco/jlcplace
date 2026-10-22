@@ -172,8 +172,9 @@ runs:
             codes = set()
         print(" ".join(sorted(codes)))
         EOF
-        # \r too: Python on a Windows runner ends its line with \r\n, and bash would keep the \r on the last code
-        IFS=$' \t\r\n' read -r -a codes < "$RUNNER_TEMP/jlcplace-codes.txt"
+        # without the \r: Python on a Windows runner ends its line with \r\n, which bash would keep on the last code
+        # (and macOS's bash 3.2 turns a lone \r into an empty argument even when \r is in IFS)
+        read -r -a codes <<< "$(tr -d '\r' < "$RUNNER_TEMP/jlcplace-codes.txt")"
         set +e
         "$JLCPLACE" fetch --cache "$CACHE" "$BOARD" "${codes[@]}"
         code=$?

@@ -526,7 +526,7 @@ def test_the_fetch_step_reads_codes_a_windows_python_ends_with_crlf(tmp_path):
     for bom, codes in (("b-BOM.csv", ["C25744", "C7519"]), ("", [])):
         res = r.run({"board": "b.kicad_pcb", "cpl": "c.csv", "bom": bom}, only="fetch", done=done)
         assert res.code == 0, res.stderr
-        args = fetched.read_text(encoding="utf-8", newline="").split("\n")[:-1]
+        args = fetched.read_bytes().decode("utf-8").split("\n")[:-1]                # every \r kept
         assert args == ["fetch", "--cache", f"{r.temp}/jlcplace-easyeda", "b.kicad_pcb", *codes], (bom, args)
 
 

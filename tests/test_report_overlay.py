@@ -324,6 +324,7 @@ def no_renderer(monkeypatch, tmp_path):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(empty))
     for k in ("HOME", "USERPROFILE", "LOCALAPPDATA"):
         monkeypatch.setenv(k, str(empty))
+    monkeypatch.setattr(report, "_installed", lambda: "")            # /Applications, Program Files: not on PATH
 
 
 def test_no_png_without_a_renderer(monkeypatch, tmp_path):
