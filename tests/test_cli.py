@@ -4,6 +4,7 @@ import csv
 from html.parser import HTMLParser
 import json
 import os
+import random
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -211,13 +212,17 @@ def test_confirm_presses_and_show(env, capsys):
     db = env.tmp / "db"
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
     code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
-                       *offline(env))
+                       "--cpl", env.out, *offline(env))
     assert code == 0 and out.startswith("U1 C1001: preview-verified, verified: rot 180")
     code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
     assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == VERIFIED
-    # one space press in the preview turns the part 90 degrees counter-clockwise: rot 180 -> 270
-    code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
-                       "--space", "1", *offline(env))
+    # one space press in the preview turns the part 90 degrees counter-clockwise: rot 180 -> 270; a verified entry is
+    # given other numbers only once its own verification is withdrawn
+    confirm = ["confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview", "--cpl", env.out]
+    code, out, err = run(capsys, *confirm, "--space", "1", *offline(env))
+    assert code == 3 and "preview-verified with other numbers" in err, out + err
+    assert run(capsys, *confirm, "--failed", *offline(env))[0] == 0
+    code, out, _ = run(capsys, *confirm, "--space", "1", *offline(env))
     assert code == 0 and "rot 270" in out
     code, out, _ = run(capsys, "show", env.board, "--ref", "U1", "--db", db, *offline(env), "--json", "-")
     d = json.loads(out)
@@ -229,7 +234,7 @@ def test_confirm_presses_and_show(env, capsys):
     env.make(two("R3", TOP, 112.0, 70.0, 0.0, "C1005"))
     code, out, err = run(capsys, "confirm", env.board, "--ref", "R3", "--db", db, "--by", "me", "--source", "manual",
                          *offline(env))
-    assert code == 3 and "give one with --rot" in err
+    assert code == 3 and "or the correction (--rot/--dx/--dy)" in err
     code, out, _ = run(capsys, "confirm", env.board, "--ref", "R3", "--db", db, "--by", "me", "--source", "manual",
                        "--rot", "0", *offline(env))
     assert code == 0 and out.startswith("R3 C1005: manual, yellow: rot 0")
@@ -444,7 +449,8 @@ def test_database_entries_follow_the_pin_functions(env, capsys):
     rows = {r.ref: r.rotation for r in read_cpl(env.out)}
     assert code == 0 and (rows["D4"], rows["D5"]) == (0.0, 180.0), out
     # D5 checked in JLC's preview: D4's entry is not verified by it, and D4 turned to D5's angle is red
-    run(capsys, "confirm", env.board, "--ref", "D5", "--db", db, "--by", "me", "--source", "preview", *offline(env))
+    run(capsys, "confirm", env.board, "--ref", "D5", "--db", db, "--by", "me", "--source", "preview", "--cpl",
+        env.out, *offline(env))
     statuses = sorted(e["status"] for e in json.loads((db / "C2001.json").read_text())["entries"])
     assert statuses == ["auto", "preview-verified"]
     rows = read_cpl(env.out)
@@ -654,3 +660,302 @@ def test_checklist_puts_the_placements_in_doubt_first(env, capsys):
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
     unsure = [i["ref"] for i in json.loads(out)["checklist"] if i["category"] == "uncertain correction"]
     assert unsure == ["LED9", "C0"], unsure
+
+
+# ------------------------------------------------------------------------------------------------------- confirm
+
+def rows_with(board, **rots):
+    """CPL rows made from the correction rot given per ref, at KiCad's anchor (as another tool writes them)."""
+    out = []
+    for ref, r in rots.items():
+        part = board.part(ref)
+        x, y, a = cv.cpl_row_for(part, Correction(r), ORIGIN)
+        out.append(CplRow(ref, x, y, part.layer, a))
+    return out
+
+
+def entry_rots(db, code="C1001"):
+    entries = json.loads((Path(db) / f"{code}.json").read_text())["entries"]
+    return [(e["correction"]["rot"], e["status"]) for e in entries]
+
+
+def test_presses_are_relative_to_the_row_that_was_uploaded(env, capsys):
+    """geo-1: another tool's CPL put U1 at KiCad's own angle (rot 0); JLC's preview needed two space presses. confirm
+    added them to jlcplace's own fit (rot 180) and stored rot 0 as preview-verified: from then on the right row was
+    red and the wrong one verified."""
+    board = env.make()
+    db, raw = env.tmp / "db", env.tmp / "raw.csv"
+    write_cpl(raw, rows_with(board, U1=0.0))
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                         "--cpl", raw, "--space", "2", *offline(env))
+    assert code == 0 and out.startswith("U1 C1001: preview-verified, verified: rot 180"), out + err
+    assert entry_rots(db) == [(180.0, "preview-verified")]
+    v = json.loads((db / "C1001.json").read_text())["entries"][0]["verifications"][-1]
+    assert v["presses"] == {"space": 2, "right": 0, "up": 0}
+    # the right row (jlcplace's) is verified, the uploaded one is red
+    run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+    assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == VERIFIED
+    write_cpl(raw, rows_with(board, U1=0.0))
+    code, out, _ = run(capsys, "check", env.board, raw, "--db", db, *offline(env), "--json", "-")
+    assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == RED
+    # an arrow press moves the row point (the preview's screen: the cpl frame on the top)
+    db2 = env.tmp / "db2"
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db2, "--by", "me", "--source",
+                       "preview", "--cpl", env.out, "--right", "2", *offline(env))
+    x0, y0, _ = cv.cpl_row_for(board.part("U1"), Correction(180.0), ORIGIN)
+    assert code == 0 and f"row X {x0 + 2 * 0.0635:.4f} Y {y0:.4f} rot 180" in out, out
+
+
+def test_presses_on_parts_sharing_an_entry_are_not_added_twice(env, capsys):
+    """geo-1: `confirm --ref U1 --ref U2 --space 2` (one entry: one code, one footprint) added the 180 degrees once
+    per ref, so they cancelled and the entry ended where it was, marked preview-verified."""
+    env.make()
+    db = env.tmp / "db"
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--ref", "U2", "--db", db, "--by", "me",
+                         "--source", "preview", "--cpl", env.out, "--space", "2", *offline(env))
+    lines = out.splitlines()
+    assert code == 0 and lines[0].startswith("U1 C1001: preview-verified, verified: rot 0"), out + err
+    assert lines[1].startswith("U2 C1001: preview-verified, verified: rot 0"), out
+    assert entry_rots(db) == [(0.0, "preview-verified")]
+    # rows that give one entry two corrections: refused, nothing stored
+    board = env.make()
+    write_cpl(env.out, rows_with(board, U1=180.0, U2=0.0))
+    db2 = env.tmp / "db2"
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--ref", "U2", "--db", db2, "--by", "me",
+                         "--source", "preview", "--cpl", env.out, *offline(env))
+    assert code == 3 and "U1 and U2 share" in err and not (db2 / "C1001.json").exists(), out + err
+
+
+def test_a_preview_confirmation_records_the_uploaded_row(env, capsys):
+    """geo-1: with no presses, confirm verified jlcplace's own correction (rot 180) although the uploaded row, the one
+    JLC's preview showed right, was another (rot 0)."""
+    board = env.make()
+    db, raw = env.tmp / "db", env.tmp / "raw.csv"
+    write_cpl(raw, rows_with(board, U1=0.0))
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                         "--cpl", raw, *offline(env))
+    assert code == 0 and out.startswith("U1 C1001: preview-verified, verified: rot 0"), out + err
+    assert "replaces the auto correction rot 180" in out
+    code, out, _ = run(capsys, "check", env.board, raw, "--db", db, *offline(env), "--json", "-")
+    assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == VERIFIED
+    # a verified entry is not replaced by a verification of other numbers ...
+    write_cpl(raw, rows_with(board, U1=90.0))
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                         "--cpl", raw, *offline(env))
+    assert code == 3 and "preview-verified with other numbers" in err and entry_rots(db) == [(0.0, "preview-verified")]
+    # ... and a failure of a row that is not the stored correction's says nothing about it
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                         "--cpl", raw, "--failed", *offline(env))
+    assert code == 3 and "nothing recorded" in err and entry_rots(db) == [(0.0, "preview-verified")]
+    # the failure of the stored correction's own row drops it; then the other numbers can be recorded
+    write_cpl(raw, rows_with(board, U1=0.0))
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                       "--cpl", raw, "--failed", *offline(env))
+    assert code == 0 and entry_rots(db) == [(0.0, "auto")]
+    write_cpl(raw, rows_with(board, U1=180.0))
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",
+                       "--cpl", raw, *offline(env))
+    assert code == 0 and entry_rots(db) == [(180.0, "preview-verified")]
+
+
+def test_a_preview_or_board_confirmation_needs_the_uploaded_cpl(env, capsys):
+    """geo-1: what JLC showed is the uploaded row, which need not be jlcplace's correction: preview and board
+    confirmations, and presses, name the CPL."""
+    env.make()
+    db = env.tmp / "db"
+    base = ["confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", *offline(env)]
+    for extra in (["--source", "preview"], ["--source", "board"], ["--source", "manual", "--space", "1"],
+                  ["--source", "manual", "--cpl", env.out, "--rot", "0"],
+                  ["--source", "preview", "--cpl", env.out, "--space", "1", "--failed"]):
+        code, out, err = run(capsys, *base, *extra)
+        assert code == 3 and ("--cpl" in err or "--failed" in err), (extra, out, err)
+    assert not db.exists()
+    code, out, err = run(capsys, *base, "--source", "preview", "--cpl", env.tmp / "nope.csv")
+    assert code == 3 and "no such file" in err
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = [r for r in read_cpl(env.out) if r.ref != "U1"]
+    write_cpl(env.out, rows)
+    code, out, err = run(capsys, *base, "--source", "preview", "--cpl", env.out)
+    assert code == 3 and "no row for U1" in err, err
+
+
+# ------------------------------------------------------------------------------------------------------- bad values
+
+@pytest.mark.parametrize("field, value", [("Rotation", "nan"), ("Rotation", "inf"), ("Rotation", "Infinity"),
+                                          ("Rotation", "1e400"), ("Mid X", "1e400mm"), ("Mid Y", "-1e999")])
+def test_non_finite_cpl_values_are_bad_input(env, capsys, field, value):
+    """cli-1: Rotation 'nan' (or inf, 1e400) and Mid X '1e400mm' were accepted: every EasyEDA pad was 'on its own
+    number' at distance nan, the rows green and the exit code 0."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    with open(env.out, newline="") as f:
+        rows = list(csv.DictReader(f))
+    rows[1][field] = value
+    bad = env.tmp / "bad.csv"
+    with open(bad, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    code, out, err = run(capsys, "check", env.board, bad, *offline(env))
+    assert code == 3 and "line 3" in err and "not a finite number" in err, (out, err)
+
+
+def test_non_finite_origin_is_bad_input(env, capsys):
+    """cli-1: `--origin nan,nan` put every row point at nan, and rect pads 'contained' it."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    for origin in ("nan,nan", "inf,0", "0,1e400"):
+        code, out, err = run(capsys, "check", env.board, env.out, "--origin", origin, *offline(env))
+        assert code == 3 and "not a finite number" in err, (origin, out, err)
+
+
+def test_json_report_is_strict_json(env, capsys):
+    """cli-1: a part with no copper pads lands its EasyEDA pads at distance inf, written as a bare Infinity token
+    (not JSON); it is null now."""
+    env.make(Part("U9", TOP, 125.0, 70.0, 0.0, footprint="X:none", lcsc="C1001"))
+    run(capsys, "cpl", env.board, "-o", env.out, "--force", *offline(env))
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", env.tmp / "r.json")
+
+    def strict(token):
+        raise ValueError(f"not JSON: {token}")
+
+    d = json.loads((env.tmp / "r.json").read_text(), parse_constant=strict)
+    u9 = next(r for r in d["results"] if r["ref"] == "U9")
+    assert code == 2 and u9["verdict"] == RED and {lnd["dist"] for lnd in u9["landings"]} == {None}
+
+
+# ------------------------------------------------------------------------------------------------------- odd files
+
+def test_cr_only_and_utf16_cpls_read_like_the_original(env, capsys):
+    """cli-4: Excel for Mac's 'CSV (Macintosh)' (CR line ends) and Excel's 'Unicode Text' (UTF-16 with a BOM) crashed
+    with _csv.Error and exit 1."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    text = Path(env.out).read_bytes().decode("utf-8")              # CRLF, as written
+    want = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
+    for name, data in (("cr.csv", text.replace("\r\n", "\r").encode()), ("utf16.csv", text.encode("utf-16")),
+                       ("utf16be.csv", b"\xfe\xff" + text.encode("utf-16-be")),
+                       ("tabs16.txt", text.replace(",", "\t").encode("utf-16"))):
+        (env.tmp / name).write_bytes(data)
+        assert [(r.ref, r.x, r.y, r.layer, r.rotation) for r in read_cpl(env.tmp / name)] == \
+            [(r.ref, r.x, r.y, r.layer, r.rotation) for r in read_cpl(env.out)], name
+        code, out, err = run(capsys, "check", env.board, env.tmp / name, *offline(env), "--json", "-")
+        assert code == want[0] == 0 and json.loads(out)["results"] == json.loads(want[1])["results"], (name, err)
+
+
+def test_garbage_cpl_bom_and_snapshot_are_bad_input(env, capsys):
+    """cli-4: random bytes as the CPL or --bom crashed with _csv.Error, and a snapshot of {} or [] with
+    KeyError/TypeError, all with a traceback and exit 1."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    garbage = env.tmp / "garbage.csv"
+    garbage.write_bytes(bytes(random.Random(4).randrange(256) for _ in range(4096)))
+    code, out, err = run(capsys, "check", env.board, garbage, *offline(env))
+    assert code == 3 and "garbage.csv" in err, (out, err)
+    code, out, err = run(capsys, "check", env.board, env.out, "--bom", garbage, *offline(env))
+    assert code == 3 and "garbage.csv" in err, (out, err)
+    for i, text in enumerate(("{}", "[]", '{"parts": 3}', '{"path": "b", "origin": [0, 0], "parts": [{"x": 1}]}',
+                              '"board"')):
+        snap = env.tmp / f"snap{i}.json"
+        snap.write_text(text)
+        code, out, err = run(capsys, "check", snap, env.out, *offline(env))
+        assert code == 3 and "not a jlcplace snapshot" in err, (text, out, err)
+
+
+def test_a_broken_database_file_is_bad_input(env, capsys):
+    """sec-2: git conflict markers in a committed database file, or a hand-edited "rot": "x", crashed every command
+    that read it with a traceback and exit 1 (the 'yellow' code)."""
+    board = env.make()
+    db = env.tmp / "db"
+    run(capsys, "fit", env.board, "--db", db, *offline(env))
+    run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    f = db / "C1001.json"
+    good = f.read_text()
+    entry = json.loads(good)["entries"][0]
+    commands = [["check", env.board, env.out], ["cpl", env.board, "-o", env.tmp / "again.csv"], ["fit", env.board],
+                ["confirm", env.board, "--ref", "U1", "--by", "me", "--source", "manual"],
+                ["show", env.board, "--ref", "U1"], ["show", "C1001"]]
+    for broken in ("<<<<<<< HEAD\n" + good + "=======\n" + good + ">>>>>>> other\n",
+                   json.dumps({"lcsc": "C1001", "entries": [{**entry, "correction": {**entry["correction"],
+                                                                                     "rot": "x"}}]}),
+                   json.dumps({"lcsc": "C1001", "entries": [{**entry, "correction": None}]}),
+                   json.dumps({"lcsc": "C1001", "entries": ["entry"]}), b"\xff\xfe{\x00}\x00"):
+        f.write_bytes(broken if isinstance(broken, bytes) else broken.encode())
+        for cmd in commands:
+            code, out, err = run(capsys, *cmd, "--db", db, *offline(env))
+            assert code == 3 and "C1001.json: not a valid jlcplace correction file" in err, (broken, cmd, out, err)
+            assert "Traceback" not in err
+    f.write_text(good)
+    # a snapshot whose code has a leading zero (a package typed into the field) is no code, as the board readers
+    # read it; it crashed the database lookup
+    board.part("R1").lcsc = "C0402"
+    save_snapshot(board, env.board)
+    code, out, err = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+    r1 = next(r for r in json.loads(out)["results"] if r["ref"] == "R1")
+    assert code == 0 and r1["lcsc"] == "" and "the board part has no LCSC code" in r1["messages"], err
+
+
+def test_an_internal_error_is_not_the_yellow_exit_code(env, capsys, monkeypatch):
+    """sec-2: any uncaught exception left the console script with exit 1, which means 'yellow' to a wrapper that
+    tolerates yellow."""
+    import jlcplace.cli as cli
+
+    def boom(args):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(cli, "cmd_check", boom)
+    env.make()
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env))
+    assert code == 4 and "jlcplace: internal error: RuntimeError: a bug" in err and "Traceback" in err
+
+
+def test_an_output_that_cannot_be_written_is_bad_input(env, capsys):
+    """cli-3: an output under a file (or a read-only directory) crashed with a traceback and exit 1 (the 'yellow'
+    code) even on a red run, and the outputs after it were never written."""
+    env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "U1").rotation = 0.0                  # red
+    write_cpl(env.out, rows)
+    afile = env.tmp / "afile"
+    afile.write_text("not a directory")
+    for opt in ("--report", "--json", "--junit", "--checklist"):
+        later = env.tmp / f"later{opt}.xml"
+        code, out, err = run(capsys, "check", env.board, env.out, *offline(env), "-q", opt, afile / "r.out",
+                             *(["--junit", later] if opt != "--junit" else ["--json", later]))
+        assert code == 3 and f"{afile / 'r.out'}: cannot write" in err and "Traceback" not in err, (opt, err)
+        assert later.is_file(), opt                                         # the other outputs are still written
+    code, out, err = run(capsys, "cpl", env.board, "-o", afile / "CPL.csv", *offline(env))
+    assert code == 3 and "cannot write" in err and "Traceback" not in err, err
+    code, out, err = run(capsys, "fit", env.board, "--json", afile / "f.json", *offline(env))
+    assert code == 3 and "cannot write" in err and "Traceback" not in err, err
+    for cmd in (["fit", env.board], ["confirm", env.board, "--ref", "U1", "--by", "me", "--source", "manual"]):
+        code, out, err = run(capsys, *cmd, "--db", afile / "db", *offline(env))
+        assert code == 3 and "cannot write" in err and "Traceback" not in err, (cmd, err)
+
+
+def test_a_reference_on_the_board_twice_is_red(env, capsys):
+    """cli-9 / logic-7: R2 renamed R1 on the board and its row left out (a CPL keyed by reference): the one R1 row was
+    checked against the first R1 (or against the other one's footprint, off-copper), exit 0 or a misleading red, and
+    resolve() gave the first R1 the second one's correction."""
+    board = env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    board.part("R2").ref = "R1"
+    save_snapshot(board, env.board)
+    write_cpl(env.out, [r for r in read_cpl(env.out) if r.ref != "R2"])
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env))
+    line = next(ln for ln in out.splitlines() if ln.startswith("RED     R1"))
+    assert code == 2 and "R1 is on the board 2 times: JLC cannot tell them apart" in line, out
+    assert sum(1 for ln in out.splitlines() if " R1 " in ln) == 1, out
+    resolved = resolve(Board("b", ORIGIN, board.parts), _Client())
+    assert resolved["R1"].part is board.parts[2]                           # the first R1, not overwritten
+    code, out, err = run(capsys, "confirm", env.board, "--ref", "R1", "--db", env.tmp / "db", "--by", "me",
+                         "--source", "manual", *offline(env))
+    assert code == 3 and "R1 is on the board 2 times" in err
+
+
+class _Client:
+    def get(self, code):
+        return NotFound(code, "not here")

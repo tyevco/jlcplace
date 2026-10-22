@@ -9,7 +9,8 @@
     jlcplace snapshot BOARD -o board.json
 
 BOARD is a .kicad_pcb file or a JSON snapshot. Exit codes: 0 clean; 1 something yellow and --fail-on yellow; 2
-something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, bad options).
+something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a database
+file that cannot be read, bad options); 4 an internal error (a bug), never 1.
 """
 
 from __future__ import annotations
@@ -17,17 +18,20 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import sys
+import traceback
 import warnings
+from dataclasses import replace
 from pathlib import Path
 
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
-from .check import check_bom
-from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle
+from .check import ANGLE_TOL, ROW_TOL, check_bom
+from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
 from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
-from .db import SOURCES, CorrectionDB
+from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound
@@ -36,7 +40,7 @@ from .pipeline import apply_bom_codes, bom_overrides, check, correction, describ
     resolve, row_lines
 from .report import plural
 
-EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT = 0, 1, 2, 3
+EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL = 0, 1, 2, 3, 4
 log = logging.getLogger("jlcplace")
 
 
@@ -104,8 +108,11 @@ def _write(path: str, text: str) -> None:
         sys.stdout.write(text)
         return
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(p, text)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(p, text)
+    except OSError as e:
+        raise BadInput(f"{path}: cannot write: {e.strerror or e}") from None
 
 
 def _color(stream) -> bool:
@@ -134,15 +141,19 @@ def _finish(args, run, notes=()) -> int:
     if args.github_annotations:
         for line in report.github_annotations(run, fail_on=args.fail_on):
             print(line)
-    if args.json:
-        _write(args.json, json.dumps(report.to_dict(run), indent=1) + "\n")
-    if args.report:
-        _write(args.report, report.html(run))
-    if args.junit:
-        _write(args.junit, report.junit(run, fail_on=args.fail_on))
-    if args.checklist:
-        csv_ = args.checklist.lower().endswith(".csv")
-        _write(args.checklist, report.checklist_csv(run) if csv_ else report.checklist_markdown(run))
+    outputs = [(args.json, lambda: json.dumps(report.to_dict(run), indent=1) + "\n"),
+               (args.report, lambda: report.html(run)), (args.junit, lambda: report.junit(run, fail_on=args.fail_on)),
+               (args.checklist, lambda: report.checklist_csv(run) if args.checklist.lower().endswith(".csv")
+                else report.checklist_markdown(run))]
+    failed = []
+    for path, text in outputs:
+        if path:
+            try:
+                _write(path, text())
+            except BadInput as e:                  # write the other outputs anyway, then say so (exit 3)
+                failed.append(str(e))
+    if failed:
+        raise BadInput("; ".join(failed))
     return run.exit_code(args.fail_on)
 
 
@@ -179,10 +190,13 @@ def cmd_cpl(args) -> int:
     resolved = resolve(board, _client(args), _db(args), snap=args.snap, use_fallback=True)
     rows, _ = rows_for_board(board, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
     out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
     tmp = str(out.parent / f".{out.name}.jlcplace-check.tmp")
     try:
-        write_cpl(tmp, rows)
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            write_cpl(tmp, rows)
+        except OSError as e:
+            raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
         written = read_cpl(tmp)                    # check what is in the file, not what was meant to be
         run = check(board, written, resolved, reading=args.reading, bom_rows=bom)
         run.cpl_path, run.row_lines = str(out), row_lines(tmp, run.results)
@@ -192,7 +206,10 @@ def cmd_cpl(args) -> int:
         if red and not args.force:
             note = f"jlcplace: {out} not written: the rows above are red (--force writes it anyway)"
         else:
-            os.replace(tmp, out)
+            try:
+                os.replace(tmp, out)
+            except OSError as e:
+                raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
             note = f"jlcplace: wrote {out} ({len(rows)} rows)" + (", red rows included (--force)" if red else "")
     finally:
         if os.path.exists(tmp):
@@ -243,6 +260,8 @@ def cmd_fit(args) -> int:
                     try:
                         db.upsert(part.lcsc, corr, footprint=part.footprint, ee_title=ee.title)
                         stored = "stored"
+                    except DBError:
+                        raise
                     except ValueError as e:
                         stored = f"not stored: {e}"
         else:
@@ -301,45 +320,132 @@ def cmd_fetch(args) -> int:
 
 # ------------------------------------------------------------------------------------------------------- confirm
 
+def _confirm_options(args, pressed: bool) -> None:
+    """A verification is of the row that was uploaded, which need not be jlcplace's correction: preview and board
+    verifications, and presses (relative to that row), name the CPL."""
+    if args.cpl and args.rot is not None:
+        raise BadInput("give the CPL that was uploaded (--cpl) or type the correction in (--rot), not both")
+    if pressed and not args.cpl:
+        raise BadInput("the presses are relative to the row JLC's preview showed: give the CPL that was uploaded "
+                       "(--cpl FILE)")
+    if pressed and args.failed:
+        raise BadInput("presses say how the part was put right: they cannot come with --failed")
+    if args.source in ("preview", "board") and not args.cpl and args.rot is None:
+        raise BadInput(f"--source {args.source}: give the CPL that was uploaded (--cpl FILE): what JLC showed is its "
+                       f"row, which need not be jlcplace's correction")
+
+
+def _part(board, ref: str):
+    """The part a reference names: BadInput when none does, or when several parts JLC places carry it (a row or a
+    verification of it cannot tell them apart)."""
+    ps = [p for p in board.parts if p.ref == ref]
+    if not ps:
+        raise BadInput(f"{ref} is not on the board")
+    placed = [p for p in ps if p.placed]
+    if len(placed) > 1:
+        raise BadInput(f"{ref} is on the board {len(placed)} times: JLC cannot tell them apart (give each part its "
+                       f"own reference)")
+    return (placed or ps)[0]
+
+
+def _uploaded_row(rows, part, path: str):
+    mine = [r for r in rows if r.ref == part.ref]
+    if not mine:
+        raise BadInput(f"{path}: no row for {part.ref}")
+    if len(mine) > 1:
+        raise BadInput(f"{path}: {len(mine)} rows for {part.ref}")
+    if mine[0].layer != part.layer:
+        raise BadInput(f"{path}: the row for {part.ref} says {mine[0].layer}, the part is on the {part.layer}")
+    return mine[0]
+
+
+def _close(a: Correction, b: Correction) -> bool:
+    """The same placement as far as a row shows it: within check's ROW_TOL and ANGLE_TOL (a correction's row moves by
+    exactly as much as the correction does)."""
+    da = abs((a.rot - b.rot + 180.0) % 360.0 - 180.0)
+    return a.mirror == b.mirror and da <= ANGLE_TOL and math.hypot(a.dx - b.dx, a.dy - b.dy) <= ROW_TOL
+
+
 def cmd_confirm(args) -> int:
     board = _board(args)
     db = CorrectionDB(args.db)
     client = _client(args)
     presses = {"space": args.space, "right": args.right, "up": args.up}
-    for ref in args.ref:
-        part = board.part(ref)
-        if part is None:
-            raise BadInput(f"{ref} is not on the board")
+    pressed = any(presses.values())
+    _confirm_options(args, pressed)
+    rows = _rows(args.cpl, args.units) if args.cpl else None
+    cpl_name = Path(args.cpl).name if args.cpl else ""
+    plans = []
+    for ref in dict.fromkeys(args.ref):
+        part = _part(board, ref)
         if not part.lcsc:
             raise BadInput(f"{ref} has no LCSC code")
         ee = lookup_ee(client, part.lcsc)
         key = ee_key(ee) if isinstance(ee, EEFootprint) else ""
         h = kicad_hash(part)
+        uploaded = None
+        if rows is not None:
+            # what was checked: the uploaded row, moved by the presses in the preview, and its correction
+            seen = presses_to_row(_uploaded_row(rows, part, args.cpl), **presses)
+            how = f"; presses: space {args.space}, right {args.right}, up {args.up}" if pressed else ""
+            uploaded = replace(row_correction(part, seen, board.origin, args.reading), method="manual",
+                               status="manual", verdict=YELLOW, ee_key=key, kicad_hash=h,
+                               reasons=[f"{ROW_REASON} of {ref} in {cpl_name} ({args.source}, {args.by}{how})"])
+        stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
+        fitted = None
+        if (stored is None or stored.status == "stale") and isinstance(ee, EEFootprint):
+            fitted = fit_part(part, ee, snap=args.snap)
+        elif stored is None and uploaded is None and args.rot is None:
+            raise BadInput(f"{ref}: no EasyEDA footprint ({ee.message}) and no stored correction to confirm; give the "
+                           "uploaded CPL (--cpl) or the correction (--rot/--dx/--dy)")
+        plans.append((ref, part, ee, key, h, uploaded, fitted, fitted or stored or uploaded))
+    # everything is checked before anything is written: the parts of one entry (code, EasyEDA footprint, KiCad pads
+    # and pin functions) must agree on it, and a verified entry is not given other numbers behind its back
+    first: dict[tuple, tuple] = {}
+    for ref, part, ee, key, h, uploaded, fitted, base in plans:
+        if uploaded is None:
+            continue
+        other = first.setdefault((part.lcsc, key, h), (ref, uploaded))
+        if other[0] != ref and not _close(other[1], uploaded):
+            raise BadInput(f"{other[0]} and {ref} share a database entry ({part.lcsc} on the same footprints), but "
+                           f"their rows give {describe(other[1])} and {describe(uploaded)}: confirm only the parts "
+                           f"whose rows were right")
+        if _close(base, uploaded):
+            continue
+        if args.failed:
+            raise BadInput(f"{ref}: the row in {cpl_name} is not the stored correction's ({describe(base)}): its "
+                           f"failure says nothing about that correction; nothing recorded")
+        rank = STATUS_RANK.get(base.status, 0)
+        if rank >= STATUS_RANK["preview-verified"] and rank >= STATUS_RANK[SOURCES[args.source]]:
+            raise BadInput(f"{ref}: the stored correction is {base.status} with other numbers ({describe(base)}; "
+                           f"the row in {cpl_name} gives {describe(uploaded)}): if that verification was wrong, "
+                           f"record it with --failed and its own row first")
+    for ref, part, ee, key, h, uploaded, fitted, _ in plans:
+        title = ee.title if isinstance(ee, EEFootprint) else ""
         try:
             if args.rot is not None:
                 typed = Correction(rot=norm_angle(args.rot), dx=args.dx, dy=args.dy, method="manual", status="manual",
                                    verdict=YELLOW, ee_key=key, kicad_hash=h, reasons=[f"typed in by {args.by}"])
-                db.upsert(part.lcsc, typed, footprint=part.footprint,
-                          ee_title=ee.title if isinstance(ee, EEFootprint) else "")
+                db.upsert(part.lcsc, typed, footprint=part.footprint, ee_title=title)
             stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
             if stored is None or stored.status == "stale":
-                if not isinstance(ee, EEFootprint):
-                    raise BadInput(f"{ref}: no EasyEDA footprint ({ee.message}) and no stored correction to confirm; "
-                                   "give one with --rot/--dx/--dy")
-                fitted = fit_part(part, ee, snap=args.snap)
-                db.upsert(part.lcsc, fitted, footprint=part.footprint, ee_title=ee.title)
-                stored = fitted
+                stored = fitted or uploaded            # no record to fit: the uploaded row is the correction
+                db.upsert(part.lcsc, stored, footprint=part.footprint, ee_title=title)
+            replaced = stored if uploaded is not None and not _close(stored, uploaded) else None
             c = db.confirm(part.lcsc, ee_key=stored.ee_key, kicad_hash=stored.kicad_hash, by=args.by,
                            source=args.source, board=Path(board.path).name, ref=ref, layer=part.layer,
-                           ok=not args.failed, presses=presses if any(presses.values()) else None, note=args.note,
-                           part=part)
+                           ok=not args.failed, presses=presses if pressed else None, note=args.note, part=part,
+                           correction=uploaded if replaced is not None else stored if pressed else None)
+        except DBError:
+            raise
         except (ValueError, LookupError) as e:
             raise BadInput(f"{ref}: {e}") from None
         row = ""
         if not c.mirror:
             x, y, a = cpl_row_for(part, c, board.origin, args.reading)
             row = f"; row X {x:.4f} Y {y:.4f} rot {a:g}"
-        print(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row} ({db.file(part.lcsc)})")
+        was = f"; replaces the {replaced.status} correction {describe(replaced)}" if replaced is not None else ""
+        print(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row}{was} ({db.file(part.lcsc)})")
     return EXIT_OK
 
 
@@ -476,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _Parser(prog="jlcplace", description="Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards "
                                              "by simulating JLC's placement with its own EasyEDA footprints.",
-                epilog="Exit codes: 0 clean, 1 yellow with --fail-on yellow, 2 red, 3 bad input.")
+                epilog="Exit codes: 0 clean, 1 yellow with --fail-on yellow, 2 red, 3 bad input, 4 internal error.")
     p.add_argument("--version", action="version", version=f"jlcplace {__version__}")
     p.add_argument("-v", "--verbose", action="store_true", help="log what the EasyEDA client does")
     sub = p.add_subparsers(dest="command", required=True, parser_class=_Parser)
@@ -515,10 +621,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("confirm", parents=[board, ee, reading], help="record a verification in the database",
                        description="Record that a part's placement was checked: manual (datasheet), preview (JLC's "
-                                   "placement preview) or board (the assembled board). Fits and stores a correction "
-                                   "first when the database has none.")
+                                   "placement preview) or board (the assembled board). What was checked is the row "
+                                   "of the CPL that was uploaded (--cpl, needed for preview and board), moved by the "
+                                   "keys pressed in the preview; its correction is stored when it differs from the "
+                                   "database's. Fits and stores a correction first when the database has none.")
     s.add_argument("board", metavar="BOARD")
     s.add_argument("--ref", action="append", required=True, metavar="REF")
+    s.add_argument("--cpl", metavar="CPL",
+                   help="the CPL that was uploaded to JLC (what was checked; the presses are relative to its rows)")
+    s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
+                   help="unit of bare numbers in the CPL (default mm)")
     s.add_argument("--db", required=True, metavar="DIR")
     s.add_argument("--by", required=True, metavar="NAME", help="who checked it")
     s.add_argument("--source", required=True, choices=[k for k in SOURCES if "-" not in k])
@@ -559,14 +671,19 @@ def main(argv=None) -> int:
     log.setLevel(logging.INFO if args.verbose else logging.WARNING)
     try:
         return args.func(args)
-    except BadInput as e:
-        print(f"jlcplace: {e}", file=sys.stderr)
-        return EXIT_INPUT
-    except EEError as e:
+    except (BadInput, EEError, DBError) as e:       # DBError: a database file that cannot be read or written
         print(f"jlcplace: {e}", file=sys.stderr)
         return EXIT_INPUT
     except KeyboardInterrupt:
         return 130
+    except OSError as e:                       # inputs are BadInput already: an output or the cache
+        print(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}", file=sys.stderr)
+        return EXIT_INPUT
+    except Exception as e:  # noqa: BLE001 - a crash must not exit 1, the code that means "yellow"
+        traceback.print_exc(file=sys.stderr)
+        print(f"jlcplace: internal error: {type(e).__name__}: {e} (a bug: please report it with the traceback "
+              f"above)", file=sys.stderr)
+        return EXIT_INTERNAL
 
 
 if __name__ == "__main__":

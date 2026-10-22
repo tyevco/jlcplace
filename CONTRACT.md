@@ -46,7 +46,9 @@ def resolve_origin(origin, aux, grid) -> ((x, y), kind)
 * `origin`: "aux" (setup `aux_axis_origin`; (0, 0) if absent), "grid", "absolute" (0, 0), an "X,Y" string (also
   "(x;y)", "10mm,20mm") or a tuple in mm; `Board.origin_kind` is aux | grid | absolute | user. A snapshot stores
   only the origin it was made with: "aux" or its own kind keeps it, an explicit absolute/"X,Y"/tuple overrides it,
-  another named origin raises ValueError. A snapshot keeps `source` = the reader that made it.
+  another named origin raises ValueError, and so does a coordinate that is not a finite number ("nan,nan"). A
+  snapshot keeps `source` = the reader that made it; a file that is not JSON or not a snapshot (`{}`, `[]`) raises
+  ValueError, and a code in it is normalised as the readers do (`lcsc.normalize`: "C0402" is no code).
 * `Board.kicad_version` is the file-format version (e.g. "20241229"). Malformed or truncated files raise ValueError.
 * Parts: every footprint, as in model.Part. `fields` always holds Reference, Value, Datasheet and Description (as
   pcbnew 9 does). KiCad 5 `(attr virtual)` sets exclude_pos and exclude_bom.
@@ -86,7 +88,7 @@ def correction_fields(fields: dict) -> dict[str, str]
 ```python
 class EEError(Exception)
 def default_cache_dir() -> pathlib.Path        # $JLCPLACE_CACHE, else $XDG_CACHE_HOME/jlcplace, else ~/.cache/jlcplace
-def check_code(code) -> str                    # " c2040 " -> "C2040"; anything not ^C\d+$ raises EEError
+def check_code(code) -> str                    # " c2040 " -> "C2040"; anything not C[1-9][0-9]* raises EEError
 def parse_record(code: str, result: dict) -> EEFootprint
 def from_response(code, response) -> EEFootprint | NotFound    # a whole API response (the entry point for caches)
 def pin_names(result) -> dict[str, str]; def title_tokens(title) -> list[str]
@@ -238,14 +240,17 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   that is not red, with every pad on copper, it is yellow, status "offset", the message first; a row matching a
   verified correction's expected row is VERIFIED.
 * `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
-  JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. Rows for refs not on the board
+  JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. A reference that more than one part
+  JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
+  it, or one result when it has none, and never simulated against either part (a row of a reference whose other
+  parts JLC does not place is checked against the placed one). Rows for refs not on the board
   ("not-on-board"), on the wrong layer ("layer-mismatch"), repeated ("duplicate", every copy) are red; "not-placed"
   is red for DNP/exclude_pos/board_only parts and yellow when the only flag is exclude_bom, unless `bom_refs` (the
   designators a JLC BOM lists) lists it: then it is simulated like any other row, with a message. A row for a part
   with no code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
 * Statuses: ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row | not-on-board |
-  layer-mismatch | not-placed | duplicate.
+  layer-mismatch | not-placed | duplicate | duplicate-ref.
 
 ## cpl.py — read and write CPL / BOM files
 
@@ -260,7 +265,10 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
 * `read_cpl`: CSV, TSV or semicolons (the first delimiter under which a header names all five columns), header
   variants case-insensitive, rows in file order with duplicates kept, KiCad's ASCII `.pos` too. A value with a unit
   is converted; a bare number takes its column header's unit, KiCad's "## Unit =", or `units` (KiCad's CSV position
-  file records none). ValueError with the line for a missing column or a bad value.
+  file records none). ValueError with the line for a missing column or a bad value (a number that is not finite:
+  "nan", "inf", "1e400"). UTF-8 (BOM or not), cp1252, and UTF-16 / UTF-32 with a byte order mark (Excel's
+  "Unicode Text"); LF, CRLF or CR-only line ends; text csv cannot read is a ValueError naming the file (`read_bom`
+  alike).
 * `write_cpl`: JLC's header, CRLF, `%.4fmm`, Top/Bottom, rotation `norm_angle(round(norm_angle(a), 3))` with `:g`.
 * `rows_for_board`: rows for assembled parts with a code; refs without a correction or with a mirrored one are
   returned as missing. Both sorted naturally.
@@ -274,7 +282,8 @@ class CorrectionDB:
     def lookup(self, code, *, ee_key="", kicad_hash="") -> Correction | None
     def upsert(self, code, corr: Correction, *, footprint="", ee_title="", tool="jlcplace 0.1.0") -> None
     def confirm(self, code, *, ee_key, kicad_hash, by, source, board="", ref="", layer="", ok=True,
-                presses=None, note="", part=None) -> Correction
+                presses=None, note="", part=None, correction=None) -> Correction
+def presses_to_row(row: CplRow, *, space=0, right=0, up=0) -> CplRow
 def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> Correction
 ```
 * File `<dir>/<code>.json`: `{"lcsc", "entries": [{ee: {key, title}, kicad: {fpid, pad_hash}, correction: {rot, dx,
@@ -283,7 +292,9 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
   `parts.ee_key`, `kicad.pad_hash` is `parts.kicad_hash` (pads and pin functions), `ee.title` the EasyEDA
   footprint's title (a package name, for people reading the file). Atomic writes, sorted keys, 1-space indent,
   trailing newline. `jlcplace fit --db` does not let a second part with the same keys and other numbers replace the
-  entry a first part stored in the same run.
+  entry a first part stored in the same run. A file that is not JSON (git conflict markers), whose entries do not
+  hold a correction (`"rot": "x"`), or that cannot be written raises `DBError` (a ValueError) naming the file; the
+  command line reports it as bad input (exit 3).
 * `lookup`: board-verified > preview-verified > manual > auto, then the later entry; "" (in the call or the entry)
   matches any. Entries for the pad hash but none for the ee key: the strongest is returned with status "stale",
   verdict red, reason "footprint changed since verified"; the caller refits (pipeline: same numbers -> the refit
@@ -292,8 +303,14 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
   replace a stronger status (ValueError).
 * `confirm`: ok=True raises the status to the source's; board/preview make the verdict VERIFIED; a red entry
   confirmed manually becomes yellow with the reason "accepted manually (by): note". ok=False: status auto, verdict
-  red. Presses (need `part`) replace the correction (method manual, FT convention: one space = +90 deg in the
-  preview, one arrow = 0.0635 mm, library delta = D . R(-theta) . (sigma * right, -up), sigma = -1 on the bottom).
+  red. A verification is of the row that was uploaded: `correction` is that row's (`convention.row_correction`),
+  and when its numbers differ from the entry's it replaces them (with its reasons and verdict; the status starts
+  again from auto), except over a preview- or board-verified entry no weaker than the source (ValueError). Presses
+  are recorded with the verification and need `correction`: they are never added to the stored numbers.
+  `presses_to_row` moves the uploaded row as the preview shows it (FT convention: one space = +90 deg on the CPL
+  rotation, one arrow = 0.0635 mm on the preview screen: the cpl frame on the top, x mirrored on the bottom);
+  `presses_to_correction` is the same under jlc-2022 for a base correction whose row was uploaded (library delta =
+  D . R(-theta) . (sigma * right, -up), sigma = -1 on the bottom).
 
 ## pipeline.py — the modules put together (used by cli.py and report.py; usable from a KiCad plugin)
 
@@ -322,7 +339,8 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
 ## report.py and cli.py
 
 * report: `summary(run, color=False)` (one line per red or yellow result: `headline(res)`, "status: first message",
-  the status left out when the message says it), `plural(n, word)`, `to_dict(run)` (JSON; no EasyEDA geometry),
+  the status left out when the message says it), `plural(n, word)`, `to_dict(run)` (strict JSON: a landing with no
+  copper to measure to has dist null; no EasyEDA geometry),
   `checklist_markdown`,
   `checklist_csv`, `junit(run, fail_on=)`, `github_annotations(run, fail_on=)`, `html(run)` (one page, inline CSS
   and SVG, no external resources; bottom drawn seen from below with x mirrored; footer carries the EasyEDA source
@@ -333,9 +351,14 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
   [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless
   --force; parts without a footprint or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`;
   `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board
-  [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]`; `show CODE | BOARD --ref REF [--json]`;
+  [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need
+  --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one
+  entry must agree on it, a reference two placed parts carry is refused, and everything is checked before anything
+  is written); `show CODE | BOARD --ref REF [--json]`;
   `snapshot BOARD -o board.json`. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red
-  (fetch: records that could not be fetched), 3 bad input (argparse errors included).
+  (fetch: records that could not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and
+  database files included; when one output cannot be written the others still are), 4 an internal error (the
+  traceback is printed): no crash exits 1.
 
 ## Open
 

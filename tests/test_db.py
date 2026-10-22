@@ -1,17 +1,27 @@
 """The correction database, and the JLC-preview key-press convention."""
+import csv
 import json
 import math
 import os
 import random
+import shutil
+from pathlib import Path
 
 import pytest
 
 from jlcplace import convention as cv
 from jlcplace import db as dbmod
-from jlcplace.db import PRESS_MM, PRESS_REASON, STALE_REASON, CorrectionDB, presses_to_correction
-from jlcplace.model import BOTTOM, GREEN, RED, TOP, VERIFIED, YELLOW, Correction, Part
+from jlcplace.board import load_board
+from jlcplace.cli import main
+from jlcplace.cpl import assembled, read_cpl, write_cpl
+from jlcplace.db import PRESS_MM, PRESS_REASON, STALE_REASON, CorrectionDB, presses_to_correction, presses_to_row
+from jlcplace.model import BOTTOM, GREEN, RED, TOP, VERIFIED, YELLOW, Correction, CplRow, Part
 
 K = PRESS_MM
+SCRATCH = Path(os.environ.get("JLCPLACE_TEST_EASYEDA", "/tmp/claude-0/-home-user-dial-me-spinner/"
+                              "3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc"))
+Z_FIX = SCRATCH / "src/z2amiller_jlccheck/tests/fixtures/jlcfootprint"
+CORNER = Z_FIX / "boards/corner_case/corner_case.kicad_pcb"
 
 
 def corr(rot=90.0, dx=0.1, dy=-0.2, ee_key="uuid1:100", kicad_hash="sha1:aaaa", status="auto", **kw):
@@ -55,8 +65,10 @@ def test_no_pad_geometry_is_stored(db):
     db.upsert("C1", corr(alternatives=alternatives), ee_title="R0402")
     (alt,) = db.entries("C1")[0]["fit"]["alternatives"]
     assert alt == {"rot": 270.0, "dx": 0.0, "dy": 1.5, "mirror": False, "nets": "same"}
+    part = Part("R1", BOTTOM, 0, 0, 30)
     db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="preview",
-               presses={"space": 1, "right": 2, "up": -1}, part=Part("R1", BOTTOM, 0, 0, 30))
+               presses={"space": 1, "right": 2, "up": -1}, part=part,
+               correction=presses_to_correction(part, db.lookup("C1"), space=1, right=2, up=-1))
     db.upsert("C1", corr(kicad_hash="sha1:bbbb", alternatives=alternatives))
     doc = json.loads((db.path / "C1.json").read_text())
 
@@ -84,7 +96,7 @@ def test_writes_are_atomic(db, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(os, "replace", boom)
-    with pytest.raises(OSError):
+    with pytest.raises(dbmod.DBError, match="C1.json: cannot write: disk full"):      # cli-3: bad input, exit 3
         db.upsert("C1", corr(kicad_hash="sha1:bbbb"))
     assert (db.path / "C1.json").read_bytes() == before
     assert os.listdir(db.path) == ["C1.json"]                         # the temporary file was removed
@@ -107,6 +119,15 @@ def test_not_a_correction_file_and_hand_edited_entries(db):
                                      '"status": "manual"}]}\n')
     got = db.lookup("C6", ee_key="u:1", kicad_hash="sha1:x")         # no keys: it claims no footprint
     assert (got.rot, got.dy, got.status, got.method, got.ee_key) == (90.0, 1.0, "manual", "db", "")
+    # sec-2: git conflict markers and a hand-edited value were a JSONDecodeError / a bare ValueError, from lookup
+    # only when the entry was reached
+    good = (db.path / "C6.json").read_text()
+    for broken in ("<<<<<<< HEAD\n" + good + "=======\n" + good + ">>>>>>> other\n",
+                   good.replace('"rot": 90', '"rot": "x"'), good.replace('"correction": {', '"correction": [{')):
+        (db.path / "C6.json").write_text(broken)
+        for call in (lambda: db.lookup("C6"), lambda: db.entries("C6"), lambda: db.upsert("C6", corr())):
+            with pytest.raises(dbmod.DBError, match="C6.json: not a valid jlcplace correction file"):
+                call()
 
 
 # ------------------------------------------------------------------------------------------------------- keys
@@ -201,24 +222,38 @@ def test_manual_confirmation_of_a_red_fit(db):
 
 
 def test_confirm_with_presses(db):
+    """geo-1: presses are relative to the row that was uploaded, which need not be the stored correction's row:
+    confirm records that row's correction with the presses applied, and never adds them to the stored numbers."""
     db.upsert("C1", corr(rot=90.0, dx=0.1, dy=-0.2))
     part = Part("U12", BOTTOM, 120.0, 80.0, 0.0)
-    with pytest.raises(ValueError, match="need the part"):
-        db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="preview", presses=(2, 0, 0))
+    keys = {"ee_key": "uuid1:100", "kicad_hash": "sha1:aaaa", "by": "me"}
+    with pytest.raises(ValueError, match="relative to the row that was uploaded"):
+        db.confirm("C1", **keys, source="preview", presses=(2, 0, 0), part=part)
     with pytest.raises(ValueError):
-        db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="preview", presses=(2, 0, 0),
-                   part=part, ok=False)
+        db.confirm("C1", **keys, source="preview", presses=(2, 0, 0), part=part, ok=False,
+                   correction=corr(rot=270.0))
     with pytest.raises(ValueError):
-        db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="preview",
-                   presses={"left": 1}, part=part)
-    db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="board")
-    got = db.confirm("C1", ee_key="uuid1:100", kicad_hash="sha1:aaaa", by="me", source="preview",
-                     presses={"space": 2, "right": 3}, part=part)
+        db.confirm("C1", **keys, source="preview", presses={"left": 1}, part=part, correction=corr())
+    assert db.lookup("C1").rot == 90.0 and db.entries("C1")[0]["verifications"] == []
+    db.confirm("C1", **keys, source="board")
+    # the uploaded row was the stored correction's; JLC's preview needed two space and three right presses
+    origin = (100.0, 100.0)
+    row = CplRow("U12", *cv.cpl_row_for(part, db.lookup("C1"), origin)[:2], BOTTOM,
+                 cv.cpl_row_for(part, db.lookup("C1"), origin)[2])
+    seen = cv.row_correction(part, presses_to_row(row, space=2, right=3), origin)
+    pressed = Correction(seen.rot, seen.dx, seen.dy, method="manual", verdict=YELLOW, reasons=["from the row"])
+    with pytest.raises(ValueError, match="board-verified with other numbers"):
+        db.confirm("C1", **keys, source="preview", presses={"space": 2, "right": 3}, part=part, correction=pressed)
+    db.confirm("C1", **keys, source="board", ok=False, note="turned")
+    got = db.confirm("C1", **keys, source="preview", presses={"space": 2, "right": 3}, part=part, correction=pressed)
     # a bottom part at 0 deg: right in the preview (seen from below) is -x on the board and in the library
     assert (got.rot, got.dx, got.dy) == (270.0, pytest.approx(0.1 - 3 * K, abs=1e-4), -0.2)
-    assert got.status == "preview-verified"                # the new numbers carry only this verification
+    assert got.status == "preview-verified" and got.reasons == ["from the row"]
+    got = db.confirm("C1", **keys, source="preview", presses={"space": 2, "right": 3}, part=part,
+                     correction=presses_to_correction(part, corr(rot=90.0, dx=0.1, dy=-0.2), space=2, right=3))
     assert got.method == "manual" and db.entries("C1")[0]["fit"]["method"] == "manual"
-    assert got.reasons[-1].startswith(PRESS_REASON) and PRESS_REASON == "derived from presses (FT convention)"
+    assert got.reasons == ["from the row"]           # the same numbers: the entry is kept, the verification added
+    assert len(db.entries("C1")[0]["verifications"]) == 4 and PRESS_REASON == "derived from presses (FT convention)"
     v = db.entries("C1")[0]["verifications"][-1]
     assert v["presses"] == {"space": 2, "right": 3, "up": 0} and (v["ref"], v["layer"]) == ("U12", BOTTOM)
 
@@ -303,3 +338,76 @@ def test_presses_keep_mirror_and_status_and_replace_old_press_reason():
     assert twice.reasons == ["x", f"{PRESS_REASON}: space 0, right 0, up 1"]
     assert (twice.dx, twice.dy) == (pytest.approx(K), pytest.approx(-K))
     assert presses_to_correction(part, base, space=4).rot == 10.0
+
+
+@pytest.mark.parametrize("layer", [TOP, BOTTOM])
+def test_presses_on_the_uploaded_row_agree_with_presses_on_its_correction(layer):
+    """geo-1: confirm moves the uploaded row (presses_to_row) and takes its correction (convention.row_correction);
+    under jlc-2022 that is presses_to_correction of the row's own correction, and row_correction inverts cpl_row_for
+    under every reading."""
+    rnd = random.Random(10)
+    origin = (100.0, 100.0)
+    for _ in range(200):
+        part = Part("U1", layer, rnd.uniform(60, 140), rnd.uniform(60, 140), rnd.choice([0, 90, 180, 270,
+                                                                                        rnd.uniform(0, 360)]))
+        base = Correction(rot=rnd.choice([0, 90, 180, 270, rnd.uniform(0, 360)]), dx=round(rnd.uniform(-2, 2), 4),
+                          dy=round(rnd.uniform(-2, 2), 4))
+        for reading in cv.BOTTOM_READINGS:
+            x, y, a = cv.cpl_row_for(part, base, origin, reading)
+            back = cv.row_correction(part, CplRow("U1", x, y, layer, a), origin, reading)
+            assert abs((back.rot - base.rot + 180) % 360 - 180) < 1e-5
+            assert math.dist((back.dx, back.dy), (base.dx, base.dy)) < 2e-4         # rows carry 1e-4 mm
+        space, right, up = rnd.randint(-3, 3), rnd.randint(-5, 5), rnd.randint(-5, 5)
+        x, y, a = cv.cpl_row_for(part, base, origin)
+        seen = cv.row_correction(part, presses_to_row(CplRow("U1", x, y, layer, a), space=space, right=right, up=up),
+                                 origin)
+        want = presses_to_correction(part, base, space=space, right=right, up=up)
+        assert abs((seen.rot - want.rot + 180) % 360 - 180) < 1e-5
+        assert math.dist((seen.dx, seen.dy), (want.dx, want.dy)) < 2e-4
+
+
+@pytest.mark.cache
+@pytest.mark.skipif(not (CORNER.is_file() and (Z_FIX / "truth_presses.csv").is_file()),
+                    reason=f"z2amiller ground truth not in {Z_FIX}")
+def test_jlc_preview_presses_replayed_on_the_uploaded_rows(tmp_path, capsys):
+    """geo-1: z2amiller recorded JLC's preview by uploading a CPL of raw KiCad angles and noting the space presses
+    that put each part right. Replayed with `jlcplace confirm`, the presses went onto jlcplace's own fits instead of
+    the uploaded rows: C2, D4, D8, D9, D12, LED2 and U4 ended preview-verified the wrong way round, and the truth's
+    rows red against them."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for f in (Z_FIX / "easyeda").glob("C*.json"):
+        shutil.copy(f, cache)
+    board = load_board(CORNER, reader="sexpr")
+    rows = []
+    for part in board.parts:
+        if assembled(part) and part.lcsc:
+            x, y, a = cv.cpl_row_for(part, Correction(0.0), board.origin)      # KiCad's anchor and angle
+            rows.append(CplRow(part.ref, x, y, part.layer, a))
+    raw = tmp_path / "raw.csv"
+    write_cpl(raw, rows)
+    presses = {r[0]: int(r[1]) // 90 for r in csv.reader(open(Z_FIX / "truth_presses.csv"))
+               if r and not r[0].startswith("#") and r[1:2] != [""]}
+    truth = {r["reference"]: float(r["observed_rotation"]) for r in csv.DictReader(open(Z_FIX / "truth.csv"))
+             if r["observed_rotation"].strip()}
+    refs = ("C2", "D4", "D8", "D9", "D12", "LED2", "U4")
+    db = tmp_path / "db"
+    common = ["--reader", "sexpr", "--cache", cache, "--offline"]
+    for ref in refs:
+        code = main([str(a) for a in ["confirm", CORNER, "--ref", ref, "--db", db, "--by", "z2amiller", "--source",
+                                      "preview", "--cpl", raw, "--space", presses[ref], *common]])
+        out, err = capsys.readouterr()
+        part = board.part(ref)
+        assert code == 0 and f"rot {cv.norm_angle(truth[ref] - part.angle):g}, " in out, (ref, out, err)
+    # the rows jlcplace writes are the truth's now, and the truth's rows are verified
+    code = main([str(a) for a in ["cpl", CORNER, "-o", tmp_path / "jlc.csv", "--db", db, "--force", *common]])
+    capsys.readouterr()
+    written = {r.ref: r.rotation for r in read_cpl(tmp_path / "jlc.csv")}
+    assert {ref: written[ref] for ref in refs} == {ref: truth[ref] for ref in refs}
+    for r in rows:
+        r.rotation = truth.get(r.ref, r.rotation) if r.ref in refs else r.rotation
+    write_cpl(tmp_path / "truth.csv", rows)
+    main([str(a) for a in ["check", CORNER, tmp_path / "truth.csv", "--db", db, "--json", tmp_path / "t.json",
+                           "-q", *common]])
+    got = {r["ref"]: r["verdict"] for r in json.loads((tmp_path / "t.json").read_text())["results"]}
+    assert {ref: got[ref] for ref in refs} == {ref: VERIFIED for ref in refs}

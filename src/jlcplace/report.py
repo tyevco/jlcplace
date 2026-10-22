@@ -150,7 +150,8 @@ def to_dict(run: Run) -> dict:
                         "convention_sensitive": res.convention_sensitive, "line": line, "row": _row(res.row),
                         "expected": _row(res.expected),
                         "landings": [{"ee": lnd.ee_number, "kicad": lnd.kicad_number, "net": lnd.net,
-                                      "dist": lnd.dist} for lnd in res.landings],
+                                      "dist": lnd.dist if math.isfinite(lnd.dist) else None}   # inf: no copper
+                                     for lnd in res.landings],
                         "correction": _corr(info), "easyeda": _ee(info)})
     return {"tool": TOOL, "board": {"path": b.path, "source": b.source, "kicad_version": b.kicad_version,
                                     "origin": list(b.origin), "origin_kind": b.origin_kind, "parts": len(b.parts)},

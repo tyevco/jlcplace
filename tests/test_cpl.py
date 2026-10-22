@@ -10,6 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from jlcplace import convention as cv
+from jlcplace import cpl
 from jlcplace.cpl import format_row, natural_key, parse_layer, parse_length, read_bom, read_cpl, rows_for_board, \
     write_cpl
 from jlcplace.model import BOTTOM, TOP, Board, Correction, CplRow, Pad, Part
@@ -271,3 +272,13 @@ def test_rows_for_board_places_ee_footprint_on_kicad_footprint():
             e = (rnd.uniform(-3, 3), rnd.uniform(-3, 3))
             want = cv.library_to_board(p, cv.ee_to_library(c, e))
             assert math.dist(cv.ee_to_board(e, C, r.rotation, r.layer), want) < 2e-4
+
+
+@pytest.mark.parametrize("text", ["nan", "NaN", "inf", "-inf", "Infinity", "1e400", "-1e309"])
+def test_non_finite_values_are_refused(text):
+    """cli-1: parse_angle('inf') was nan and parse_length('1e400') inf."""
+    with pytest.raises(ValueError, match="not a finite number"):
+        cpl.parse_angle(text)
+    if text.lstrip("-")[:1].isdigit():
+        with pytest.raises(ValueError, match="not a finite number"):
+            parse_length(text + "mm")

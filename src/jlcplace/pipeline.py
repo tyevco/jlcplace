@@ -20,12 +20,11 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 
 from . import geom
 from .check import check_cpl, check_row, nonpolar
 from .convention import DEFAULT, rot
-from .cpl import assembled, natural_key
+from .cpl import assembled, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
@@ -146,7 +145,7 @@ def describe(c: Correction) -> str:
     return f"rot {c.rot:g}, dx {c.dx:.4f}, dy {c.dy:.4f}" + (", mirrored" if c.mirror else "")
 
 
-_LATER = ("accepted manually", "verification failed", "derived from presses", "typed in by",
+_LATER = ("accepted manually", "verification failed", "derived from presses", "typed in by", "taken from the row",
           "the EasyEDA footprint changed")
 
 
@@ -208,6 +207,10 @@ def resolve(board: Board, client, db=None, *, refs=None, snap: float = 0.5, use_
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
         if not part.lcsc or (want is not None and part.ref not in want) or (
                 want is None and not assembled(part) and not bom_listed(part, bom_rows)):
+            continue
+        if part.ref in out:
+            # a second part with this reference (check reports it, "duplicate-ref"): it must not replace the first
+            # one's footprint and correction
             continue
         if part.lcsc not in ees:
             ees[part.lcsc] = lookup_ee(client, part.lcsc)
@@ -289,7 +292,7 @@ def row_lines(path, results: list[RowResult]) -> list[int | None]:
     """The 1-based line of each result's row in the CPL file (the n-th row of a ref on the n-th line starting with
     it), None for results without a row or when the file cannot be read."""
     try:
-        lines = Path(path).read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        lines = read_text(path).splitlines()      # as read_cpl decodes it (UTF-16, CR-only line ends)
     except OSError:
         return [None] * len(results)
     at: dict[str, list[int]] = {}
@@ -337,7 +340,7 @@ def checklist(run: Run) -> list[CheckItem]:
             add("odd angle", f"rotation {a:g} is not a multiple of 90: check the part sits square on its pads")
         info = run.resolved.get(res.ref)
         if info is not None and info.corr is not None and info.corr.verdict in (YELLOW, RED) \
-                and info.source != "fallback" and res.status not in ("not-simulated", "no-row"):
+                and info.source != "fallback" and res.status not in ("not-simulated", "no-row", "duplicate-ref"):
             add("uncertain correction", f"{info.corr.verdict} {info.source} correction ({info.corr.status}): "
                                         + "; ".join(key_reasons(info.corr)))
     order = {"bottom reading": 0, "not simulated": 1, "odd angle": 2, "uncertain correction": 3}

@@ -32,6 +32,7 @@ import numpy as np
 
 from .convention import board_to_library, norm_angle, rot
 from .lcsc import find_lcsc
+from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, TOP, Board, Pad, Part
 
 #: chord error (mm) of the polygons the S-expression reader makes from arcs; vertices lie on the arc
@@ -75,7 +76,20 @@ def save_snapshot(board: Board, path) -> None:
 
 
 def load_snapshot(path) -> Board:
-    return Board.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    """The board a snapshot holds. ValueError for a file that is not JSON or not a jlcplace snapshot."""
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError(f"not a jlcplace snapshot (not JSON: {e})") from None
+    try:
+        board = Board.from_dict(d)
+    except (KeyError, TypeError, AttributeError, ValueError) as e:
+        raise ValueError(f"not a jlcplace snapshot ({type(e).__name__}: {e})") from None
+    for part in board.parts:            # a code as the board readers read one: a package typed in ("C0402") is none
+        code = normalize_lcsc(part.lcsc) if part.lcsc else ""
+        if code != part.lcsc:
+            part.lcsc, part.lcsc_field = code, part.lcsc_field if code else ""
+    return board
 
 
 def _snapshot_with(board: Board, origin, lcsc_fields) -> Board:
@@ -89,7 +103,16 @@ def _snapshot_with(board: Board, origin, lcsc_fields) -> Board:
 
 
 def resolve_origin(origin, aux, grid) -> tuple[tuple[float, float], str]:
-    """(origin, kind) for "aux" | "grid" | "absolute" | "X,Y" | (x, y); aux/grid are the board's (None = unknown)."""
+    """(origin, kind) for "aux" | "grid" | "absolute" | "X,Y" | (x, y); aux/grid are the board's (None = unknown).
+    ValueError for anything else, and for a coordinate that is not a finite number ("nan,nan")."""
+    (x, y), kind = _origin(origin, aux, grid)
+    for v in (x, y):
+        if not math.isfinite(v):
+            raise ValueError(f"origin {origin!r}: not a finite number")
+    return (x, y), kind
+
+
+def _origin(origin, aux, grid) -> tuple[tuple[float, float], str]:
     if isinstance(origin, str):
         key = origin.strip().lower()
         named = {"aux": aux, "grid": grid, "absolute": (0.0, 0.0)}
