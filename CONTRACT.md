@@ -417,7 +417,8 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch: records that could not be fetched), 3 bad input
   (argparse errors, unreadable or unwritable files and database files included; when one output cannot be written the
   others still are), 4 an internal error (the traceback is printed): no crash exits 1; 130 interrupted (ctrl-C,
-  "jlcplace: interrupted").
+  "jlcplace: interrupted"); 141 a broken pipe on stdout (quiet). stdout/stderr escape what their encoding cannot
+  hold (backslashreplace).
 
 ## Open
 
