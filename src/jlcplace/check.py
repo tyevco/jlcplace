@@ -491,7 +491,8 @@ def _pinout(part: Part, ee: EEFootprint, placed, corr: Correction | None, as_cor
         return YELLOW, text, False
     text += ": the LCSC part's pins land on the nets of other pins; check the LCSC part's pinout against the symbol"
     if corr is not None and corr.status == "preview-verified":
-        text += "; JLC's preview does not show pin functions, so its verification does not settle this"
+        text += ("; JLC's preview does not show pin functions, so its verification does not settle this: an assembled "
+                 "board that works does (`jlcplace confirm --source board`), or editing the entry")
     return RED, text, True
 
 

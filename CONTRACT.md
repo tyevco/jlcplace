@@ -672,6 +672,7 @@ as data and runs its steps with a local runner.
 * Pinout: names both libraries number, differently (INT1 / INT2, P1.01 / P1.03, 1IN+ / 2IN+), compare as unknown, so
   swaps between them are not seen; G against GND is unknown (a gate or a ground); a board without pin functions (none
   filled from the schematic) is not compared. A multi-pin part whose preview-verified entry has a permuted pinout stays
-  red: only `confirm --source board`, or editing the entry, settles it. An entry stored before the pinout rule keeps its
-  old yellow verdict until `jlcplace fit --db` refits it (the check of the row, with the record, is red anyway).
+  red: only `confirm --source board`, or editing the entry, settles it (the red row says so; `confirm --source manual`
+  on such an entry says it changed nothing). An entry stored before the pinout rule keeps its old yellow verdict until
+  `jlcplace fit --db` refits it (the check of the row, with the record, is red anyway).
 * The action is tested with a local runner on Linux only: not on GitHub's runners, Windows (Git Bash) or macOS.

@@ -266,7 +266,8 @@ from the CPL's origin. Then, in this order:
 
 * **pinout**: parts whose LCSC pin names differ from the symbol's pin functions (red for a permutation no placement
   fixes). The part's datasheet settles it, not the preview: JLC's preview shows where pads land, not what the pins
-  are.
+  are (`confirm --source manual` records the datasheet's answer, a yellow accepted row; on an entry the preview
+  already verified only `--source board`, a board that works, or editing the entry does).
 * **uncertain correction**: parts whose correction is not green for a reason the preview can settle: red, a choice
   of placement in doubt (a polarity, names against numbers, an orientation the pads do not fix; those first), or a
   bare KiCad pad, a numbering, a manual decision. A green row whose fit is yellow only because the land patterns

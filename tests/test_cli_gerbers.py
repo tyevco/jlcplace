@@ -444,3 +444,31 @@ def test_a_pinout_row_is_red_everywhere_and_a_checklist_item_of_its_own():
     case = next(tc for tc in ET.fromstring(report.junit(r)).iter("testcase") if tc.get("name") == "Q1")
     assert case.find("failure").get("message").startswith("pinout differs from the symbol")
     assert "pinout" in report.html(r)
+
+
+def test_a_preview_verified_pinout_says_how_it_is_settled(env, capsys):  # noqa: F811
+    """A preview verification does not settle a pinout (JLC's preview shows no pin functions): the red row says what
+    does, and a manual confirmation, which ranks below the preview's, says that it changed nothing and what would."""
+    from test_cli import HX, HY, save_snapshot
+    pads = [Pad(n, x, y, 1.475, 0.6, net=f"/{name}", pin_name=name) for (n, x, y), name in zip(SOT23, "GDS")]
+    part = Part("Q1", TOP, 120.0, 80.0, 0.0, footprint="Package_TO_SOT_SMD:SOT-23", lcsc="C2500", pads=pads)
+    save_snapshot(Board(str(env.tmp / "q.kicad_pcb"), ORIGIN, [part], source="test"), env.tmp / "q.json")
+    shapes = ["~".join(["PAD", "RECT", f"{HX - x / 0.254:.6f}", f"{HY - y / 0.254:.6f}", f"{1.475 / 0.254:.6f}",
+                        f"{0.6 / 0.254:.6f}", "1", "", n, "0", "", "0", f"gge{n}", "0", "", "Y", "0", "0", "0.2",
+                        "0,0"]) for n, x, y in SOT23]
+    pins = [f"P~show~0~{n}~0~0~0~p{n}~0^^0^^0^^1~0~0~0~{name}^^1~0~0~0~{n}" for n, name in zip("123", "GSD")]
+    (Path(env.cache) / "C2500.json").write_text(json.dumps({"success": True, "code": 0, "result": {
+        "uuid": "sym", "title": "Q", "dataStr": {"head": {"x": 0, "y": 0}, "shape": pins},
+        "packageDetail": {"uuid": "sot23", "title": "SOT-23-3_L2.9-W1.6-P1.90-LS2.8-BR", "updateTime": 1700000000,
+                          "dataStr": {"head": {"x": HX, "y": HY}, "shape": shapes}}}}), encoding="utf-8")
+    board, db, cpl = env.tmp / "q.json", env.tmp / "db", env.tmp / "q.csv"
+    assert run(capsys, "cpl", board, "-o", cpl, "--force", "--db", db, *offline(env))[0] == 2
+    confirm = ["confirm", board, "--ref", "Q1", "--db", db, "--by", "me", *offline(env)]
+    assert run(capsys, *confirm, "--source", "preview", "--cpl", cpl)[0] == 0
+    code, out, _ = run(capsys, "check", board, cpl, "--db", db, *offline(env))
+    assert code == 2 and "an assembled board that works does (`jlcplace confirm --source board`), or editing the " \
+        "entry" in out, out
+    code, out, _ = run(capsys, *confirm, "--source", "manual", "--note", "datasheet: the symbol is wrong")
+    assert code == 0 and "Q1 C2500: preview-verified" in out, out
+    assert "jlcplace: Q1: the entry stays preview-verified (a manual verification ranks below it), and its pinout " \
+        "stays red: an assembled board that works settles it (--source board), or editing the entry" in out, out

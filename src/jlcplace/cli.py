@@ -34,14 +34,15 @@ from pathlib import Path
 
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
-from .check import ANGLE_TOL, ROW_TOL, check_bom
+from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row
 from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
 from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
 from .gerber import board_origins, gerber_origin, read_gerbers
-from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound, printable
+from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, CplRow, EEFootprint, NotFound, \
+    printable
 from .parts import ee_key, kicad_hash
 from .pipeline import Finding, apply_bom_codes, bom_overrides, check, correction, describe, fallback, \
     gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, offset_tol, origin_findings, resolve, \
@@ -646,6 +647,14 @@ def cmd_confirm(args) -> int:
             row = f"; row X {x:.4f} Y {y:.4f} rot {a:g}"
         was = f"; replaces the {replaced.status} correction {describe(replaced)}" if replaced is not None else ""
         print(printable(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row}{was} ({db.file(part.lcsc)})"))
+        if args.source == "manual" and not args.failed and STATUS_RANK.get(c.status, 0) > STATUS_RANK["manual"] \
+                and isinstance(ee, EEFootprint) and not c.mirror:
+            res = check_row(part, CplRow(ref, x, y, part.layer, a), ee, board.origin, corr=c, reading=args.reading,
+                            alt_readings=False)
+            if res.status == "pinout":                 # the datasheet's word does not outrank the preview's
+                print(printable(f"jlcplace: {ref}: the entry stays {c.status} (a manual verification ranks below it), "
+                                f"and its pinout stays red: an assembled board that works settles it (--source "
+                                f"board), or editing the entry"))
     return EXIT_OK
 
 
