@@ -29,6 +29,7 @@ from .cpl import assembled, natural_key
 from .model import BOTTOM, FORMULA_START, GREEN, RED, TOP, VERIFIED, YELLOW, CplRow, EEFootprint, NotFound, \
     RowResult, printable
 from .parts import norm_number
+from .check import jlc_part
 from .pipeline import CheckItem, Run, key_reasons, proxy_footprint
 
 TOOL = f"jlcplace {__version__}"
@@ -51,7 +52,7 @@ def _name(path) -> str:
 
 
 def _layer(run: Run, res: RowResult) -> str:
-    part = run.board.part(res.ref)
+    part = jlc_part(run.board, res.ref)
     return part.layer if part is not None else (res.row.layer if res.row else "")
 
 
@@ -480,7 +481,7 @@ def _side_pads(run: Run) -> dict[str, list]:
 def _part_svg(run: Run, res: RowResult, side_pads) -> str:
     """The part's KiCad pads (filled, numbered; neighbours' pads faint), its EasyEDA pads as the row places them
     (outlined by where they land), the row's point and jlcplace's."""
-    part = run.board.part(res.ref)
+    part = jlc_part(run.board, res.ref)
     if part is None:
         return ""
     mirror = part.layer == BOTTOM
@@ -564,7 +565,7 @@ def _board_svg(run: Run, side: str, side_pads, anchors: dict[str, str]) -> str:
         if res.verdict in (RED, YELLOW):
             # above the part's copper and the pads JLC would put down (a label on them is lost in their outlines),
             # with a halo in the background colour; below them when there is no room above
-            part = run.board.part(res.ref)
+            part = jlc_part(run.board, res.ref)
             box = _Box()
             for p in part.copper_pads():
                 box.add(_kicad_outline(part, p, mirror))
@@ -660,7 +661,7 @@ def _badge(v: str) -> str:
 
 
 def _card(run: Run, res: RowResult, anchor: str, side_pads) -> str:
-    part = run.board.part(res.ref)
+    part = jlc_part(run.board, res.ref)
     info = run.resolved.get(res.ref)
     v = res.verdict if res.verdict in _ORDER else RED
     head = (f"<summary>{_badge(v)} <b>{_esc(res.ref)}</b> <span class=\"sub\">{_esc(res.lcsc or 'no code')} "

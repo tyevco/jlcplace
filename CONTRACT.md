@@ -230,6 +230,7 @@ def place_row(part, row: CplRow, ee: EEFootprint, origin, reading="jlc-2022") ->
 def check_row(part, row, ee, origin, *, corr=None, reading="jlc-2022", alt_readings=True) -> RowResult
 def check_cpl(board, rows, ee_lookup, *, corrections=None, reading="jlc-2022", bom_refs=None) -> list[RowResult]
 def check_bom(board, bom_rows, cpl_rows) -> list[str]
+def jlc_part(board, ref) -> Part | None   # the part JLC places for a ref: first assembled, else placed, else first
 def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
@@ -354,9 +355,11 @@ class CheckItem(category, ref, lcsc, layer, rotation, what, verdict, refs, also,
   `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
   so ("yellow because the stored auto correction is yellow: <its key reason>"); the note on how it was simulated
   comes last. With a BOM, a code-less part not in the BOM is yellow ("JLC does not place it"), and every part takes
-  its BOM line's code (JLC assembles from the BOM): `apply_bom_codes` returns the parts whose board code it
-  replaced, `bom_overrides` makes their BOM messages. `resolve(bom_rows=...)` also resolves the parts the board
-  only excludes from its BOM but the BOM lists (`bom_listed`), and `check` simulates their rows.
+  its BOM line's code (JLC assembles from the BOM; every part with the reference, so a DNP alternate footprint
+  listed first does not keep it from the placed one): `apply_bom_codes` returns the references whose board code it
+  replaced (the code of the part JLC places, `check.jlc_part`), `bom_overrides` makes their BOM messages.
+  `resolve(bom_rows=...)` also resolves the parts the board only excludes from its BOM but the BOM lists
+  (`bom_listed`), and `check` simulates their rows.
 * `key_reasons`: what a person or a later refit added (latest first), then the fit's own reasons, those that make
   it yellow or red before those that only inform ("rot 0 also lands every pad, on other nets; ruled out by pad
   numbers", "N pin names agree"). `needs_preview`: the correction is red, its `doubt` is set, or a reason other than
