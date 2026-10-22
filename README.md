@@ -403,13 +403,13 @@ itself downloads nothing: drop the cache and fetch steps to check from the commi
 
 From another repository, after the job (or step) that writes the fab outputs, the action does all of the above in one
 step: it installs jlcplace in a virtual environment of its own, restores the EasyEDA records from the calling
-repository's Actions cache (keyed on the board and the BOM), fetches what the cache lacks (rate-limited), saves the
-cache (what a fetch cut short got too, so the next run goes on from it), and runs `jlcplace check` with annotations
-on the CPL's lines, the summary and the preview checklist in the job summary, and JUnit, JSON and checklist files.
-EasyEDA being down, or rate-limiting the runner (GitHub's runners often get a 403 after a few dozen records), leaves
-the check with the records at hand: a multi-pin or polar part whose record is missing is red (not simulated) unless
-the `db` holds its correction. Commit one (`jlcplace fit BOARD --db jlcplace-db` stores every part's) so that the step
-does not depend on EasyEDA:
+repository's Actions cache (keyed on the board, the BOM and `args`), fetches what the cache lacks (the board read with
+the `--lcsc-field` and `--reader` of `args`; rate-limited), saves the cache (what a fetch cut short got too, so the next
+run goes on from it), and runs `jlcplace check` with annotations on the CPL's lines, the summary and the preview
+checklist in the job summary, and JUnit, JSON and checklist files. EasyEDA being down, or rate-limiting the runner
+(GitHub's runners often get a 403 after a few dozen records), leaves the check with the records at hand: a multi-pin or
+polar part whose record is missing is red (not simulated) unless the `db` holds its correction. Commit one (`jlcplace
+fit BOARD --db jlcplace-db` stores every part's) so that the step does not depend on EasyEDA:
 
 ```yaml
       - uses: tyevco/jlcplace@main            # or a commit SHA

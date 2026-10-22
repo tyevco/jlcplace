@@ -629,8 +629,9 @@ A composite action at the repository root (not in the wheel): inputs `board`, `c
 runner's), `version` ("": the action's own ref, installed from its files); outputs `exit-code`, `red` and `yellow` (red
 and yellow results plus findings of that verdict, empty when the check could not run), `junit`, `checklist`, `json`.
 Steps: setup-python; a venv in `$RUNNER_TEMP` (reused when the spec matches; nothing written to GITHUB_PATH /
-GITHUB_ENV); a cache key from the board and BOM; actions/cache/restore; `jlcplace fetch` of the board's and BOM's codes
-(a failure is a warning: exit 2 blames EasyEDA, exit 3 says its input could not be read and the check will say what);
+GITHUB_ENV); a cache key from the board, BOM and `args` (none: the board and BOM's alone); actions/cache/restore;
+`jlcplace fetch` of the board's codes (read with the `--lcsc-field` / `--reader` of `args`) and the BOM's (a failure is
+a warning: exit 2 blames EasyEDA, exit 3 says its input could not be read and the check will say what);
 actions/cache/save before the check (a red check fails the job): under the board's key after a complete fetch, under a
 key of the run (`<key>-partial-<run id>-<attempt>`, which the next run restores) after one that fetched some records but
 not all; `jlcplace check ... --github-annotations --junit --checklist --json`, the summary and checklist in the job

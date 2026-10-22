@@ -302,7 +302,8 @@ def test_nothing_is_uploaded_and_no_html_report_is_written():
     check, fetch = step("check")["run"], step("fetch")["run"]
     for flag in ("--github-annotations", "--junit", "--checklist", "GITHUB_STEP_SUMMARY", "--fail-on"):
         assert flag in check, flag
-    assert '"$JLCPLACE" fetch --cache "$CACHE" "$BOARD"' in fetch and '"$JLCPLACE" check "$BOARD" "$CPL"' in check
+    assert '"$JLCPLACE" fetch --cache "$CACHE" "${board_opts[@]}" "$BOARD"' in fetch
+    assert '"$JLCPLACE" check "$BOARD" "$CPL"' in check
     assert order.index("restore") < order.index("fetch") < order.index("check")
     save = next(s for s in steps() if s.get("uses", "").startswith("actions/cache/save@"))
     assert order.index("fetch") < steps().index(save) < order.index("check")   # saved before a red check fails
@@ -448,7 +449,8 @@ def test_the_check_step_passes_the_inputs_and_reports(tmp_path):
     assert "<details><summary>Preview checklist</summary>" in s and "- [ ] **U10**" in s
 
 
-@pytest.mark.parametrize("args", ["--origin absolute\n--lcsc-field LCSC_PN\n", "\t--origin absolute\n\n --lcsc-field\tLCSC_PN",
+@pytest.mark.parametrize("args", ["--origin absolute\n--lcsc-field LCSC_PN\n",
+                                  "\t--origin absolute\n\n --lcsc-field\tLCSC_PN",
                                   "--origin absolute --lcsc-field LCSC_PN"], ids=["block", "tabs", "one-line"])
 def test_args_split_at_every_whitespace_newlines_too(tmp_path, args):
     """`args: |` with one option per line is a common way to write it: every line reaches jlcplace check, none is
@@ -517,6 +519,30 @@ def test_the_fetch_step_adds_the_boms_codes_and_survives_a_failed_fetch(tmp_path
     res, _ = fetch(bom="b-BOM.csv")
     assert res.steps["fetch"]["outputs"] == {"ok": "false"}
     assert "::warning title=jlcplace::not every EasyEDA record could be fetched (is EasyEDA down" in res.stdout
+
+
+@pytest.mark.parametrize("args, opts", [
+    ("--origin aux --lcsc-field SupplierRef", ["--lcsc-field", "SupplierRef"]),
+    ("--lcsc-field=SupplierRef --reader sexpr --fail-on yellow", ["--lcsc-field=SupplierRef", "--reader", "sexpr"]),
+    ("--lcsc-field A\n--lcsc-field B\n--units mm\n", ["--lcsc-field", "A", "--lcsc-field", "B"]),
+    ("", [])], ids=["field", "equals", "block", "none"])
+def test_the_fetch_step_reads_the_board_as_the_check_does(tmp_path, args, opts):
+    """`args` that say where the board keeps its LCSC codes (--lcsc-field) or how to read it (--reader) reach the
+    fetch too: otherwise it finds no codes on a board whose field has another name, and every run checks without
+    the records. They are part of the cache key; no args keep the key a run before them had."""
+    need_bash()
+    fake, log = fake_jlcplace(tmp_path)
+    r = Runner(tmp_path)
+    done = {"install": {"outputs": {"python": posix(sys.executable), "jlcplace": posix(fake)}}}
+    res = r.run({"board": "b.kicad_pcb", "cpl": "c.csv", "args": args}, only="fetch", done=done)
+    assert res.code == 0, res.stderr
+    argv = Path(f"{log}.fetch").read_text(encoding="utf-8").splitlines()
+    assert argv == ["fetch", "--cache", f"{r.temp}/jlcplace-easyeda", *opts, "b.kicad_pcb"], argv
+    keys = {a: r.run({"board": "b.kicad_pcb", "cpl": "c.csv", "args": a}, only="key", done=done)
+            .steps["key"]["outputs"]["hash"] for a in ("", "  ", args)}
+    assert keys[""] == keys["  "] and (keys[args] != keys[""]) == bool(args.strip())
+    import hashlib
+    assert keys[""] == hashlib.sha256(b"b.kicad_pcb\0").hexdigest()[:24]          # the key before args counted
 
 
 def test_the_fetch_step_reads_codes_a_windows_python_ends_with_crlf(tmp_path):
@@ -654,7 +680,8 @@ def test_the_docs_say_what_a_missing_record_does():
     action = readme[readme.index("### GitHub Action"):readme.index("## Limits")]
     assert "never fail" not in text and "never fails" not in action
     for doc in (text, load()["inputs"]["db"]["description"], action):
-        assert "red (not simulated)" in " ".join(doc.split()) and "jlcplace fit" in doc
+        doc = " ".join(doc.replace("#", " ").split())
+        assert "red (not simulated)" in doc and "jlcplace fit" in doc
 
 
 # ------------------------------------------------------------------------------------------------------- for real

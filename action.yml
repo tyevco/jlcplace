@@ -10,11 +10,12 @@
 #       db: jlcplace-db                         # optional: the committed correction database
 #
 # The terminal summary and the preview checklist go to the job summary, and every red or yellow row becomes an
-# annotation on its CPL line. EasyEDA records are kept in the calling repository's Actions cache, keyed on the board
-# and the BOM, and `jlcplace fetch` downloads only what the cache lacks (rate-limited); what a fetch cut short got
-# (EasyEDA down, or rate-limiting the runner) is saved too, and the next run fetches the rest. The check runs with
-# the records at hand: a multi-pin or polar part without its record is red (not simulated) unless `db` holds its
-# correction, so commit one (`jlcplace fit BOARD --db DIR` stores every part's) for a step EasyEDA cannot fail.
+# annotation on its CPL line. EasyEDA records are kept in the calling repository's Actions cache, keyed on the board,
+# the BOM and the args, and `jlcplace fetch` downloads only what the cache lacks (rate-limited); what a fetch cut
+# short got (EasyEDA down, or rate-limiting the runner) is saved too, and the next run fetches the rest. The check
+# runs with the records at hand: a multi-pin or polar part without its record is red (not simulated) unless `db`
+# holds its correction, so commit one (`jlcplace fit BOARD --db DIR` stores every part's) for a step EasyEDA cannot
+# fail.
 #
 # Licensing: the EasyEDA records (JLCEDA/EasyEDA Official Library) stay on the runner and in the Actions cache. This
 # action uploads nothing and writes no HTML report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON
@@ -60,8 +61,8 @@ inputs:
   args:
     description: >-
       More arguments for jlcplace check, split at whitespace (spaces, tabs and newlines: one per line in a block is
-      fine; no quoting), e.g. "--origin absolute" or
-      "--lcsc-field LCSC_PN".
+      fine; no quoting), e.g. "--origin absolute" or "--lcsc-field LCSC_PN". The fetch reads the board with the same
+      --lcsc-field and --reader.
     required: false
     default: ""
   python-version:
@@ -132,17 +133,21 @@ runs:
         echo "python=$bin/python" >> "$GITHUB_OUTPUT"
         echo "jlcplace=$bin/jlcplace" >> "$GITHUB_OUTPUT"
 
-    - name: EasyEDA record cache key (the board and the BOM)
+    - name: EasyEDA record cache key (the board, the BOM and the arguments, which may name the code field)
       id: key
       shell: bash
       env:
         BOARD: ${{ inputs.board }}
         BOM: ${{ inputs.bom }}
+        ARGS: ${{ inputs.args }}
         PY: ${{ steps.install.outputs.python }}
       run: |
-        "$PY" -I - "$BOARD" "$BOM" >> "$GITHUB_OUTPUT" <<'EOF'
+        "$PY" -I - "$BOARD" "$BOM" "$ARGS" >> "$GITHUB_OUTPUT" <<'EOF'
         import hashlib, pathlib, sys
-        files = (pathlib.Path(p).read_bytes() if p and pathlib.Path(p).is_file() else p.encode() for p in sys.argv[1:])
+        board, bom, args = sys.argv[1:]
+        files = [pathlib.Path(p).read_bytes() if p and pathlib.Path(p).is_file() else p.encode() for p in (board, bom)]
+        if args.split():                           # without args, the key a run before them had
+            files.append(" ".join(args.split()).encode())
         print("hash=" + hashlib.sha256(b"\0".join(files)).hexdigest()[:24])
         EOF
 
@@ -160,6 +165,7 @@ runs:
       env:
         BOARD: ${{ inputs.board }}
         BOM: ${{ inputs.bom }}
+        ARGS: ${{ inputs.args }}
         PY: ${{ steps.install.outputs.python }}
         JLCPLACE: ${{ steps.install.outputs.jlcplace }}
         CACHE: ${{ runner.temp }}/jlcplace-easyeda
@@ -181,8 +187,18 @@ runs:
         # without the \r: Python on a Windows runner ends its line with \r\n, which bash would keep on the last code
         # (and macOS's bash 3.2 turns a lone \r into an empty argument even when \r is in IFS)
         read -r -a codes <<< "$(tr -d '\r' < "$RUNNER_TEMP/jlcplace-codes.txt")"
+        # the options of `args` that say how the board is read (the field its codes are in), as the check gets them
+        read -r -d '' -a extra <<< "$ARGS" || true
+        board_opts=()
+        for ((i = 0; i < ${#extra[@]}; i++)); do
+          case "${extra[i]}" in
+            --lcsc-field|--reader) board_opts+=("${extra[i]}" "${extra[i + 1]:-}"); i=$((i + 1)) ;;
+            --lcsc-field=*|--reader=*) board_opts+=("${extra[i]}") ;;
+          esac
+        done
         set +e
-        "$JLCPLACE" fetch --cache "$CACHE" "$BOARD" "${codes[@]}" | tee "$RUNNER_TEMP/jlcplace-fetch.txt"
+        "$JLCPLACE" fetch --cache "$CACHE" "${board_opts[@]}" "$BOARD" "${codes[@]}" \
+          | tee "$RUNNER_TEMP/jlcplace-fetch.txt"
         code=${PIPESTATUS[0]}
         set -e
         # records downloaded now ("(fetched)", "not found (...; fetched)"): worth saving even when others failed
