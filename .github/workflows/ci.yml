@@ -280,6 +280,9 @@ jobs:
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
+          # cairosvg renders the overlay PNGs (the PNG test may not skip here): the image has no browser
+          /opt/venv/bin/python -m pip install cairosvg
+          /opt/venv/bin/python -c "import cairosvg"
           echo /opt/venv/bin >> "$GITHUB_PATH"
       - name: restore EasyEDA records
         uses: actions/cache/restore@v4
