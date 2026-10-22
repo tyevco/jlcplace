@@ -59,7 +59,8 @@ inputs:
     default: red
   args:
     description: >-
-      More arguments for jlcplace check, split at whitespace (no quoting), e.g. "--origin absolute" or
+      More arguments for jlcplace check, split at whitespace (spaces, tabs and newlines: one per line in a block is
+      fine; no quoting), e.g. "--origin absolute" or
       "--lcsc-field LCSC_PN".
     required: false
     default: ""
@@ -240,7 +241,8 @@ runs:
         if [ -n "$BOM" ]; then opts+=(--bom "$BOM"); fi
         if [ -n "$GERBERS" ]; then opts+=(--gerbers "$GERBERS"); fi
         if [ -n "$DB" ]; then opts+=(--db "$DB"); fi
-        read -r -a extra <<< "$ARGS"
+        # split at every whitespace, newlines too (an `args: |` block), unglobbed; read stops at the end: status 1
+        read -r -d '' -a extra <<< "$ARGS" || true
         set +e
         "$JLCPLACE" check "$BOARD" "$CPL" "${opts[@]}" "${extra[@]}" 2> "$out/stderr.txt" | tee "$out/stdout.txt"
         code=${PIPESTATUS[0]}

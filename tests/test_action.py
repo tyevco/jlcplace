@@ -448,6 +448,15 @@ def test_the_check_step_passes_the_inputs_and_reports(tmp_path):
     assert "<details><summary>Preview checklist</summary>" in s and "- [ ] **U10**" in s
 
 
+@pytest.mark.parametrize("args", ["--origin absolute\n--lcsc-field LCSC_PN\n", "\t--origin absolute\n\n --lcsc-field\tLCSC_PN",
+                                  "--origin absolute --lcsc-field LCSC_PN"], ids=["block", "tabs", "one-line"])
+def test_args_split_at_every_whitespace_newlines_too(tmp_path, args):
+    """`args: |` with one option per line is a common way to write it: every line reaches jlcplace check, none is
+    dropped without a word."""
+    res, argv, _ = fake_check(tmp_path, {"args": args})
+    assert argv[-4:] == ["--origin", "absolute", "--lcsc-field", "LCSC_PN"], argv
+
+
 def test_the_check_step_leaves_out_what_is_not_given(tmp_path):
     res, args, _ = fake_check(tmp_path, {}, code=0)
     assert res.code == 0 and res.outputs["exit-code"] == "0"
