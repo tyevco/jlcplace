@@ -7,12 +7,13 @@ works on a CPL from any tool, and it can write the CPL itself.
 ```
 $ jlcplace check board.kicad_pcb board-CPL.csv
 jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
-RED     J1   C160411    bottom  off-copper: 14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
-RED     J20  C262671    top     off-copper: 11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
-RED     J40  C160404    bottom  off-copper: 6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
-YELLOW  R26  C4167968   top     not-simulated: placement not simulated: no EasyEDA footprint (Component not found)
-184 results: 3 red, 1 yellow, 180 green, 0 verified
-Preview checklist (112): look at these in JLC's placement preview
+RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
+RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
+RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
+YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only (...)
+YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
+184 results: 3 red, 2 yellow, 179 green, 0 verified
+Preview checklist (109): look at these in JLC's placement preview
   bottom reading        BZ1 J1 J40 U10 U11 U12 U30 U32 U40 U41
   ...
 ```
@@ -62,8 +63,11 @@ jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv \
     --report report.html --checklist checklist.md
 ```
 
-`--bom` gives codes to parts that only have one in the BOM, and checks that the BOM agrees with the board and the
-CPL. The CPL may use JLC's header (Designator, Mid X, Mid Y, Layer, Rotation) or any common spelling. It may also be
+`--bom` checks that the BOM agrees with the board and the CPL. JLC assembles from the BOM's LCSC column and never
+sees the board, so the BOM's code is the part that is simulated (and written by `cpl --bom`), also where the board
+names another code; such parts are listed ("JLC places C7519 from the BOM; the board says C2681320"). Parts the board
+only excludes from its BOM are checked too when the BOM lists them, since JLC places what its BOM lists. Without
+`--bom`, a board whose parts mostly have no LCSC code gets a hint to pass the BOM or `--lcsc-field NAME`. The CPL may use JLC's header (Designator, Mid X, Mid Y, Layer, Rotation) or any common spelling. It may also be
 a KiCad position file (CSV or ASCII). Use `--units in` for a CSV position file exported in inches. The CPL origin is
 the board's aux (drill/place file) origin; use `--origin grid|absolute|X,Y` for other origins.
 
@@ -78,7 +82,9 @@ wrote. If any row is red, it exits with code 2 and keeps no file; `--force` writ
 
 **When the records cannot decide.** Some parts need a person to decide. For example, the TS-1187A switch is numbered
 1-4 in EasyEDA and 1,1,2,2 in KiCad, and which EasyEDA pins the switch joins inside is in its datasheet, not in the
-records. Such a part stays red until someone records the decision:
+records. Such a part stays red until someone records the decision. So does a polar two-terminal part whose EasyEDA pin
+names and pad numbers disagree when no "+" on its EasyEDA footprint settles it (or whose "+" contradicts its only
+other evidence): its polarity needs a look in JLC's preview.
 
 ```
 jlcplace confirm board.kicad_pcb --ref SW1 --db jlcplace-db --by you --source manual --note "pins 1-2, 3-4 joined"
@@ -96,8 +102,8 @@ Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: no EasyEDA footprint for a polar or multi-pin part; a row for a part that is not on the board, is DNP or excluded, or is on the wrong layer; a duplicate row; an assembled part with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, KiCad pads that no EasyEDA pad lands on, numbering vouched for only by a manual decision, or a BOM inconsistency. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP or excluded, or is on the wrong layer; a duplicate row; an assembled part with no row. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -115,7 +121,8 @@ The **preview checklist** lists what only JLC's preview can settle:
 * bottom parts whose pins would move if JLC read the bottom rotation differently (see below);
 * parts with no EasyEDA footprint;
 * rows at angles that are not multiples of 90;
-* parts whose fitted correction is not green.
+* parts whose fitted correction is not green, the ones whose choice of placement is in doubt (a polarity, an
+  orientation) first.
 
 ## How the check works
 
@@ -131,9 +138,12 @@ part is the rigid map between the two footprints:
 
     library = R(rot) · ee + (dx, dy)
 
-It is fitted from pad numbers and pad geometry, with symbol pin names and nets as further evidence. Each fit gets a
-verdict with reasons, for example "polarity decided by pad numbers only" or "ambiguous". A mirrored match is never
-used. From the correction:
+It is fitted from pad numbers and pad geometry, with symbol pin names, nets and, for a polar two-terminal part, the
+"+" its EasyEDA footprint draws beside its positive pad as further evidence. Each fit gets a verdict with reasons,
+for example "polarity decided by pad numbers only" or "ambiguous". A mirrored match is never used. Whether a
+two-terminal part may be turned round (a resistor) or not (a diode, a tantalum) is decided once, for the fit and the
+check alike: from its reference prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title,
+part categories (tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the correction:
 
 * Mid X, Mid Y = where the EasyEDA origin lies on the board, in the cpl frame.
 * Rotation = theta + rot on the top, and 180 - theta + rot on the bottom.
@@ -150,10 +160,12 @@ them go on the preview checklist. `--reading` selects another reading if JLC eve
 
 ## The correction database
 
-`--db DIR` is a directory with one JSON file per LCSC code, made to be committed. Each entry is keyed by the EasyEDA
-footprint (uuid and update time) and a hash of the KiCad pads, so one code on two KiCad footprints gets two entries.
-Entries hold derived numbers only: rot, dx, dy, the fit's verdict and reasons, and the verification history. They
-never hold pad geometry.
+`--db DIR` is a directory with one JSON file per LCSC code, made to be committed. Each entry is keyed by a hash of the
+EasyEDA footprint's pads and a hash of the KiCad pads and their pin functions, so one code on two KiCad footprints,
+or on one footprint with other pin names (a diode with pad 1 the cathode, and one with pad 1 the anode), gets two
+entries: one part's correction or verification never stands for another's. Entries hold derived numbers: rot, dx,
+dy, the fit's verdict and reasons, and the verification history, plus the EasyEDA footprint's title (its package
+name, e.g. `SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR`) for people reading the file. They never hold pad geometry.
 
 Status, strongest first:
 
@@ -170,7 +182,9 @@ stored correction, the part becomes yellow until it is checked again.
 Commit the database and run the check offline. With no EasyEDA records at hand, a part with a stored correction is
 still simulated: its KiCad pads, taken back through the correction, stand in for the EasyEDA pads. That catches rows
 that no longer match the stored corrections (a part moved, a CPL edited by hand). The verdict cannot be better than
-the correction's. For a full simulation, cache the records too.
+the correction's, and a row whose verdict the correction caps says so ("yellow because the stored auto correction
+is yellow: ..."). A two-pad non-polar part with neither a record nor a stored correction is still checked against
+its own copper: a row point off its pads is red. For a full simulation, cache the records too.
 
 ```yaml
 # .github/workflows/cpl.yml
@@ -197,7 +211,13 @@ fail the job as well.
 ## Limits
 
 * Only pad centres are placed. A row slightly off but still with every centre on its own pad passes; a known
-  correction adds a message when the row is more than 0.05 mm or 0.5 degrees from the row jlcplace would write.
+  correction adds a message when the row is more than 0.05 mm or 0.5 degrees from the row jlcplace would write, and
+  makes it yellow ("offset") beyond 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees.
+* Polarity: where EasyEDA's pin names and pad numbers disagree, the "+" drawn on its footprint decides (it was right
+  in all 6 such cases of JLC's preview data; the names alone were wrong once, D12 C2836396). The "+" is read from
+  two crossing strokes on the silkscreen or document layer; KiCad's positive pad from the pin functions, else KiCad's
+  library convention (diode pad 1 = cathode, polarised capacitor pad 1 = +). Footprints outside KiCad's libraries
+  may follow another convention: give their pins functions.
 * The bottom-side reading is a well-supported hypothesis, not a documented fact; see the caveat above.
 * EasyEDA's rotation sense is proven from the records' corner order at multiples of 90 degrees. At other angles,
   RECT and OVAL pads are checked against their own outlines.
@@ -217,8 +237,9 @@ EasyEDA footprints and symbols come from the **JLCEDA/EasyEDA Official Library**
 https://easyeda.com). The copyright and related rights in that library belong to JLCEDA/EasyEDA, and its records
 carry that copyright and source notice. jlcplace downloads records only into your own cache directory
 (`$JLCPLACE_CACHE`, else `$XDG_CACHE_HOME/jlcplace` or `~/.cache/jlcplace`), keeps them verbatim (notice included),
-and never redistributes them. The correction database and the JSON, JUnit, checklist and annotation outputs hold only
-derived numbers, pad numbers and hashes.
+and never redistributes them. The JSON, JUnit, checklist and annotation outputs hold derived numbers, pad numbers and
+hashes; the correction database holds those and the EasyEDA footprint's title (a package name such as
+`SOIC-8_L5.3-W5.3-P1.27-LS8.0-BL`), and the JSON report and `fit --json` name it too.
 
 The HTML report draws EasyEDA pad outlines and states their source. It is meant for your own review; do not publish
 it. This repository contains no EasyEDA data: its tests build their EasyEDA records by hand, or read a local cache

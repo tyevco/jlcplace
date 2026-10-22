@@ -2,8 +2,8 @@
 fitted), the rows jlcplace writes, and the check of any CPL against the board. cli.py and report.py work on this.
 
 Where a part's correction comes from (`Resolved.source`):
-  db        the correction database has an entry for the code on this KiCad footprint (pad hash) and EasyEDA
-            footprint (key, or an entry that matches any key);
+  db        the correction database has an entry for the code on this KiCad footprint and pin functions
+            (parts.kicad_hash) and EasyEDA footprint (key, or an entry that matches any key);
   fit       fitted now (fit.fit_part); a database entry for an older EasyEDA footprint ("stale") is compared with
             the refit and the result recorded in the reasons;
   fallback  `jlcplace cpl` only: no EasyEDA footprint and no entry, so the row is KiCad's own position and angle
@@ -30,7 +30,7 @@ from .easyeda import EEError
 from .fit import fit_part
 from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
-from .parts import ee_key
+from .parts import ee_key, kicad_hash
 
 _CODE = re.compile(r"C[1-9][0-9]*", re.I)
 
@@ -98,20 +98,27 @@ def is_code(text: str) -> bool:
     return bool(_CODE.fullmatch(str(text).strip()))
 
 
-def apply_bom_codes(board: Board, bom_rows: list[dict]) -> list[str]:
-    """Give parts that carry no LCSC code the one their BOM line names (JLC assembles from the BOM). Returns the
-    refs changed."""
+def apply_bom_codes(board: Board, bom_rows: list[dict]) -> list[tuple[str, str, str]]:
+    """Give every part its BOM line's code: JLC assembles from the BOM's LCSC column and never sees the board, so
+    the BOM's code is the part JLC places, and the one to simulate, even where the board names another. Returns
+    (ref, board code or "", BOM code) for every part changed."""
     changed = []
     for b in bom_rows:
-        code = b.get("lcsc") or ""
+        code = (b.get("lcsc") or "").upper()
         if not is_code(code):
             continue
         for ref in b.get("designators") or []:
             part = board.part(ref)
-            if part is not None and not part.lcsc:
-                part.lcsc, part.lcsc_field = code.upper(), "BOM"
-                changed.append(ref)
+            if part is not None and part.lcsc != code:
+                changed.append((ref, part.lcsc, code))
+                part.lcsc, part.lcsc_field = code, "BOM"
     return changed
+
+
+def bom_overrides(changed: list[tuple[str, str, str]]) -> list[str]:
+    """BOM messages for the parts whose board code the BOM's replaced (apply_bom_codes)."""
+    return [f"{ref}: JLC places {new} from the BOM; the board says {old} (checked with {new})"
+            for ref, old, new in changed if old]
 
 
 def lookup_ee(client, code: str) -> EEFootprint | NotFound:
@@ -151,12 +158,12 @@ def key_reasons(c: Correction, n: int = 2) -> list[str]:
 
 
 def correction(part: Part, ee, db=None, *, snap: float = 0.5) -> tuple[Correction | None, str]:
-    """(correction, source) for a part: the database entry for its code, KiCad pad hash and EasyEDA key; else a fit
+    """(correction, source) for a part: the database entry for its code, KiCad key and EasyEDA key; else a fit
     (a stale entry is compared with the refit: a refit that differs is at best yellow); else (None, "")."""
     key = ee_key(ee) if isinstance(ee, EEFootprint) else ""
     stored = None
     if db is not None:
-        stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=geom.pad_hash(part.copper_pads()))
+        stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=kicad_hash(part))
         if stored is not None and stored.status != "stale":
             return stored, "db"
     if not isinstance(ee, EEFootprint):
@@ -179,19 +186,28 @@ def fallback(part: Part, ee) -> Correction:
     the usual centred two-pad passive; the check says not-simulated (red unless non-polar with two pads)."""
     why = ee.message if isinstance(ee, NotFound) else "no EasyEDA footprint"
     ok = nonpolar(part) and len(part.copper_pads()) == 2
-    return Correction(rot=0.0, method="none", verdict=YELLOW if ok else RED, kicad_hash=geom.pad_hash(
-        part.copper_pads()), reasons=[f"no EasyEDA footprint ({why}): the row is KiCad's own position and angle"])
+    return Correction(rot=0.0, method="none", verdict=YELLOW if ok else RED, kicad_hash=kicad_hash(part),
+                      reasons=[f"no EasyEDA footprint ({why}): the row is KiCad's own position and angle"])
 
 
-def resolve(board: Board, client, db=None, *, refs=None, snap: float = 0.5, use_fallback: bool = False
-            ) -> dict[str, Resolved]:
+def bom_listed(part: Part, bom_rows) -> bool:
+    """JLC places the part although the board excludes it from its BOM: the JLC BOM lists it (and nothing else keeps
+    it off the board: not DNP, not excluded from the position files, not board-only)."""
+    return (bom_rows is not None and part.placed and part.exclude_bom
+            and any(part.ref in (b.get("designators") or []) for b in bom_rows))
+
+
+def resolve(board: Board, client, db=None, *, refs=None, snap: float = 0.5, use_fallback: bool = False,
+            bom_rows=None) -> dict[str, Resolved]:
     """A Resolved for every part JLC assembles that has an LCSC code (or for `refs`, any part with a code), each
-    EasyEDA record looked up once per code."""
+    EasyEDA record looked up once per code. With `bom_rows`, also the parts the board only excludes from its BOM but
+    the JLC BOM lists (JLC places what its BOM lists)."""
     want = set(refs) if refs else None
     ees: dict[str, EEFootprint | NotFound] = {}
     out: dict[str, Resolved] = {}
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
-        if not part.lcsc or (want is None and not assembled(part)) or (want is not None and part.ref not in want):
+        if not part.lcsc or (want is not None and part.ref not in want) or (
+                want is None and not assembled(part) and not bom_listed(part, bom_rows)):
             continue
         if part.lcsc not in ees:
             ees[part.lcsc] = lookup_ee(client, part.lcsc)
@@ -233,17 +249,23 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
     a part without a code that the BOM does not list is yellow (JLC does not place it)."""
     ees = {r.part.lcsc: r.ee for r in resolved.values() if r.part.lcsc}
     corrections = {ref: r.corr for ref, r in resolved.items() if r.corr is not None}
-    results = check_cpl(board, rows, lambda code: ees.get(code), corrections=corrections, reading=reading)
     bom_refs = {d for b in bom_rows or [] for d in b.get("designators") or []}
+    results = check_cpl(board, rows, lambda code: ees.get(code), corrections=corrections, reading=reading,
+                        bom_refs=bom_refs if bom_rows is not None else None)
     for i, res in enumerate(results):
         info = resolved.get(res.ref)
         if res.status == "not-simulated" and info is not None and info.source == "db" and res.row is not None:
             why = info.ee.message if isinstance(info.ee, NotFound) else "no EasyEDA record"
             new = check_row(info.part, res.row, proxy_footprint(info.part, info.corr), board.origin, corr=info.corr,
                             reading=reading)
-            new.verdict = _worst(new.verdict, info.corr.verdict if info.corr.verdict in VERDICT_ORDER else YELLOW)
-            new.messages.insert(0, f"simulated with the KiCad pads through the stored {info.corr.status} correction "
-                                   f"({why})")
+            cap = info.corr.verdict if info.corr.verdict in VERDICT_ORDER else YELLOW
+            if VERDICT_ORDER[cap] < VERDICT_ORDER.get(new.verdict, 0):
+                # the simulation is only as good as the stored correction: say so where the verdict is read
+                new.verdict = cap
+                new.messages.insert(0, f"{cap} because the stored {info.corr.status} correction is {cap}"
+                                       + (f": {key_reasons(info.corr, 1)[0]}" if info.corr.reasons else ""))
+            new.messages.append(f"simulated with the KiCad pads through the stored {info.corr.status} correction: "
+                                f"{why}")
             results[i] = res = new
             info.proxy = True
         part = board.part(res.ref)
@@ -319,13 +341,22 @@ def checklist(run: Run) -> list[CheckItem]:
             add("uncertain correction", f"{info.corr.verdict} {info.source} correction ({info.corr.status}): "
                                         + "; ".join(key_reasons(info.corr)))
     order = {"bottom reading": 0, "not simulated": 1, "odd angle": 2, "uncertain correction": 3}
-    return sorted(items, key=lambda it: (order.get(it.category, 9), natural_key(it.ref)))
+    return sorted(items, key=lambda it: (order.get(it.category, 9), _rank_doubt(run, it), natural_key(it.ref)))
+
+
+def _rank_doubt(run: Run, it: CheckItem) -> int:
+    """Uncertain corrections whose choice of placement is in doubt (a polarity, names against numbers, an
+    orientation the pads do not fix) first: they are the ones that can be the wrong way round."""
+    info = run.resolved.get(it.ref)
+    if it.category != "uncertain correction" or info is None or info.corr is None:
+        return 0
+    return {"polarity": 0, "names": 1, "orientation": 2}.get(info.corr.doubt, 3)
 
 
 # ------------------------------------------------------------------------------------------------------- misc
 
 def with_bom_codes(board: Board, bom_rows) -> Board:
-    """A copy of the board whose code-less parts carry their BOM codes (the original is not changed)."""
+    """A copy of the board whose parts carry their BOM codes (apply_bom_codes; the original is not changed)."""
     b = replace(board, parts=[replace(p) for p in board.parts])
     apply_bom_codes(b, bom_rows)
     return b

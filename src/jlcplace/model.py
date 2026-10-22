@@ -129,11 +129,15 @@ class EEFootprint:
     uuid: str = ""                 # packageDetail uuid
     utime: int = 0                 # packageDetail update time (EasyEDA's own; not the record's updated_at)
     pads: list[EEPad] = field(default_factory=list)
-    marks: list[tuple[float, float]] = field(default_factory=list)   # pin-1 / polarity marks (layer 101), ee frame
+    marks: list[tuple[float, float]] = field(default_factory=list)   # pin-1 marks (layer 101), ee frame: they sit
+                                                     # by pad 1 whatever its function, so they say nothing of polarity
     pin_names: dict[str, str] = field(default_factory=dict)          # pad number -> symbol pin name
     package: str = ""
-    tokens: list[str] = field(default_factory=list)  # orientation tokens in the title: TL, TR, BL, BR, RD, FD, CW
+    tokens: list[str] = field(default_factory=list)  # orientation tokens in the title: TL, TR, BL, BR, RD, FD, CW, BI
     source: str = "easyeda-classic"
+    tags: list[str] = field(default_factory=list)    # the record's part categories (result.tags), e.g. "TVS"
+    plus: list[tuple[float, float, float]] = field(default_factory=list)  # "+" marks drawn on silkscreen/document:
+                                                     # (x, y, bar length), ee frame
 
     def key(self) -> str:
         return f"{self.uuid}:{self.utime}"
@@ -158,9 +162,13 @@ class Correction:
     reasons: list[str] = field(default_factory=list)
     alternatives: list[dict] = field(default_factory=list)  # other transforms under which every EE pad lands
     matched: int = 0               # pads matched by number
-    ee_key: str = ""               # EEFootprint.key() it was fitted on
-    kicad_hash: str = ""           # geom.pad_hash of the KiCad pads it was fitted on
+    ee_key: str = ""               # parts.ee_key of the EasyEDA footprint it was fitted on
+    kicad_hash: str = ""           # parts.kicad_hash of the KiCad part it was fitted on (pads and pin functions)
     status: str = "auto"           # auto | manual | preview-verified | board-verified
+    doubt: str = ""                # why the fit may have chosen the wrong one of several placements that land every
+                                   # pad: "polarity" (pad numbers only, or names / + mark decided), "orientation" (the
+                                   # pads do not fix the body's orientation), "" none
+    polar: bool | None = None      # two-terminal part judged polar by the fit (parts.nonpolar); None: not judged
 
 
 @dataclass
@@ -185,8 +193,8 @@ class PadLanding:
 class RowResult:
     ref: str
     lcsc: str = ""
-    status: str = "ok"             # ok | off-copper | wrong-pad | renumbered | not-simulated | no-row | not-on-board
-                                   # | layer-mismatch | not-placed
+    status: str = "ok"             # ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row
+                                   # | not-on-board | layer-mismatch | not-placed | duplicate
     verdict: str = GREEN
     landings: list[PadLanding] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)   # KiCad soldered pads no EE pad lands in

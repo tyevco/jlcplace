@@ -17,6 +17,7 @@ import datetime
 import html as _html
 import io
 import math
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -52,6 +53,21 @@ def _layer(run: Run, res: RowResult) -> str:
 
 # ------------------------------------------------------------------------------------------------------- terminal
 
+def plural(n: int, word: str, many: str = "") -> str:
+    """'1 code', '2 codes'."""
+    return f"{n} {word if n == 1 else many or word + 's'}"
+
+
+def headline(res: RowResult) -> str:
+    """'status: first message', the status left out when the message already says it ('2 of 2 EasyEDA pads land off
+    copper', 'placement not simulated: ...')."""
+    msg = res.messages[0] if res.messages else ""
+    words = res.status.replace("-", " ")
+    if msg and re.search(rf"\b{re.escape(words)}\b", msg, re.I):
+        return msg
+    return f"{res.status}: {msg}" if msg else res.status
+
+
 def summary(run: Run, *, color: bool = False) -> str:
     """One line per red or yellow result with its first reason (and the correction's, where the numbering rests on
     it), BOM issues, a count line, and the preview checklist grouped by category."""
@@ -66,7 +82,7 @@ def summary(run: Run, *, color: bool = False) -> str:
     w = max((len(r.ref) for r in bad), default=0)
     for r in bad:
         out.append(f"{paint(r.verdict, f'{r.verdict.upper():<6}')}  {r.ref:<{w}}  {r.lcsc or '-':<10} "
-                   f"{_layer(run, r):<6}  {r.status}: {r.messages[0] if r.messages else ''}")
+                   f"{_layer(run, r):<6}  {headline(r)}")
         info = run.resolved.get(r.ref)
         if (info is not None and info.corr is not None and r.status in ("renumbered", "wrong-pad")
                 and info.corr.verdict in (RED, YELLOW) and info.corr.reasons):
@@ -77,7 +93,7 @@ def summary(run: Run, *, color: bool = False) -> str:
     c = run.counts()
     out.append(f"{len(run.results)} results: "
                + ", ".join(paint(v, f"{c[v]} {v}") for v in (RED, YELLOW, GREEN, VERIFIED))
-               + (f"; {len(run.bom_messages)} BOM issues" if run.bom_messages else ""))
+               + (f"; {plural(len(run.bom_messages), 'BOM issue')}" if run.bom_messages else ""))
     items = run.checklist()
     if items:
         out.append(f"Preview checklist ({len(items)}): look at these in JLC's placement preview")
@@ -198,7 +214,7 @@ def junit(run: Run, *, fail_on: str = RED) -> str:
         text = "\n".join(res.messages)
         if _fails(res.verdict, fail_on):
             ET.SubElement(tc, "failure", type=res.verdict,
-                          message=f"{res.status}: {res.messages[0] if res.messages else res.verdict}").text = text
+                          message=headline(res) if res.messages else f"{res.status}: {res.verdict}").text = text
         elif text:
             ET.SubElement(tc, "system-out").text = f"{res.verdict} {res.status}\n{text}"
         cases.append(tc)
@@ -595,7 +611,8 @@ def html(run: Run) -> str:
            f'{_esc(TOOL)}.</p>',
            '<div class="counts">'
            + "".join(f'<span class="badge b-{v}">{c[v]} {v}</span>' for v in (RED, YELLOW, GREEN, VERIFIED))
-           + (f'<span class="badge b-yellow">{len(run.bom_messages)} BOM issues</span>' if run.bom_messages else "")
+           + (f'<span class="badge b-yellow">{plural(len(run.bom_messages), "BOM issue")}</span>'
+              if run.bom_messages else "")
            + "</div>",
            '<div class="legend"><span class="l-kp">KiCad copper pad</span><span class="l-own">EasyEDA pad as JLC '
            'places it, on its own number</span><span class="l-other">on another number</span><span class="l-off">'

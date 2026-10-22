@@ -1,0 +1,258 @@
+# CI for jlcplace.
+#
+# unit   the pure-Python tests (not pcbnew, cache or network) on Linux and macOS: no KiCad, no EasyEDA data, no
+#        network (the proxy variables point nowhere, so a stray request fails at once).
+# kicad  the rest but the EasyEDA-record tests, in KiCad's own image: pcbnew, kicad-cli and KiCad's footprint
+#        libraries, on the public dial-me-spinner boards and the reference tools' KiCad 5 to 10 test boards.
+# e2e    the EasyEDA-record tests and a dogfood check of the shipped and the old CPLs, with the boards' records fetched
+#        by `jlcplace fetch` (rate-limited) and kept in this repository's private Actions cache.
+#
+# Every pytest run writes JUnit and goes through .github/skip_gate.py: a skip whose reason the job does not allow
+# (ALLOW_SKIPS, a regular expression) fails the job, so tests cannot silently stop running when a fixture moves. The
+# tests find their data through JLCPLACE_DIAL_ME_SPINNER and JLCPLACE_TEST_EASYEDA (see CONTRACT.md).
+#
+# Licensing: EasyEDA records stay on the runner and in the private Actions cache. Never upload them, or an HTML report
+# (it draws EasyEDA pad outlines), as an artifact; the JSON and JUnit outputs hold derived data only.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"            # weekly: refresh the EasyEDA records and run the live-API test
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # fixtures: the fixed CPLs of dial-me-spinner are on this commit (its main branch still has the old ones), the old
+  # CPLs (7 rows wrong: main J1 J20 J40, base J1 J2 J3 SW1) are the fab outputs of the second
+  DMS_FIXED: a5f70dcb261cfebc490fd5aa2956613b593ebfa3
+  DMS_OLD: 8816f0b662914a1e1aea03265aba6b4ec9f2c327
+  KIKIT: 958abd031e3d254d9777f6c192badbdb1c1c3757          # KiCad 5-8 test boards (tests/test_board.py OLDER)
+  JLCCHECK: d95f9e0ade6a5d9218bcdeb8b107769be8db0a5f       # z2amiller's JLC-preview ground truth, KiCad 10 boards
+
+jobs:
+  unit:
+    name: unit (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python: "3.12"
+    env:
+      JLCPLACE_DIAL_ME_SPINNER: /nonexistent/dial-me-spinner
+      JLCPLACE_TEST_EASYEDA: /nonexistent/jlc
+      # unmarked tests that read optional real boards and BOMs skip without them; nothing else may
+      ALLOW_SKIPS: "is not on this machine|needs the dial-me-spinner fab outputs"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e ".[test]"
+      - run: jlcplace --version
+      - name: pytest (not pcbnew, cache or network)
+        env:
+          HTTPS_PROXY: http://127.0.0.1:9
+          HTTP_PROXY: http://127.0.0.1:9
+          NO_PROXY: ""
+        run: >
+          python -m pytest -q -p no:cacheprovider -rs -m "not pcbnew and not cache and not network"
+          --junitxml=junit-unit.xml
+      - name: skip gate
+        if: always()
+        run: python .github/skip_gate.py junit-unit.xml
+
+  kicad:
+    name: kicad (pcbnew, kicad/kicad:9.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: kicad/kicad:9.0
+      options: --user root          # the image's own user cannot write the mounted workspace
+    defaults:
+      run:
+        shell: bash
+    env:
+      ALLOW_SKIPS: "(?!)"           # nothing may skip here
+    steps:
+      - name: tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3-venv python3-pip
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tyevco/dial-me-spinner
+          ref: ${{ env.DMS_FIXED }}
+          path: fixtures/dial-me-spinner
+          sparse-checkout: hardware
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tyevco/dial-me-spinner
+          ref: ${{ env.DMS_OLD }}
+          path: fixtures/dms-old
+          sparse-checkout: hardware/fab
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: yaqwsx/KiKit
+          ref: ${{ env.KIKIT }}
+          path: fixtures/jlc/src/yaqwsx_KiKit
+          sparse-checkout: |
+            docs/resources
+            test/resources
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: z2amiller/kicad-jlcpcb-tools
+          ref: ${{ env.JLCCHECK }}
+          path: fixtures/jlc/src/z2amiller_jlccheck
+          sparse-checkout: tests/fixtures/jlcfootprint
+          persist-credentials: false
+      - name: fixture locations
+        run: |
+          mkdir -p fixtures/jlc/fab-before
+          cp -r fixtures/dms-old/hardware/fab/main fixtures/dms-old/hardware/fab/base fixtures/jlc/fab-before/
+          echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner" >> "$GITHUB_ENV"
+          echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc" >> "$GITHUB_ENV"
+          echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints" >> "$GITHUB_ENV"
+      - name: venv with KiCad's pcbnew
+        run: |
+          python3 -m venv --system-site-packages /opt/venv
+          /opt/venv/bin/python -m pip install -e ".[test]"
+          /opt/venv/bin/python -c "import pcbnew; print('pcbnew', pcbnew.Version())"
+          echo /opt/venv/bin >> "$GITHUB_PATH"
+          kicad-cli version
+          test -d /usr/share/kicad/footprints/Package_TO_SOT_SMD.pretty || { echo "::error::no KiCad footprint libraries in the image"; exit 1; }
+      - name: pytest (everything but the EasyEDA records and the network)
+        env:
+          HTTPS_PROXY: http://127.0.0.1:9
+          HTTP_PROXY: http://127.0.0.1:9
+          NO_PROXY: ""
+        run: >
+          python -m pytest -q -p no:cacheprovider -rs -m "not cache and not network" --junitxml=junit-kicad.xml
+      - name: skip gate
+        if: always()
+        run: python .github/skip_gate.py junit-kicad.xml
+
+  e2e:
+    name: e2e (dial-me-spinner, EasyEDA records)
+    needs: kicad
+    # needs the network: not for pull requests from forks; EasyEDA being down never blocks a pull request
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: kicad/kicad:9.0
+      options: --user root
+    defaults:
+      run:
+        shell: bash
+    env:
+      ALLOW_SKIPS: ${{ github.event_name == 'schedule' && '(?!)' || 'set JLCPLACE_NETWORK_TESTS=1' }}
+      JLCPLACE_NETWORK_TESTS: ${{ github.event_name == 'schedule' && '1' || '' }}
+    steps:
+      - name: tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3-venv python3-pip zstd
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tyevco/dial-me-spinner
+          ref: ${{ env.DMS_FIXED }}
+          path: fixtures/dial-me-spinner
+          sparse-checkout: hardware
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tyevco/dial-me-spinner
+          ref: ${{ env.DMS_OLD }}
+          path: fixtures/dms-old
+          sparse-checkout: hardware/fab
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: yaqwsx/KiKit
+          ref: ${{ env.KIKIT }}
+          path: fixtures/jlc/src/yaqwsx_KiKit
+          sparse-checkout: |
+            docs/resources
+            test/resources
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: z2amiller/kicad-jlcpcb-tools
+          ref: ${{ env.JLCCHECK }}
+          path: fixtures/jlc/src/z2amiller_jlccheck
+          sparse-checkout: tests/fixtures/jlcfootprint
+          persist-credentials: false
+      - name: fixture locations
+        run: |
+          mkdir -p fixtures/jlc/fab-before fixtures/jlc/ee_raw
+          cp -r fixtures/dms-old/hardware/fab/main fixtures/dms-old/hardware/fab/base fixtures/jlc/fab-before/
+          echo "JLCPLACE_DIAL_ME_SPINNER=$GITHUB_WORKSPACE/fixtures/dial-me-spinner" >> "$GITHUB_ENV"
+          echo "JLCPLACE_TEST_EASYEDA=$GITHUB_WORKSPACE/fixtures/jlc" >> "$GITHUB_ENV"
+          echo "KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints" >> "$GITHUB_ENV"
+      - name: venv with KiCad's pcbnew
+        run: |
+          python3 -m venv --system-site-packages /opt/venv
+          /opt/venv/bin/python -m pip install -e ".[test]"
+          echo /opt/venv/bin >> "$GITHUB_PATH"
+      - name: restore EasyEDA records
+        uses: actions/cache/restore@v4
+        with:
+          path: fixtures/jlc/ee_raw
+          key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}
+          restore-keys: easyeda-v1-
+      - name: fetch missing EasyEDA records (network; at least 0.7 s between requests)
+        id: fetch
+        run: >
+          jlcplace fetch --reader sexpr --cache fixtures/jlc/ee_raw
+          ${{ github.event_name == 'schedule' && '--refresh' || '' }}
+          fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb
+          fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb
+      - name: save EasyEDA records (repository-private Actions cache, never an artifact)
+        if: always() && steps.fetch.outcome == 'success' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: fixtures/jlc/ee_raw
+          key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}-${{ github.run_id }}
+      - name: pytest (everything, with the fetched records)
+        run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit-e2e.xml
+      - name: skip gate
+        if: always()
+        run: python .github/skip_gate.py junit-e2e.xml
+      - name: dogfood (the shipped CPLs are clean, the old ones red on exactly the 7 known rows)
+        run: bash .github/dogfood.sh fixtures/dial-me-spinner/hardware fixtures/jlc/fab-before fixtures/jlc/ee_raw
+      - name: upload derived results only (no HTML report, no EasyEDA records)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: |
+            junit-e2e.xml
+            cpl-*.xml
+            cpl-*.json
+            old-*.json
+          if-no-files-found: ignore

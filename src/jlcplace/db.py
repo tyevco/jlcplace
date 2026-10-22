@@ -1,14 +1,15 @@
 """The correction database: one JSON file per LCSC code, made to be kept in git and shared.
 
     <dir>/<code>.json = {"lcsc": code, "entries": [entry, ...]}
-    entry = {"ee": {"key": "<uuid>:<utime>", "title"}, "kicad": {"fpid", "pad_hash"},
+    entry = {"ee": {"key": parts.ee_key, "title"}, "kicad": {"fpid", "pad_hash": parts.kicad_hash},
              "correction": {"rot", "dx", "dy", "mirror"}, "fit": {"method", "rms", "matched", "score",
-             "alternatives"}, "verdict", "reasons", "status", "verifications": [{"by", "date", "source", "ok",
-             "board", "ref", "layer", "presses", "note"}], "tool", "fitted"}
+             "alternatives", "doubt"?, "polar"?}, "verdict", "reasons", "status", "verifications": [{"by", "date",
+             "source", "ok", "board", "ref", "layer", "presses", "note"}], "tool", "fitted"}
 
-Only derived numbers and hashes are stored, never pad geometry: EasyEDA claims copyright over its library, and the
-numbers are all a CPL needs. An entry is keyed by (ee key, KiCad pad hash): the same code on two KiCad footprints is
-two entries, and a changed EasyEDA footprint (new key) makes the old entry stale.
+Only derived numbers, hashes and the EasyEDA footprint's title (for people reading the file) are stored, never pad
+geometry: EasyEDA claims copyright over its library, and the numbers are all a CPL needs. An entry is keyed by (ee
+key, KiCad key): the KiCad key hashes the pads and the pin functions, so the same code on two KiCad footprints, or on
+one footprint with other pin names, is two entries; a changed EasyEDA footprint (new key) makes the old entry stale.
 
 Status, strongest first: board-verified (the assembled board was right), preview-verified (JLC's placement preview
 was right), manual (typed in), auto (fitted). A verification can carry the keys pressed in JLC's preview to put the
@@ -77,8 +78,13 @@ def _corr_block(corr: Correction) -> dict:
 
 
 def _fit_block(corr: Correction) -> dict:
-    return {"method": corr.method, "rms": _num(corr.rms), "matched": int(corr.matched), "score": int(corr.score),
-            "alternatives": [_scalars(a) for a in corr.alternatives if isinstance(a, dict)]}
+    out = {"method": corr.method, "rms": _num(corr.rms), "matched": int(corr.matched), "score": int(corr.score),
+           "alternatives": [_scalars(a) for a in corr.alternatives if isinstance(a, dict)]}
+    if corr.doubt:
+        out["doubt"] = corr.doubt
+    if corr.polar is not None:
+        out["polar"] = bool(corr.polar)
+    return out
 
 
 def _to_correction(e: dict, status: str | None = None) -> Correction:
@@ -87,7 +93,8 @@ def _to_correction(e: dict, status: str | None = None) -> Correction:
                       method=f.get("method") or "db", rms=float(f.get("rms", 0.0)), verdict=e.get("verdict", ""),
                       score=int(f.get("score", 0)), reasons=list(e.get("reasons", [])),
                       alternatives=copy.deepcopy(f.get("alternatives", [])), matched=int(f.get("matched", 0)),
-                      ee_key=_keys(e)[0], kicad_hash=_keys(e)[1], status=status or e.get("status", "auto"))
+                      ee_key=_keys(e)[0], kicad_hash=_keys(e)[1], status=status or e.get("status", "auto"),
+                      doubt=str(f.get("doubt") or ""), polar=None if f.get("polar") is None else bool(f["polar"]))
 
 
 def _keys(e: dict) -> tuple[str, str]:

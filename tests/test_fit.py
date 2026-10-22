@@ -6,6 +6,7 @@ and d back. On real data the dial-me-spinner parts must reproduce the cross-chec
 z2amiller fixtures' JLC-preview ground truth must never be contradicted by a green verdict.
 """
 import csv
+import dataclasses
 import json
 import math
 import os
@@ -193,10 +194,25 @@ def test_diode_polarity_needs_a_second_source():
     pads[0].pin_name, pads[1].pin_name = "K", "A"
     c = fit.fit_part(part, to_ee(pads, 90, (0.2, 0.1), names={"1": "K", "2": "A"}))
     assert c.verdict == GREEN and has(c, "ruled out by pad numbers and pin names")
-    # EasyEDA numbers the anode 1: the names win, and it is not green
-    c = fit.fit_part(part, to_ee(pads, 90, (0.2, 0.1), numbers=["2", "1"], names={"2": "K", "1": "A"}))
+    # EasyEDA numbers the anode 1: names against numbers. Neither is reliable on its own (JLC's preview data has the
+    # names right 5 times of 6), so without a drawn + it needs a person: red
+    ee = to_ee(pads, 90, (0.2, 0.1), numbers=["2", "1"], names={"2": "K", "1": "A"})
+    c = fit.fit_part(part, ee)
     assert_recovers(c, 90, (0.2, 0.1))
-    assert c.verdict == YELLOW and has(c, "following the names")
+    assert c.verdict == RED and has(c, "polarity undecided") and c.doubt == "polarity" and c.polar is True
+    # the footprint's "+" beside its anode (EasyEDA pad 1) settles it for the names ...
+    e1, e2 = (next(q for q in ee.pads if q.number == n) for n in ("1", "2"))
+
+    def plus_at(q, r):                                   # a "+" just outside pad q, away from pad r
+        return [(q.x + 0.3 * (q.x - r.x), q.y + 0.3 * (q.y - r.y), 0.3)]
+
+    c = fit.fit_part(part, dataclasses.replace(ee, plus=plus_at(e1, e2)))
+    assert_recovers(c, 90, (0.2, 0.1))
+    assert c.verdict == YELLOW and has(c, "following the names") and c.doubt == "polarity"
+    # ... and beside pad 2 for the numbers
+    c = fit.fit_part(part, dataclasses.replace(ee, plus=plus_at(e2, e1)))
+    assert_recovers(c, 270, (-0.2, -0.1))                # turned about the pads' middle, the origin's mirror image
+    assert c.verdict == YELLOW and has(c, "following the pad numbers")
 
 
 def test_two_pads_without_common_numbers():
@@ -272,10 +288,11 @@ def test_repeated_numbers_paired_by_position(alpha):
     c = fit.fit_part(kpart(pads, "J1"), to_ee(pads, alpha, d))
     assert_recovers(c, alpha, d)
     assert c.matched == 6 and c.verdict == (GREEN if alpha % 90 == 0 else YELLOW)
-    # EasyEDA numbers the mounting pads 5, 6: still exact from pins 1-4, but only 4/6 matched by number
+    # EasyEDA numbers the mounting pads 5, 6, which KiCad does not have (MP): exact from pins 1-4, and the numbers only
+    # one side has do not count against it (check calls them harmless too)
     c = fit.fit_part(kpart(jst_sh4(), "J1"), to_ee(pads, alpha, d, numbers=["1", "2", "3", "4", "5", "6"]))
     assert_recovers(c, alpha, d)
-    assert c.verdict == YELLOW and has(c, "only 4 of 6")
+    assert c.verdict == (GREEN if alpha % 90 == 0 else YELLOW) and not has(c, "only"), c.reasons
 
 
 def test_number_repeated_on_one_side_only_is_left_out():
@@ -285,7 +302,8 @@ def test_number_repeated_on_one_side_only_is_left_out():
     d = (0.0, -0.18)
     c = fit.fit_part(kpart(pads), to_ee(pads, 180, d, numbers=["1", "2", "3", "4"]))
     assert_recovers(c, 180, d)
-    assert c.verdict == YELLOW and c.matched == 3 and not has(c, "conflict")
+    # the tab's 4 is a number KiCad does not have: 3 of 3 matched, green
+    assert c.verdict == GREEN and c.matched == 3 and not has(c, "conflict") and not has(c, "only"), c.reasons
 
 
 def test_numbers_repeated_symmetrically():
@@ -299,10 +317,10 @@ def test_numbers_repeated_symmetrically():
     c = fit.fit_part(kpart(asym, "BT1"), to_ee(asym, 90, (0.5, 0.25)))
     assert_recovers(c, 90, (0.5, 0.25))
     assert c.verdict == GREEN and c.method == "number"
-    # one pad fixes no rotation, however well it matches
-    one = [P("1", 0, 0, 3.0, 2.0)]
+    # one pad fixes no rotation, however well it matches; a round or square one not even up to 180 degrees
+    one = [P("1", 0, 0, 3.0, 3.0)]
     c = fit.fit_part(kpart(one, "BT1"), to_ee(one, 90, (0.5, 0.25)))
-    assert c.verdict == YELLOW and has(c, "does not fix the rotation")
+    assert c.verdict == YELLOW and has(c, "does not fix the rotation") and c.doubt == "orientation"
 
 
 def test_usb_c_coincident_pads_and_joined_numbers():
@@ -320,7 +338,8 @@ def test_usb_c_coincident_pads_and_joined_numbers():
     assert len(ee.pads) == 16
     c = fit.fit_part(kpart(pads, "J1"), ee)
     assert_recovers(c, 270, d)
-    assert c.matched == 12 and c.verdict == YELLOW and has(c, "only 12 of 16")
+    # EasyEDA's shield pads 1-4 land on KiCad's S1: numbers only one side has, which do not count against the fit
+    assert c.matched == 12 and c.verdict == GREEN and not has(c, "only"), c.reasons
     land = fit.ee_landings(kpart(usb_c(), "J1"), ee, c)
     for e, x in zip(ee.pads, land):
         assert x.kicad_number is not None
@@ -368,7 +387,7 @@ def test_missing_easyeda_pad_leaves_a_kicad_pad_uncovered():
     d = (-0.2, 0.15)
     c = fit.fit_part(kpart(pads), to_ee(pads, 270, d, drop=[16]))
     assert_recovers(c, 270, d)
-    assert c.verdict == YELLOW and has(c, "KiCad pads no EasyEDA pad lands on: 17")
+    assert c.verdict == YELLOW and has(c, "KiCad pads that no EasyEDA pad lands on: 17")
     c = fit.fit_part(kpart(qfn16_ep()), to_ee(pads, 270, d))
     assert c.verdict == GREEN and c.matched == 17
 
@@ -626,6 +645,122 @@ def test_library_renumbered():
     assert_recovers(c, 90, (0.3, 0.3))
 
 
+# ------------------------------------------------------------------------------------------------------- review
+
+def sot89_kicad(handsoldering=False):
+    """KiCad's SOT-89-3 (and _Handsoldering): pad 2 is a custom pad whose anchor is the middle lead and whose
+    copper runs on into the tab."""
+    x, w, tab_x = (-2.45, 2.3, (-1.125, 3.0)) if handsoldering else (-1.95, 1.3, (-1.125, 2.0))
+    ax, aw = (-2.3625, 2.475) if handsoldering else (-1.8625, 1.475)
+    lead0 = ax - aw / 2
+    poly = [(lead0, -0.45), (tab_x[0], -0.45), (tab_x[0], -0.8665), (tab_x[1], -0.8665), (tab_x[1], 0.8665),
+            (tab_x[0], 0.8665), (tab_x[0], 0.45), (lead0, 0.45)]
+    return [P("1", x, -1.5, w, 0.9, shape="roundrect", rr=0.25), P("2", ax, 0.0, aw, 0.9, shape="custom", poly=poly),
+            P("3", x, 1.5, w, 0.9, shape="roundrect", rr=0.25)]
+
+
+def sot89_ee():
+    """An EasyEDA-style SOT-89 (drawn for this test): leads 1 and 3 as rectangles, pad 2 one polygon of tab and lead
+    whose centre field is the tab's centre, not its copper's."""
+    poly = [(-3.2, -0.95), (-0.45, -0.95), (-0.45, -0.33), (2.15, -0.33), (2.15, 0.33), (-0.45, 0.33), (-0.45, 0.95),
+            (-3.2, 0.95)]
+    return EEFootprint(lcsc="C2079", title="SOT-89-3", uuid="t", utime=1, pads=[
+        EEPad("1", 1.35, 1.5, 1.6, 0.7), EEPad("3", 1.35, -1.5, 1.6, 0.7),
+        EEPad("2", -1.35, 0.0, 1.9, 5.4, angle=90.0, shape="polygon", poly=poly)])
+
+
+@pytest.mark.parametrize("handsoldering, limit", [(False, 0.8), (True, 1.2)])
+def test_sot89_tab_numbered_with_its_middle_lead(handsoldering, limit):
+    """ee-3: pairing pad centres put EasyEDA's tab centre on KiCad's lead anchor (1.2 mm rms), and with the tab the
+    only translation anchor no placement landed every pad: red on SOT-89-3, 2 mm off on _Handsoldering."""
+    part = kpart(sot89_kicad(handsoldering), "U1", "Package_TO_SOT_SMD:SOT-89-3")
+    c = fit.fit_part(part, sot89_ee())
+    assert c.verdict != RED and adiff(c.rot, 180.0) < 1e-6 and abs(c.dx) < limit and abs(c.dy) < 1e-3, c.reasons
+    assert [lnd.kicad_number for lnd in fit.ee_landings(part, sot89_ee(), c)] == ["1", "3", "2"]
+
+
+@pytest.mark.pcbnew
+@pytest.mark.parametrize("name, limit", [("SOT-89-3", 0.8), ("SOT-89-3_Handsoldering", 1.2)])
+def test_sot89_library_footprints(name, limit):
+    part = library_part("Package_TO_SOT_SMD", name)
+    c = fit.fit_part(part, sot89_ee())
+    assert c.verdict != RED and adiff(c.rot, 180.0) < 1e-6 and abs(c.dx) < limit, c.reasons
+    assert [lnd.kicad_number for lnd in fit.ee_landings(part, sot89_ee(), c)] == ["1", "3", "2"]
+
+
+def test_one_rectangular_pad_is_turned_by_its_shape():
+    """geo-3: one land does not fix the rotation, but a 3.4 x 1.8 pad drawn 1.8 x 3.4 is turned a quarter."""
+    part = kpart([P("1", 0.0, 0.0, 3.4, 1.8, shape="roundrect", rr=0.25)], "TP1", "TestPoint:TestPoint_Keystone_5015")
+    ee = EEFootprint(lcsc="C1", title="TP", pads=[EEPad("1", 0.0, 0.0, 1.8, 3.4)])
+    c = fit.fit_part(part, ee)
+    assert c.rot in (90.0, 270.0) and c.verdict == YELLOW and has(c, "only up to 180"), (c.rot, c.reasons)
+    ee = EEFootprint(lcsc="C1", title="TP", pads=[EEPad("1", 0.0, 0.0, 3.4, 1.8, angle=90.0)])     # the same pad
+    assert fit.fit_part(part, ee).rot in (90.0, 270.0)
+    for w, h, a in ((3.4, 1.8, 0.0), (1.8, 3.4, 90.0)):
+        ee = EEFootprint(lcsc="C1", title="TP", pads=[EEPad("1", 0.0, 0.0, w, h, angle=a)])
+        assert fit.fit_part(part, ee).rot in (0.0, 180.0), (w, h, a)
+    square = kpart([P("1", 0.0, 0.0, 2.0, 2.0)], "TP2")
+    c = fit.fit_part(square, EEFootprint(lcsc="C1", title="TP", pads=[EEPad("1", 0.0, 0.0, 2.0, 2.0)]))
+    assert c.rot == 0.0 and c.verdict == YELLOW and has(c, "does not fix the rotation")
+
+
+def test_regulator_with_kicad_and_easyeda_pin_names():
+    """ee-5 / truth-5: an AMS1117 (EasyEDA 1-3 and tab 4 = VOUT) on KiCad's SOT-223-3_TabPin2 (tab numbered 2) with
+    KiCad's AMS1117 symbol (GND, VO, VI): the tab's 4 is a number KiCad does not have, VO is VOUT and VI is VIN."""
+    pads = [P("1", -3.15, -2.3, 2.0, 1.5, pin_name="GND"), P("2", -3.15, 0.0, 2.0, 1.5, pin_name="VO"),
+            P("3", -3.15, 2.3, 2.0, 1.5, pin_name="VI"), P("2", 3.15, 0.0, 2.0, 3.8, pin_name="VO")]
+    part = kpart(pads, "U8", "Package_TO_SOT_SMD:SOT-223-3_TabPin2")
+    ee = to_ee(pads, 180, (-0.18, 0.0), numbers=["1", "2", "3", "4"],
+               names={"1": "GND", "2": "VOUT", "3": "VIN", "4": "VOUT"})
+    c = fit.fit_part(part, ee)
+    assert_recovers(c, 180, (-0.18, 0.0))
+    assert c.verdict == GREEN and has(c, "pin names agree") and not has(c, "differ"), c.reasons
+
+
+@pytest.mark.parametrize("w, want", [(1.4, GREEN), (0.4, YELLOW)])
+def test_rms_is_judged_against_the_pad_size(w, want):
+    """truth-5: land patterns that differ by 0.15 mm (rms) matter on 0.4 mm pads, not on 1.4 mm ones."""
+    pads = [P("1", -1.5, 0.0, w, 1.6), P("2", 1.5, 0.0, w, 1.6)]
+    part = kpart(pads, "R1", "Resistor_SMD:R_Custom")
+    ee = EEFootprint(lcsc="C1", title="R", pads=[EEPad("1", -1.65, 0.0, w, 1.6), EEPad("2", 1.65, 0.0, w, 1.6)])
+    c = fit.fit_part(part, ee)
+    assert abs(c.rms - 0.15) < 1e-6 and c.verdict == want, c.reasons
+
+
+def test_uncovered_lands_are_named_once():
+    """ee-4: a label per land repeated ('39, 39, 39, ...') says nothing more."""
+    pads = jst_sh4()
+    part = kpart(pads, "J1")
+    c = fit.fit_part(part, to_ee(pads, 0, (0.0, 0.0), drop=[4, 5]))
+    assert has(c, "KiCad pads that no EasyEDA pad lands on: MP") and not has(c, "MP, MP"), c.reasons
+
+
+def test_reasons_read_as_english():
+    """cli-11: 'rot 0 also land every pad' for one alternative."""
+    pads = sot23_6()
+    for p, net in zip(pads, ("A", "GND", "B", "C", "VCC", "D")):
+        p.net = net
+    c = fit.fit_part(kpart(pads, "U1", nets=False), to_ee(pads, 180, (0.0, 0.0)))
+    assert has(c, "rot 0 also lands every pad, on other nets"), c.reasons
+
+
+def test_red_partial_fit_is_turned_a_multiple_of_90():
+    """ee-7: an EasyEDA QFN-16 with 5/3/5/3 pads per side against KiCad's 4 per side: red, and the reported
+    placement (which `cpl --force` writes) is not a tilted compromise between the patterns."""
+    pads = qfn16_ep()[:16]
+    part = kpart(pads, "U5", "Package_DFN_QFN:QFN-16-1EP_3x3mm_P0.5mm")
+    ee_pads, k = [], 1
+    for side, n in enumerate((5, 3, 5, 3)):
+        for i in range(n):
+            t = -0.5 * (n - 1) / 2 + 0.5 * i
+            x, y, w, h = {0: (-1.45, t, 0.8, 0.25), 1: (t, 1.45, 0.25, 0.8), 2: (1.45, -t, 0.8, 0.25),
+                          3: (-t, -1.45, 0.25, 0.8)}[side]
+            ee_pads.append(EEPad(str(k), x, y, w, h))
+            k += 1
+    c = fit.fit_part(part, EEFootprint(lcsc="C11360", title="QFN-16", pads=ee_pads))
+    assert c.verdict == RED and c.rot % 90 == 0, (c.rot, c.reasons)
+
+
 # ------------------------------------------------------------------------------------------------------- real data
 
 def parse_record():
@@ -666,13 +801,12 @@ def board_parts(pcbnew):
 # Not green on dial-me-spinner, and why (the corrections themselves all match jlc_offsets.json):
 DIAL_NOT_GREEN = {
     "C318884": (RED, "numbering conflict"),            # SW1: KiCad 1,1,2,2 vs EasyEDA 1-4 (manual in jlc_offsets)
-    "C165948": (YELLOW, "only 12 of 16"),             # USB-C: EasyEDA's shield pads 1-4 vs KiCad S1
-    "C160404": (YELLOW, "only 4 of 6"),               # JST SH 4: mounting pads 5, 6 vs MP
-    "C8598": (YELLOW, "polarity decided by pad numbers only"),   # SOD-123: no KiCad pin names on these boards
-    "C151296": (YELLOW, "polarity decided by pad numbers only"),
-    "C7189": (YELLOW, "polarity decided by pad numbers only"),   # tantalum
-    "C910763": (YELLOW, "polarity decided by pad numbers only"),  # buzzer (BZ: not known to be non-polar)
-    "C2500": (YELLOW, "rms 0.281"),                   # SOT-23 land patterns differ
+    # C165948 (USB-C: EasyEDA's shield pads 1-4 on KiCad's S1) and C160404 (JST SH 4: mounting pads 5, 6 on MP) are
+    # green: numbers only one side has do not count against a fit. C8598 (SOD-123), C151296 and C7189: the + drawn on
+    # the EasyEDA footprint confirms the polarity the pad numbers give (KiCad's library: pad 1 = cathode, CP pad 1 = +),
+    # and their residuals (C151296 0.200 mm, C7189 0.334 mm) are small beside their 1.3-1.4 mm pads
+    "C910763": (YELLOW, "polarity decided by pad numbers only"),  # buzzer: no + drawn, custom KiCad footprint
+    "C2500": (YELLOW, "rms 0.281"),                   # SOT-23 land patterns differ (0.6 mm pads)
     "C2681320": (YELLOW, "rms 0.21"),
     "C3715882": (YELLOW, "rms 0.21"),
     "C189624": (YELLOW, "rms 0.113"),
@@ -736,8 +870,9 @@ def test_jlc_preview_truth_is_never_contradicted_by_green():
             (right if ok else wrong).append((r["reference"], c.verdict, c.rot, alpha))
     assert all(v == RED for _, v in red_expected) and len(red_expected) == 2, red_expected
     assert not [w for w in wrong if w[1] == GREEN], wrong
-    # D12: EasyEDA's symbol names the cathode pad A; the names win (yellow) and the preview disagrees
-    assert [w[0] for w in wrong] == ["D12"] and len(right) >= 45, (wrong, len(right))
+    # D12: EasyEDA's symbol names the cathode pad A, against its pad numbers; the + drawn on the footprint sides with
+    # the numbers, as JLC's preview does (it was the one wrong row while the names won)
+    assert wrong == [] and len(right) >= 47, (wrong, len(right))
 
 
 OLD_CPL = SCRATCH / "fab-before"

@@ -1,16 +1,49 @@
-"""Part classes, pad-number spelling and the EasyEDA footprint key, shared by fit, check and the pipeline so they
+"""Part classes, pin names, pad-number spelling and the database keys, shared by fit, check and the pipeline so they
 cannot drift apart."""
 
 from __future__ import annotations
 
+import hashlib
+import math
 import re
 
 from . import geom
 
-#: two-terminal parts whose terminals may be swapped, by reference prefix, unless something says they are polar
-NONPOLAR_REFS = frozenset({"R", "RN", "RT", "RV", "C", "L", "FB", "F", "NTC", "Y", "X", "XTAL", "SW", "JP"})
-#: KiCad footprint names that say a two-terminal part is polar
-POLAR_FOOTPRINT = re.compile(r"diode|led|tantal|polar|elec|cp_|:d_|zener|schottky|tvs|batt", re.I)
+#: two-terminal parts whose terminals may be swapped, by reference prefix, unless something says they are polar. X is
+#: not one: IEC 81346 designates connectors X (a battery connector is polar); an X part counts only when its footprint
+#: or its EasyEDA title says crystal
+NONPOLAR_REFS = frozenset({"R", "RN", "RT", "RV", "C", "L", "FB", "F", "NTC", "Y", "XTAL", "SW", "JP"})
+#: KiCad footprint names that say a two-terminal part is polar ("led" and "elec" as words: not "Angled", "KOHERelec")
+POLAR_FOOTPRINT = re.compile(r"diode|(?<![a-z])led|tant|polar|(?<![a-z])elec|cp_|:d_|zener|schottky|tvs|batt", re.I)
+#: EasyEDA titles that say so (SOD-123, LED0603, ...)
+POLAR_EE_TITLE = re.compile(r"(?<![a-z])led|sod|diode|tant|(?<![a-z])elec", re.I)
+#: EasyEDA part categories (result.tags) that say so; ceramics, resistors, inductors, crystals have their own
+POLAR_EE_TAGS = re.compile(r"tantal|electrolytic|polymer|diode|(?<![a-z])leds?(?![a-z])|zener|schottky|(?<![a-z])tvs"
+                           r"|rectifier", re.I)
+#: EasyEDA's titles for tantalum, polymer and electrolytic chip capacitors (its ceramics are C0402, C1206, ...): they
+#: count when the record has no category that names a non-polar class (some records have no categories at all)
+POLAR_EE_CAP_TITLE = re.compile(r"^(CAP-SMD|CASE-[A-E]_|CP[-_])", re.I)
+NONPOLAR_EE_TAGS = re.compile(r"ceramic|mlcc|resistor|inductor|ferrite|crystal|oscillator|thermistor|fuse|varistor",
+                              re.I)
+#: KiCad footprint names of right-angle parts: turned round, the body faces the other way, which is never harmless
+ORIENTED_FOOTPRINT = re.compile(r"(?<![a-z])angled|right.?angle", re.I)
+#: what makes an X-referenced two-terminal part a crystal
+CRYSTAL = re.compile(r"crystal|xtal|resonator|(?<![a-z])osc", re.I)
+
+POLARITY_NAMES = frozenset({"ANODE", "CATHODE"})
+SYNONYMS = {
+    "EP": "GND", "PAD": "GND", "EPAD": "GND", "TAB": "GND", "THERMAL": "GND", "THERMALPAD": "GND", "VSS": "GND",
+    "DP": "D+", "DM": "D-", "DN": "D-",
+    "SHIELD": "SHELL", "SH": "SHELL", "EH": "SHELL", "MH": "SHELL",
+    "A": "ANODE", "+": "ANODE", "K": "CATHODE", "C": "CATHODE", "-": "CATHODE",
+    "VCC": "VDD",
+    "VO": "VOUT", "OUT": "VOUT", "VI": "VIN", "IN": "VIN",
+}
+_UNINFORMATIVE = re.compile(r"(PIN)?\d*|NC|DNC|N\.C\.?")
+#: KiCad's own libraries follow its library convention (KLC): a diode's or LED's pad 1 is the cathode, a polarised
+#: capacitor's pad 1 is +. Footprints from other libraries may not.
+_KLC_DIODE = re.compile(r"^(Diode_SMD|Diode_THT|LED_SMD|LED_THT):")
+_KLC_CP = re.compile(r"^(Capacitor_Tantalum_SMD:|Capacitor_SMD:CP_|Capacitor_THT:CP_)")
 
 
 def norm_number(s) -> str:
@@ -25,6 +58,189 @@ def ref_prefix(ref: str) -> str:
     return m.group(0).upper() if m else ""
 
 
+# ------------------------------------------------------------------------------------------------------- pin names
+
+def name_tokens(name: str, number: str = "") -> frozenset[str]:
+    """Canonical tokens of a pin name: upper case without ~{} # * ! _ and spaces, split at '/', ',' and parentheses
+    (alternate functions; '/RESET' is active low), 'nRESET' -> RESET, synonyms applied. A name that only repeats its
+    pad number ('3' on pad 3, 'A1' on BGA ball A1), digits, PINn or NC is uninformative: the empty set. A name with a
+    meaning of its own (K on a pad numbered K, + on a pad numbered +) is kept."""
+    s = (name or "").replace("~{", "").replace("{", "").replace("}", "")
+    out = set()
+    for t in re.split(r"[/,()\s]+", s):
+        t = t.strip("~#*!")
+        if len(t) > 1 and t[0] == "n" and t[1].isupper():
+            t = t[1:]
+        t = t.upper().replace("_", "")
+        if _UNINFORMATIVE.fullmatch(t) or (t == norm_number(number) and t not in SYNONYMS):
+            continue
+        out.add(SYNONYMS.get(t, t))
+    return frozenset(out)
+
+
+def _stem(ts) -> set[str]:
+    return {SYNONYMS.get(u, u) for u in (re.sub(r"\d+$", "", t) for t in ts) if u}
+
+
+def compare_names(a: frozenset, b: frozenset) -> int:
+    """+1 agree, -1 disagree, 0 unknown: a side uninformative, or equal only up to a trailing index (CC1 vs CC2,
+    DP1 vs D+), which is how libraries differ on symmetric connectors."""
+    if not a or not b:
+        return 0
+    if a & b:
+        return 1
+    return 0 if _stem(a) & _stem(b) else -1
+
+
+def _terminal_names(part) -> dict[str, frozenset[str]]:
+    """KiCad pad number -> the name tokens of its pin functions (all pads of that number)."""
+    out: dict[str, set[str]] = {}
+    for p in part.copper_pads():
+        if p.number:
+            out.setdefault(norm_number(p.number), set()).update(name_tokens(p.pin_name, p.number))
+    return {n: frozenset(t) for n, t in out.items()}
+
+
+def _ee_terminal_names(ee) -> dict[str, frozenset[str]]:
+    names = {norm_number(k): v for k, v in (ee.pin_names or {}).items()}
+    return {n: name_tokens(names.get(n, ""), n) for n in {norm_number(p.number) for p in ee.pads if p.number}}
+
+
+def _bidirectional(names: dict[str, frozenset[str]]) -> bool:
+    """Two terminals named alike up to an index (a bidirectional TVS's A1 / A2): swapping them changes nothing."""
+    if len(names) != 2:
+        return False
+    a, b = names.values()
+    return bool(a and b and a != b and not (a | b) & POLARITY_NAMES and _stem(a) and _stem(a) == _stem(b))
+
+
+# ------------------------------------------------------------------------------------------------------- polarity
+
+def nonpolar(part, ee=None) -> bool:
+    """Two numbered terminals that may be swapped. True for a two-terminal part whose two terminals are alike (KiCad
+    pin functions equal up to an index, A1 / A2, or an EasyEDA title marked BI: a bidirectional TVS); otherwise it
+    takes a non-polar reference prefix (X only for a crystal) and nothing that says polar: the KiCad footprint name
+    (polar words, or a right-angle body), anode / cathode / + / - KiCad pin functions, and with the EasyEDA footprint
+    `ee` its title (a polarised capacitor's CAP-SMD_ / CASE-x_ unless its categories name a non-polar class), its
+    part categories (tantalum, electrolytic, diode, LED, TVS, ...) and its symbol's pin names. Unknown parts count as
+    polar. fit and check both use this, so they cannot judge a part differently."""
+    kicad = _terminal_names(part)
+    if len(kicad) != 2:
+        return False
+    if _bidirectional(kicad) or (ee is not None and "BI" in (ee.tokens or [])):
+        return True
+    prefix = ref_prefix(part.ref)
+    if prefix not in NONPOLAR_REFS and not (prefix == "X" and (CRYSTAL.search(part.footprint or "") or (
+            ee is not None and CRYSTAL.search(ee.title or "")))):
+        return False
+    if POLAR_FOOTPRINT.search(part.footprint or "") or ORIENTED_FOOTPRINT.search(part.footprint or "") \
+            or any(t & POLARITY_NAMES for t in kicad.values()):
+        return False
+    if ee is not None:
+        tags = ee.tags or []
+        if POLAR_EE_TITLE.search(ee.title or "") or any(POLAR_EE_TAGS.search(t) for t in tags):
+            return False
+        if POLAR_EE_CAP_TITLE.search(ee.title or "") and not any(NONPOLAR_EE_TAGS.search(t) for t in tags):
+            return False
+        names = _ee_terminal_names(ee)
+        if len(names) == 2 and any(t & POLARITY_NAMES for t in names.values()):
+            return False
+    return True
+
+
+def kicad_positive_pad(part) -> tuple[str, str] | None:
+    """(pad number, how it is known) of a two-terminal KiCad part's positive terminal (a diode's anode, a capacitor's
+    +): from its pin functions or pad numbers (A, K, +, -), else from the KiCad library convention for KiCad's own
+    diode, LED and polarised capacitor libraries. None when nothing says."""
+    kicad = dict(_terminal_names(part))
+    if len(kicad) != 2:
+        return None
+    for n in kicad:                       # pads numbered A / K / + / - name themselves
+        if not kicad[n]:
+            kicad[n] = name_tokens(n)
+    pos = [n for n, t in kicad.items() if "ANODE" in t and "CATHODE" not in t]
+    neg = [n for n, t in kicad.items() if "CATHODE" in t and "ANODE" not in t]
+    if len(pos) == 1 and pos != neg:
+        return pos[0], "pin names"
+    if len(neg) == 1:
+        return next(n for n in kicad if n != neg[0]), "pin names"
+    if set(kicad) == {"1", "2"}:
+        if _KLC_DIODE.match(part.footprint or ""):
+            return "2", "KiCad's library convention (pad 1 = cathode)"
+        if _KLC_CP.match(part.footprint or ""):
+            return "1", "KiCad's library convention (pad 1 = +)"
+    return None
+
+
+PLUS_LENGTH = (0.05, 0.70)             # a "+" bar's length as a fraction of the pad spacing ...
+PLUS_FLOOR = 0.75                      # ... the lower bound never above this many mm
+PLUS_OFF_CENTRE = 0.15                 # a "+" this close to the middle (fraction of the spacing) names no pad
+
+
+def ee_positive_pad(ee) -> str | None:
+    """The number of the EasyEDA pad a two-terminal footprint draws its "+" beside (EEFootprint.plus), or None:
+    no "+", one near the middle (an origin cross), or marks on both sides."""
+    pos: dict[str, list] = {}
+    for p in ee.pads:
+        if p.number and p.layer != "bottom":
+            pos.setdefault(norm_number(p.number), []).append((p.x, p.y))
+    if len(pos) != 2 or not ee.plus:
+        return None
+    (n1, a), (n2, b) = ((n, (sum(q[0] for q in v) / len(v), sum(q[1] for q in v) / len(v))) for n, v in pos.items())
+    spacing = math.dist(a, b)
+    if spacing <= 0:
+        return None
+    ux, uy = (b[0] - a[0]) / spacing, (b[1] - a[1]) / spacing
+    cx, cy = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+    low, high = min(PLUS_LENGTH[0] * spacing, PLUS_FLOOR), PLUS_LENGTH[1] * spacing
+    sides = set()
+    for x, y, length in ee.plus:
+        along = (x - cx) * ux + (y - cy) * uy
+        if low <= length <= high and abs(along) >= PLUS_OFF_CENTRE * spacing:
+            sides.add(n2 if along > 0 else n1)
+    return sides.pop() if len(sides) == 1 else None
+
+
+# ------------------------------------------------------------------------------------------------------- coverage
+
+def pad_size(p) -> float:
+    """The smaller dimension of a KiCad pad's copper along its own axes (its outline's, for a custom pad)."""
+    if not p.poly:
+        return min(p.w, p.h)
+    a = math.radians(p.angle or 0.0)
+    c, s = math.cos(a), math.sin(a)
+    pts = [((q[0] - p.x) * c - (q[1] - p.y) * s, (q[0] - p.x) * s + (q[1] - p.y) * c) for q in geom.pad_outline(p)]
+    return min(max(q[0] for q in pts) - min(q[0] for q in pts), max(q[1] for q in pts) - min(q[1] for q in pts))
+
+
+VIA_SIZE = 1.0                         # mm: a plated hole no larger than this, numbered like a pad, is a via
+SAME_PIN_AREA = 2.0                    # a pad of a covered pin this many times smaller is a stub of that pin
+
+
+def _area(p) -> float:
+    pts = geom.pad_outline(p)
+    return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(pts, pts[1:] + pts[:1]))) / 2
+
+
+def uncovered_exemption(p, covered) -> str:
+    """Why a KiCad copper pad that no EasyEDA pad lands on is no sign of a footprint mismatch, "" when it is:
+    "inside" (its centre is on a covered pad: thermal vias in an exposed pad), "via" (a small plated hole numbered
+    like a covered SMD pad: the vias of an ESP32 module's GND pads), or "same pin" (a much smaller pad of the same
+    number and net as a covered one: the stub of a DPAK's cut middle lead, numbered like its tab). `covered`: the
+    copper pads some EasyEDA pad lands on. Equal pads of a number (two MP pads) are never exempt."""
+    if any(q is not p and geom.pad_contains(q, (p.x, p.y)) for q in covered):
+        return "inside"
+    n = norm_number(p.number)
+    same = [q for q in covered if q is not p and n and norm_number(q.number) == n]
+    if p.kind == "tht" and max(p.w, p.h) <= VIA_SIZE and any(q.kind == "smd" for q in same):
+        return "via"
+    if any(q.net == p.net and _area(q) >= SAME_PIN_AREA * _area(p) for q in same):
+        return "same pin"
+    return ""
+
+
+# ------------------------------------------------------------------------------------------------------- keys
+
 def ee_key(ee) -> str:
     """The key a correction is stored under for an EasyEDA footprint: a hash of its pads in the ee frame (numbers,
     positions, sizes, angles). EEFootprint.key() (uuid:updateTime) also moves when EasyEDA edits only a record's
@@ -32,3 +248,17 @@ def ee_key(ee) -> str:
     every record is the likely edit), which would make verified corrections stale for nothing. The pads are what a
     correction depends on: any change that moves a pad changes this key."""
     return "ee-" + geom.pad_hash(ee.pads)
+
+
+def kicad_hash(part) -> str:
+    """The key a correction is stored under for a KiCad part: geom.pad_hash of its soldered copper pads and, when any
+    pin function says something (name_tokens), those names too. The fit decides polarity and orientation by pin
+    names as well as by pads, so two parts on one footprint whose pin functions differ (a diode with pad 1 = K and
+    one with pad 1 = A) need corrections of their own: one must never take, or vouch for, the other's."""
+    pads = part.copper_pads()
+    h = geom.pad_hash(pads)
+    names = sorted({(norm_number(p.number), tuple(sorted(name_tokens(p.pin_name, p.number)))) for p in pads
+                    if p.number and name_tokens(p.pin_name, p.number)})
+    if not names:
+        return h
+    return "sha1:" + hashlib.sha1((h + repr(names)).encode()).hexdigest()[:16]

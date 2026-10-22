@@ -195,6 +195,43 @@ def test_marks_tokens_title_uuid_utime():
     assert ee.from_response("C1", rec).title == "SOT-23-3_L2.9-W1.6-P1.90-LS2.8-BR"   # from head.c_para.package
 
 
+def _plus(x_mm, y_mm, size_mm, layer=3, filled=False):
+    """A "+" drawn at (x, y) mm from the origin: two tracks, or two thin filled rectangles (SOLIDREGION)."""
+    x, y, h, t = HX + x_mm / 0.254, HY + y_mm / 0.254, size_mm / 2 / 0.254, 0.05 / 0.254
+    if filled:
+        return [(f"SOLIDREGION~{layer}~~M {x - h} {y - t} L {x + h} {y - t} L {x + h} {y + t} L {x - h} {y + t} "
+                 "Z~solid~ggs1~~~~0"),
+                (f"SOLIDREGION~{layer}~~M {x - t} {y - h} L {x + t} {y - h} L {x + t} {y + h} L {x - t} {y + h} "
+                 "Z~solid~ggs2~~~~0")]
+    return [f"TRACK~0.6~{layer}~~{x - h} {y} {x + h} {y}~ggt1~0", f"TRACK~0.6~{layer}~~{x} {y - h} {x} {y + h}~ggt2~0"]
+
+
+def test_part_categories_bidirectional_token_and_plus_marks():
+    """ee-1 / truth-7 / geo-4: result.tags (EasyEDA's part categories), the -BI title token, and the "+" a footprint
+    draws beside its positive pad (silkscreen or document layer), which parts.ee_positive_pad reads."""
+    from jlcplace.parts import ee_positive_pad
+    pads = [pad(x=HX - 1.5 / 0.254, number="1"), pad(x=HX + 1.5 / 0.254, number="2")]
+    f = parse(pads, title="SMF_L2.8-W1.8-LS3.7-BI", tags=["TVS", 7, None])
+    assert (f.tags, f.tokens, f.plus) == (["TVS", "7"], ["BI"], [])
+    for layer, filled in ((3, False), (12, False), (3, True)):
+        f = parse(pads + _plus(-2.6, 0.0, 0.5, layer, filled), title="CAP-SMD_L3.2-W1.6-RD")
+        assert len(f.plus) == 1 and f.plus[0][:2] == approx(-2.6, 0.0, abs=1e-3), (layer, filled, f.plus)
+        assert ee_positive_pad(f) == "1"
+    assert ee_positive_pad(parse(pads + _plus(2.6, 0.0, 0.5))) == "2"
+    # a cross at the origin is no polarity mark; nor are marks beside both pads, a "+" on a copper layer, or a
+    # diode's drawn symbol (a polyline, a bar meeting it at its end)
+    assert ee_positive_pad(parse(pads + _plus(0.0, 0.0, 0.5))) is None
+    assert ee_positive_pad(parse(pads + _plus(-2.6, 0.0, 0.5) + _plus(2.6, 0.0, 0.5))) is None
+    assert parse(pads + _plus(-2.6, 0.0, 0.5, layer=1)).plus == []
+    x0, y0 = HX + 2.4 / 0.254, HY
+    tri = [f"TRACK~0.6~3~~{x0} {y0 - 2} {x0} {y0 + 2} {x0 + 3} {y0} {x0} {y0 - 2}~ggd1~0",
+           f"TRACK~0.6~3~~{x0 + 3} {y0 - 2} {x0 + 3} {y0 + 2}~ggd2~0",
+           f"TRACK~0.6~3~~{x0 + 1.5} {y0} {x0 + 4.5} {y0}~ggd3~0"]
+    assert parse(pads + tri).plus == []
+    # malformed shapes are skipped, not fatal
+    assert parse(pads + ["TRACK~0.6~3~~1 2 x y~gg1~0", "SOLIDREGION~3~~M 1 Q 2 3 Z~solid~gg2~~~~0"]).plus == []
+
+
 def test_datastr_given_as_a_json_string():
     rec = record([pad()], symbol=[pin("1", "A")])
     rec["result"]["packageDetail"]["dataStr"] = json.dumps(rec["result"]["packageDetail"]["dataStr"])
