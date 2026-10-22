@@ -1,6 +1,7 @@
 """The command line, the pipeline and the reports on a synthetic board with hand-made EasyEDA records: no KiCad, no
 EasyEDA data and no network needed."""
 import csv
+import errno
 import io
 from html.parser import HTMLParser
 import json
@@ -1104,7 +1105,8 @@ def test_control_characters_in_a_reference_are_bad_input(env, capsys):
     assert code == 3 and "R1\\n::error::x\\x01" in err, err
     own_lines_only(out + err)
     text = (env.tmp / "board.csv")
-    text.write_text('Designator,Mid X,Mid Y,Layer,Rotation\r\n"R1' + INJECT + '",10,5,Top,0\r\n', encoding="utf-8")
+    text.write_text('Designator,Mid X,Mid Y,Layer,Rotation\r\n"R1' + INJECT + '",10,5,Top,0\r\n', encoding="utf-8",
+                    newline="")                        # as written: Windows text mode would make \r\n into \r\r\n
     code, out, err = run(capsys, "check", env.board, text, *offline(env), "--github-annotations")
     assert code == 3 and "line 2" in err and "control character" in err, err
     own_lines_only(out + err)
@@ -1447,13 +1449,18 @@ def test_html_report_labels_legends_and_checklist(env, capsys):
     assert '<span class="badge b-red">RED</span>' in u2, u2
 
 
-def test_a_reader_that_goes_away_is_not_bad_input(env):
-    """`jlcplace check ... | head -1`: a broken pipe exits 141 quietly, not 3 ('bad input') with a message."""
+@pytest.mark.parametrize("unbuffered", ["", "1"])
+def test_a_reader_that_goes_away_is_not_bad_input(env, unbuffered):
+    """`jlcplace check ... | head -1`: a broken pipe exits 141 quietly, not 3 ('bad input') with a message. Buffered
+    (the usual pipe: the error comes at the final flush) and unbuffered (PYTHONUNBUFFERED: it comes at a print)."""
     env.make()
     cpl = env.tmp / "rows.csv"
     assert main(["cpl", env.board, "-o", str(cpl), *offline(env)]) in (0, 1)
     args = [sys.executable, "-m", "jlcplace", "check", env.board, str(cpl), *offline(env), "-v"]
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    environ = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    if unbuffered:
+        environ["PYTHONUNBUFFERED"] = unbuffered
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environ)
     p.stdout.close()                                   # the reader is gone before the first line
     err = p.stderr.read().decode()
     assert p.wait(timeout=120) == 141, err
@@ -1469,3 +1476,30 @@ def test_text_the_console_cannot_encode_is_escaped(monkeypatch):
     print("SOT-23-6 \u8d34\u7247", file=out)
     out.flush()
     assert b"\\u8d34\\u7247" in raw.getvalue()
+
+
+@pytest.mark.parametrize("platform, err, want", [
+    ("posix", BrokenPipeError(errno.EPIPE, "Broken pipe"), 141),
+    ("nt", OSError(errno.EINVAL, "Invalid argument"), 141),     # Windows: a write to a closed pipe
+    ("posix", OSError(errno.EINVAL, "Invalid argument"), 3),    # elsewhere EINVAL is not a closed pipe
+    ("nt", OSError(errno.EINVAL, "Invalid argument", "out.csv"), 3),
+])
+def test_stdout_gone_is_told_from_other_errors(monkeypatch, platform, err, want):
+    """The flush at the end of a command is where a buffered pipe to a reader that left reports it."""
+    class Gone(io.StringIO):
+        def flush(self):
+            raise err
+    import jlcplace.cli as cli
+    monkeypatch.setattr(cli.os, "name", platform)
+    monkeypatch.setattr(sys, "stdout", Gone())
+    monkeypatch.setattr(cli, "build_parser", lambda: _parser_running(lambda args: 0))
+    assert main(["anything"]) == want
+
+
+def _parser_running(func):
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("cmd")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=func)
+    return p
