@@ -104,7 +104,8 @@ down, with the fix: the exact `--origin` to pass when the Gerbers use that origi
 files and CPL again from one origin. An origin error moves every row: when more than 10 % of the rows sit where they
 belong, the line only says which rows are displaced alike (parts whose EasyEDA origin is not KiCad's anchor, rows
 edited by hand), with no origin and no fix for every row. `check --fixed-cpl FILE` writes the CPL with the offset taken
-out (its own rows and angles, moved, or in mm, or with Mid Y negated) and checks it:
+out (its own rows and angles, moved, or in mm, or with Mid Y negated) and checks it; rows moved onto the CPL origin
+without `--gerbers` are right only if the Gerbers are plotted from that origin too, which the note says is unchecked:
 
 ```
 $ jlcplace check board.kicad_pcb board-pos.csv          # KiCad's position file, from the page origin

@@ -32,7 +32,7 @@ jlcplace check [options] BOARD CPL
 | `--db` `DIR` | correction database directory (one JSON file per LCSC code) |
 | `--reading` `{jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}` | how JLC reads a bottom-side rotation (default jlc-2022) |
 | `--units` `{mm,in,mil}` | unit of bare numbers in the CPL (KiCad's CSV position file does not say; default mm) |
-| `--fixed-cpl` `CSV` | when every row is off by one origin, unit or y axis: write the CPL with that taken out (its rows moved onto the Gerbers' origin, or the CPL origin), and check it |
+| `--fixed-cpl` `CSV` | when every row is off by one origin, unit or y axis: write the CPL with that taken out (its rows moved onto the Gerbers' origin, or the CPL origin: then right only for Gerbers plotted from it, which --gerbers checks), and check it |
 
 ### Board
 

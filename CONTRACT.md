@@ -606,7 +606,9 @@ def origin_lines(run) -> list[(verdict, text)]
   `check --units in|mil`: when the unit changed how the CPL's numbers were read (bare numbers), a red "units" finding
   (JLC reads them in mm). `check --fixed-cpl CSV`: when the run's common offset is an `origin_error`, the CPL's own rows
   through `Offset.fix` (rows in place kept; written with `cpl.write_cpl`, from the run's CPL origin) and the counts of
-  their check, as a note; else a note that nothing was written; the exit code stays the given CPL's. Under -q the
+  their check, as a note (ending, when the rows moved onto the board's CPL origin with neither --gerbers nor
+  --origin, "right only if the Gerbers and drill files are plotted from the board's aux origin (x, y), which was not
+  checked: pass --gerbers"); else a note that nothing was written; the exit code stays the given CPL's. Under -q the
   findings are still printed ("jlcplace: red: origin mismatch: ..."). `cpl` with a red finding and no red row says "not
   written: the origin is red". `--overlay DIR` (check, cpl): `report.write_overlays` with the Gerbers' outline (else the
   board's Edge.Cuts), the Gerbers' (0, 0), and the findings and offset hints as notes; PNGs when a renderer is at hand,

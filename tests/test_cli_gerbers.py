@@ -221,6 +221,31 @@ def test_fixed_cpl_writes_the_cpl_with_the_common_offset_taken_out(made, capsys)
     assert code == 0 and not fixed.exists() and "--fixed-cpl: no common offset to take out" in out, out
 
 
+def test_fixed_cpl_without_the_gerbers_says_which_origin_it_assumed(made, capsys):
+    """Without --gerbers nothing says which origin JLC reads the rows from: a CPL and Gerbers both from the page
+    origin are a right order, which --fixed-cpl would move onto the aux origin. The file is written, as asked, but
+    the note says it is right only for Gerbers plotted from that origin, unchecked; with the Gerbers it is either not
+    needed (the page set) or right (the aux set). A unit fix from the CPL's own origin needs no Gerbers."""
+    e = made
+    page = shifted(e.out, e.tmp / "page.csv", ORIGIN[0], -ORIGIN[1])
+    fixed = e.tmp / "fixed.csv"
+    code, out, _ = run(capsys, "check", e.board, page, *offline(e), "-q", "--fixed-cpl", fixed)
+    assert code == 2 and fixed.is_file(), out
+    assert out.rstrip().endswith("right only if the Gerbers and drill files are plotted from the board's aux origin "
+                                 "(100, 100), which was not checked: pass --gerbers"), out
+    fixed.unlink()
+    code, out, _ = run(capsys, "check", e.board, page, "--gerbers", e.page, *offline(e), "-q", "--fixed-cpl", fixed)
+    assert code == 0 and not fixed.exists() and "no common offset to take out" in out, out
+    code, out, _ = run(capsys, "check", e.board, page, "--gerbers", e.aux, *offline(e), "-q", "--fixed-cpl", fixed)
+    assert code == 2 and fixed.is_file() and "its check: 0 red" in out and "not checked" not in out, out
+    inch = e.tmp / "inch.csv"
+    inch.write_text("Designator,Mid X,Mid Y,Layer,Rotation\n" + "".join(
+        f"{r.ref},{r.x / 25.4:.6f},{r.y / 25.4:.6f},{r.layer},{r.rotation:g}\n" for r in read_cpl(e.out)),
+        encoding="utf-8")
+    code, out, _ = run(capsys, "check", e.board, inch, *offline(e), "-q", "--fixed-cpl", fixed)
+    assert "(4 rows in mm)" in out and "not checked" not in out, out
+
+
 def test_kicads_page_origin_cpl_over_page_origin_gerbers_is_consistent(made, capsys):
     """KiCad's position file and Gerbers both from the page origin: one origin, nothing to say about it."""
     e = made

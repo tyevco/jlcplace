@@ -44,7 +44,8 @@ from .gerber import board_origins, gerber_origin, read_gerbers
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound, printable
 from .parts import ee_key, kicad_hash
 from .pipeline import Finding, apply_bom_codes, bom_overrides, check, correction, describe, fallback, \
-    gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, origin_findings, resolve, row_lines
+    gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, offset_tol, origin_findings, resolve, \
+    row_lines
 from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -328,8 +329,14 @@ def _fixed_cpl(args, run, resolved, bom) -> str:
     again = check(run.board, rows, resolved, reading=run.reading, bom_rows=bom).counts()
     how = (f"moved by ({round(-off.dx, 3) + 0.0:+.3f}, {round(-off.dy, 3) + 0.0:+.3f}) mm"
            if off.scale == 1.0 and off.y_up else "in mm" if off.y_up else "with Mid Y negated")
+    unsure = ""
+    if run.board.origin_kind != "gerber" and not args.origin and math.hypot(off.dx, off.dy) > offset_tol(run.board):
+        # moved onto an origin nothing vouches for: JLC reads the rows from the Gerbers' (0, 0), which only they say
+        o = run.board.origin
+        unsure = (f"; right only if the Gerbers and drill files are plotted from the board's {run.board.origin_kind} "
+                  f"origin ({o[0]:g}, {o[1]:g}), which was not checked: pass --gerbers")
     return (f"jlcplace: wrote {args.fixed_cpl} ({len(rows) - len(keep)} rows {how}): its check: {again[RED]} red, "
-            f"{again[YELLOW]} yellow, {again[GREEN]} green, {again[VERIFIED]} verified")
+            f"{again[YELLOW]} yellow, {again[GREEN]} green, {again[VERIFIED]} verified{unsure}")
 
 
 def _no_dash_path(path: str, option: str) -> None:
@@ -816,7 +823,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="unit of bare numbers in the CPL (KiCad's CSV position file does not say; default mm)")
     s.add_argument("--fixed-cpl", metavar="CSV",
                    help="when every row is off by one origin, unit or y axis: write the CPL with that taken out "
-                        "(its rows moved onto the Gerbers' origin, or the CPL origin), and check it")
+                        "(its rows moved onto the Gerbers' origin, or the CPL origin: then right only for Gerbers "
+                        "plotted from it, which --gerbers checks), and check it")
     s.set_defaults(func=cmd_check)
 
     s = network(sub.add_parser("cpl", parents=[board, ee, db, reading, out],
