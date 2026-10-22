@@ -47,6 +47,7 @@ markers = [
     "pcbnew: needs KiCad's pcbnew Python module",
     "cache: needs EasyEDA records in the local cache (run `jlcplace fetch` first)",
     "network: talks to the EasyEDA API",
+    "claude: needs the Claude Code CLI (claude) on PATH: the plugin marketplace's `claude plugin validate`",
 ]
 # with `python -X warn_default_encoding` (CI does), text I/O that depends on the locale fails here, not only on Windows
 filterwarnings = ["error::EncodingWarning:(jlcplace|test_)"]

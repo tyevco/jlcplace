@@ -6,6 +6,9 @@
 #          `python -X warn_default_encoding`: text I/O that depends on the locale fails there on every OS (pyproject's
 #          filterwarnings), not only on Windows.
 # package  the sdist and the wheel build without a warning, pass `twine check`, and the wheel installs and runs.
+# plugin   the Claude Code marketplace (.claude-plugin/) and plugin (plugins/jlcplace/): `claude plugin validate
+#          --strict` with a pinned Claude Code CLI (it needs no login), and tests/test_claude_plugin.py with that CLI
+#          on PATH (the tests marked `claude`, which the other jobs leave out).
 # kicad    the pcbnew tests, and every other test but the EasyEDA-record and network ones, in KiCad's own image:
 #          pcbnew, kicad-cli and KiCad's footprint libraries, on the public dial-me-spinner boards and the reference
 #          tools' KiCad 5 to 10 test boards. Nothing may skip.
@@ -112,6 +115,47 @@ jobs:
           print(m["Name"], m["Version"], m["License-Expression"], m["Author"])
           PY
 
+  plugin:
+    name: plugin (Claude Code marketplace and skills)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # the origin check on the dial-me-spinner fab outputs runs in the kicad job, which has them
+      ALLOW_SKIPS: "needs the dial-me-spinner fab outputs"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: python -m pip install -e ".[test]"
+      - name: Claude Code CLI (pinned; validating needs no login and no credentials)
+        run: |
+          npm install --global --no-fund --no-audit @anthropic-ai/claude-code@2.1.308
+          claude --version
+      - name: validate the marketplace and the plugin (a throwaway Claude config)
+        env:
+          HOME: ${{ runner.temp }}/claude-home
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude-home/.claude
+        run: |
+          claude plugin validate . --strict
+          claude plugin validate plugins/jlcplace --strict
+          claude plugin validate plugins/jlcplace --profile directory
+      - name: pytest (the plugin's tests, `claude plugin validate` among them)
+        env:
+          JLCPLACE_DIAL_ME_SPINNER: ${{ runner.temp }}/absent/dial-me-spinner
+        run: >
+          python -X warn_default_encoding -m pytest -q -p no:cacheprovider -rs tests/test_claude_plugin.py
+          --junitxml=junit-plugin.xml
+      - name: skip gate
+        if: always()
+        run: python .github/skip_gate.py junit-plugin.xml
+
   kicad:
     name: kicad (pcbnew, kicad/kicad:9.0)
     runs-on: ubuntu-latest
@@ -189,7 +233,8 @@ jobs:
           HTTP_PROXY: http://127.0.0.1:9
           NO_PROXY: ""
         run: >
-          python -m pytest -q -p no:cacheprovider -rs -m "not cache and not network" --junitxml=junit-kicad.xml
+          python -m pytest -q -p no:cacheprovider -rs -m "not cache and not network and not claude"
+          --junitxml=junit-kicad.xml
       - name: skip gate
         if: always()
         run: python .github/skip_gate.py junit-kicad.xml
@@ -294,7 +339,7 @@ jobs:
           key: easyeda-v1-${{ hashFiles('fixtures/dial-me-spinner/hardware/kicad/**/*.kicad_pcb') }}-${{ github.run_id }}
       - name: pytest (everything, with the fetched records)
         continue-on-error: ${{ steps.fetch.outcome == 'failure' }}
-        run: python -m pytest -q -p no:cacheprovider -rs --junitxml=junit-e2e.xml
+        run: python -m pytest -q -p no:cacheprovider -rs -m "not claude" --junitxml=junit-e2e.xml
       - name: skip gate
         if: always()
         continue-on-error: ${{ steps.fetch.outcome == 'failure' }}

@@ -1,0 +1,19 @@
+{
+  "name": "jlcplace",
+  "owner": {
+    "name": "tyevco",
+    "url": "https://github.com/tyevco"
+  },
+  "description": "Claude Code skills for handing KiCad boards to JLCPCB assembly with jlcplace",
+  "plugins": [
+    {
+      "name": "jlcplace",
+      "source": "./plugins/jlcplace",
+      "description": "Check, correct and order KiCad pick-and-place (CPL) files for JLCPCB assembly with jlcplace",
+      "category": "development",
+      "tags": ["pcb", "kicad", "jlcpcb", "assembly", "electronics", "pick-and-place"],
+      "homepage": "https://tyevco.github.io/jlcplace/",
+      "repository": "https://github.com/tyevco/jlcplace"
+    }
+  ]
+}

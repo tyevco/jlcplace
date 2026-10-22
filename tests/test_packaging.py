@@ -88,7 +88,7 @@ def test_ci_tests_what_the_package_claims():
     install = "\n".join(runs(kicad["steps"]))
     assert "python3 -m venv --system-site-packages" in install and "python3-venv" in install   # the image's Python
     _, test = step(kicad["steps"], "pytest")
-    assert '-m "not cache and not network"' in test["run"] and kicad["env"]["ALLOW_SKIPS"] == "(?!)"
+    assert '-m "not cache and not network and not claude"' in test["run"] and kicad["env"]["ALLOW_SKIPS"] == "(?!)"
 
     e2e = jobs["e2e"]
     steps = e2e["steps"]
