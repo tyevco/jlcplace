@@ -191,28 +191,27 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
   what TO.P or a *Pad AperFunction (not ViaPad) says; without attributes every flash, and a region on paste, with TO.C
   or at most 10 mm across. Pads compare by the centre of their outline's bounding box (it commutes with every flip).
 * `gerber_origin` fits g = s . F . b + t over F in FLIPS (none = KiCad's diag(1, -1), y, x, xy) and s in {1, 25.4,
-  1/25.4}: from (ref, pin, side) pairs when the copper carries TO.P and at least half agree (method x2-pins; when
-  they agree only at another scale, the message says it: an FS that does not match the data), else by translation
-  voting with 48 anchors per side, cells scored by their 3 x 3 neighbourhood (a round origin splits its votes over up
-  to four cells) and one candidate per peak, plus the board's named origins, each refined by median, the most pads
-  matched winning (pad-voting); the sound map wins ties. `origin` =
-  the board point that is Gerber (0, 0) (None when fewer than MIN_FRACTION of the board's pads, and MIN_MATCHED,
-  match), `named` the board origin it is (aux | absolute | grid | user | ""). Against `cpl_origin` (default
-  board.origin): `verdict` matches | does-not-match (any flip or scale too) | unknown, `shift` = (cx - ox, oy - cy)
-  to add to every row. Coverage (`compared`, `coverage`, `missing`): the board's pads on each side the set has layers
-  for, against that side's Gerber pads (SMD pads against copper and paste, plated and connect pads against copper; a
-  plated pad on both sides, counted once); `belongs` = some compared and coverage >= BELONGS; `extra`: paste pads on
-  no board pad (`extra_origin` / `extra_layers`: whole paste layers that are a shifted copy of the board's pads,
-  plotted from another origin than the copper); `mismatched`: with TO.P, copper pads whose (ref, pin) is no board
-  pad's at their place, or whose TO.N is another net (parts swapped, nets changed: "R1:1 is where the Gerbers have
-  R2:1"); `stale` = belongs and anything missing, extra or mismatched. `problems` [(verdict, side, message)] about
-  the set as a whole: red for two plots in one set (more than one outer copper or paste layer of a side, profile by
-  attribute, or job file), a side the board has SMD pads on and the set has no copper for, an outline (profile) that
-  through the copper's map is not the board's `edge` (Edge.Cuts polylines, board frame: moved by one vector, plotted
-  from another origin; or another size) or, without `edge`, holds under half of the board's pads; yellow for a side
-  with copper but no paste. `messages` start with the verdict; a side without layers is a note, not stale; a set
-  whose pads cannot be compared says which files were taken for which layer and names the files nothing names that
-  hold flashes.
+  1/25.4}: from (ref, pin, side) pairs when the copper carries TO.P and at least half agree (method x2-pins; when they
+  agree only at another scale, the message says it: an FS that does not match the data), else by translation voting with
+  48 anchors per side, cells scored by their 3 x 3 neighbourhood (a round origin splits its votes over up to four cells)
+  and one candidate per peak, plus the board's named origins, each refined by median, the most pads matched winning
+  (pad-voting); the sound map wins ties. `origin` = the board point that is Gerber (0, 0) (None when fewer than
+  MIN_FRACTION of the board's pads, and MIN_MATCHED, match), `named` the board origin it is (aux | absolute | grid |
+  user | ""). Against `cpl_origin` (default board.origin): `verdict` matches | does-not-match (any flip or scale too) |
+  unknown, `shift` = (cx - ox, oy - cy) to add to every row. Coverage (`compared`, `coverage`, `missing`): the board's
+  pads on each side the set has layers for, against that side's Gerber pads (SMD pads against copper and paste, plated
+  and connect pads against copper; a plated pad on both sides, counted once); `belongs` = some compared and coverage >=
+  BELONGS; `extra`: paste pads on no board pad (`extra_origin` / `extra_layers`: whole paste layers that are a shifted
+  copy of the board's pads, plotted from another origin than the copper); `mismatched`: with TO.P, copper pads whose
+  (ref, pin) is no board pad's at their place, or whose TO.N is another net (parts swapped, nets changed: "R1:1 is where
+  the Gerbers have R2:1"); `stale` = belongs and anything missing, extra or mismatched. `problems` [(verdict, side,
+  message)] about the set as a whole: red for two plots in one set (more than one outer copper or paste layer of a side,
+  profile by attribute, or job file), a side the board has SMD pads on and the set has no copper for, an outline
+  (profile) that through the copper's map is not the board's `edge` (Edge.Cuts polylines, board frame: moved by one
+  vector, plotted from another origin; or another size) or, without `edge`, holds under half of the board's pads; yellow
+  for a side with copper but no paste; red for a set with no outline (no profile layer, or an empty one) when `edge` is
+  given. `messages` start with the verdict; a side without layers is a note, not stale; a set whose pads cannot be
+  compared says which files were taken for which layer and names the files nothing names that hold flashes.
 
 ## parts.py — shared by fit, check and the pipeline
 

@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from jlcplace import gerber as gb
+from jlcplace import report
 from jlcplace.board import load_board
 from jlcplace.convention import board_to_cpl, library_to_board
 from jlcplace.cpl import read_cpl
@@ -451,8 +452,7 @@ def test_the_budget_counts_what_arcs_apertures_pads_and_a_whole_set_expand_to(tm
     prof = one(MM + "%TF.FileFunction,Profile,NP*%%ADD10C,0.1*%D10*G75*G03*" + circles + "M02*", "p.gm1")
     box, peak = _peak(prof.bbox)
     assert box == pytest.approx((0.0, -500.0, 1199.0, 500.0), abs=1e-6) and peak < 5, peak
-    from jlcplace.report import gerber_outline
-    lines, peak = _peak(lambda: gerber_outline(gb.GerberSet("", [prof]), gb.OriginCheck(origin=(0.0, 0.0))))
+    lines, peak = _peak(lambda: report.gerber_outline(gb.GerberSet("", [prof]), gb.OriginCheck(origin=(0.0, 0.0))))
     assert len(lines) == 400 and sum(map(len, lines)) < 200_000 and peak < 100, peak
     monkeypatch.setattr(gb, "MAX_VERTICES", 1_000_000)
     macro = "%AMBIG*" + "".join(f"5,1,4000,{k},0,1,0*" for k in range(14)) + "%"
@@ -801,6 +801,24 @@ def test_two_plots_in_one_set_are_a_problem():
                                                         "old-B_Cu.gbr, syn-B_Cu.gbr; 2 bottom paste layers: "
                                                         "old-B_Paste.gbr, syn-B_Paste.gbr): JLC may make the board "
                                                         "from either; send one plot")]
+
+
+def test_a_set_without_its_outline_is_a_problem(tmp_path):
+    """Layers picked by hand without Edge_Cuts: JLC cannot tell the board's shape, a red problem (the board has an
+    Edge.Cuts to compare with); the full released set has none."""
+    src = DIAL / "fab/main/gerbers"
+    need(src)
+    board, edge = load_board(pcb("main"), reader="sexpr"), report.board_outline(pcb("main"))
+    assert gb.gerber_origin(board, src, edge=edge).problems == []
+    d = tmp_path / "no-edge"
+    shutil.copytree(src, d)
+    for f in d.glob("*Edge_Cuts*"):
+        f.unlink()
+    res = gb.gerber_origin(board, d, edge=edge)
+    assert res.origin == pytest.approx((100.0, 100.0)) and res.problems == [
+        (RED, "", "the Gerbers have no board outline (a profile layer: KiCad's Edge_Cuts): JLC cannot tell the "
+                  "board's shape from them; add the Edge.Cuts layer to the set")]
+    assert gb.gerber_origin(board, d).problems == []              # nothing to say it lacks one (a snapshot)
 
 
 def test_an_outline_plotted_from_another_origin_is_a_problem():

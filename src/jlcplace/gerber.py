@@ -1474,8 +1474,9 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
     """Find the board point that is the Gerbers' (0, 0), compare it with the CPL origin (default board.origin), and
     check that the Gerbers are this board's as it is (_coverage: the fraction of its pads with a Gerber pad at their
     place; pads that are missing, paste pads on no board pad, or pin attributes that name another pad, make the set
-    stale) and whole (`problems`: a side without its layers, two plots in one set, the outline plotted from another
-    origin than the copper: compared with `edge`, the board's Edge.Cuts as board-frame polylines, when given).
+    stale) and whole (`problems`: a side without its layers, two plots in one set, no outline, or the outline plotted
+    from another origin than the copper: compared with `edge`, the board's Edge.Cuts as board-frame polylines, when
+    given).
 
     The map g = s F b + t is fitted from (reference, pin) pairs when the copper layers carry TO.P attributes and at
     least half the pairs agree on it (method x2-pins), else by translation voting between the board's pads and the
@@ -1506,6 +1507,9 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
         res.problems = _duplicates(gs)             # the message says what is missing
         return res
     res.problems = _duplicates(gs) + _sides(board, gs)
+    if edge and (gs.outline is None or gs.outline.bbox() is None):
+        res.problems.append((RED, "", "the Gerbers have no board outline (a profile layer: KiCad's Edge_Cuts): JLC "
+                                      "cannot tell the board's shape from them; add the Edge.Cuts layer to the set"))
     if not res.board_pads:
         res.messages.append("the board has no copper pads to compare with the Gerbers")
         return res
