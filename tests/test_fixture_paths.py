@@ -12,12 +12,13 @@ TESTS = Path(__file__).resolve().parent
 PROBE = """
 import json, sys
 sys.path.insert(0, sys.argv[1])
-import test_board, test_check, test_cpl, test_e2e, test_easyeda, test_fit
+import test_board, test_check, test_cpl, test_db, test_e2e, test_easyeda, test_fit
 print(json.dumps({
     "board": [str(test_board.DIAL), str(test_board.REF)] + [str(p) for p in test_board.OLDER + test_board.NEWER],
     "check": [test_check.DMS, test_check.BEFORE, test_check.OFFSETS, test_check.pcb_path("main"),
               test_check.cpl_path("base", before=True)],
     "cpl": [test_cpl.DMS, test_cpl.MAIN_PCB],
+    "db": [str(test_db.Z_FIX), str(test_db.CORNER)],
     "e2e": [str(test_e2e.DIAL), str(test_e2e.SCRATCH)],
     "easyeda": [str(test_easyeda.DIAL), str(test_easyeda.EE_RAW), str(test_easyeda.Z_FIX)],
     "fit": [str(test_fit.DIAL), str(test_fit.EE_RAW), str(test_fit.Z_FIX)],

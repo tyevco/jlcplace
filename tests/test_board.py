@@ -559,6 +559,10 @@ def test_resolve_origin_rejects_garbage():
     for bad in ("1", "1,2,3", "x,y", ""):
         with pytest.raises(ValueError):
             jb.resolve_origin(bad, (0, 0), (0, 0))
+    # cli-1: a nan origin put every row point at nan, which rect pads "contained"
+    for bad in ("nan,nan", "inf,0", "0,1e400", (float("nan"), 0.0), (0.0, float("inf"))):
+        with pytest.raises(ValueError, match="not a finite number"):
+            jb.resolve_origin(bad, (0, 0), (0, 0))
 
 
 @pytest.mark.pcbnew

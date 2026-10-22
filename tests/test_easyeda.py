@@ -275,7 +275,7 @@ def test_response_envelopes():
         ee.parse_record("C1", rec["result"] | {"packageDetail": None})
 
 
-@pytest.mark.parametrize("bad", ["../C1", "C12a", "", "C", "1234", "C1/../../x", "C1\n"])
+@pytest.mark.parametrize("bad", ["../C1", "C12a", "", "C", "1234", "C1/../../x", "C1\n", "C0402", "C0", "C１２"])
 def test_codes_are_validated(bad):
     with pytest.raises(ee.EEError):
         ee.check_code(bad if bad != "C1\n" else "C1\nC2")

@@ -133,7 +133,10 @@ def _dist_to_polygon(q, poly) -> float:
 
 
 def pad_contains(pad, q, tol: float = 0.0) -> bool:
-    """Is point q (in the pad's frame) on the pad, grown by tol?"""
+    """Is point q (in the pad's frame) on the pad, grown by tol? A point that is not finite is on no pad (every
+    comparison with nan is False, so the rect test alone would put it inside)."""
+    if not (math.isfinite(q[0]) and math.isfinite(q[1])):
+        return False
     if pad.poly:
         return point_in_polygon(q, pad.poly) or (tol > 0 and _dist_to_polygon(q, pad.poly) <= tol)
     ux, uy = _to_pad_axes(pad, q)

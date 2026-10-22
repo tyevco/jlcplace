@@ -633,6 +633,36 @@ def test_a_row_the_bom_lists_is_simulated_though_the_board_excludes_it_from_its_
     assert "the BOM lists it: JLC will place it" in res.messages[-1]
 
 
+def test_a_reference_two_placed_parts_share_is_red():
+    """cli-9 / logic-7: two assembled footprints called R7 (a copied block, an unannotated board). Board.part gave
+    the first, so the one row was checked against it (green, or off-copper when it was the other one's) and the
+    second R7 was never checked nor reported missing."""
+    first, second = two_pad("R7", x=110.0), two_pad("R7", x=118.0, angle=90.0, nets=("N3", "N4"))
+    hole = Part("H1", TOP, 140.0, 60.0, 0.0, footprint="MountingHole:MountingHole_3.2mm", exclude_bom=True,
+                exclude_pos=True)
+    board = Board("b", ORIGIN, [first, second, two_pad("R8", x=125.0), hole, dataclasses.replace(hole)])
+    corr = Correction(0.0, verdict=GREEN)
+    ee = ee_for(first, corr)
+    for rows in ([row_for(first, corr)], [row_for(second, corr)], [row_for(first, corr), row_for(second, corr)]):
+        res = check_cpl(board, rows + [row_for(board.parts[2], corr)], lambda code: ee, corrections={"C25744": corr})
+        got = [(r.ref, r.status, r.verdict) for r in res]
+        assert got == [("R7", "duplicate-ref", RED)] * len(rows) + [("R8", "ok", GREEN)], got
+        assert res[0].messages[0].startswith("R7 is on the board 2 times: JLC cannot tell them apart")
+        assert not res[0].landings and res[0].row is rows[0]                 # never simulated against either
+    # no row at all: still reported once, not as two missing rows (also when the first copy has no code)
+    res = check_cpl(board, [row_for(board.parts[2], corr)], lambda code: ee, corrections={"C25744": corr})
+    assert [(r.ref, r.status, r.verdict) for r in res] == [("R8", "ok", GREEN), ("R7", "duplicate-ref", RED)]
+    first.lcsc = ""
+    res = check_cpl(board, [row_for(board.parts[2], corr)], lambda code: ee, corrections={"C25744": corr})
+    assert [(r.ref, r.status, r.verdict) for r in res] == [("R8", "ok", GREEN), ("R7", "duplicate-ref", RED)]
+    first.lcsc = "C25744"
+    # a second footprint JLC does not place (DNP) is no ambiguity: the row is checked against the placed one
+    board.parts[0].dnp = True
+    res = check_cpl(board, [row_for(second, corr), row_for(board.parts[2], corr)], lambda code: ee,
+                    corrections={"C25744": corr})
+    assert [(r.ref, r.status, r.verdict) for r in res] == [("R7", "ok", GREEN), ("R8", "ok", GREEN)]
+
+
 def test_a_one_pad_part_without_a_footprint_says_why():
     """logic-11: not 'the part has polarity or more than two pads'."""
     tp = Part("TP1", TOP, 100.0, 100.0, 0.0, footprint="TestPoint:TestPoint_Pad_1.0x1.0mm", lcsc="C5",

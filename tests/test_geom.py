@@ -78,3 +78,14 @@ def test_pad_hash_ignores_order_and_paste_only_pads():
     b = [Pad("2", 1, 0, 1, 1), Pad("1", 0, 0, 1, 1), Pad("", 0, 0, 0.5, 0.5, copper=False)]
     assert geom.pad_hash(a) == geom.pad_hash(b)
     assert geom.pad_hash(a) != geom.pad_hash([Pad("1", 0, 0, 1, 1), Pad("2", 1.1, 0, 1, 1)])
+
+
+def test_a_non_finite_point_is_on_no_pad():
+    """cli-1: abs(nan) > hw is False, so a nan point was inside every rect pad."""
+    nan, inf = float("nan"), float("inf")
+    for shape in ("rect", "roundrect", "oval", "circle", "ellipse"):
+        pad = Pad("1", 0.0, 0.0, 1.0, 1.0, shape=shape, rr=0.25)
+        for q in ((nan, nan), (nan, 0.0), (0.0, inf), (-inf, inf)):
+            assert not geom.pad_contains(pad, q, 1e-3), (shape, q)
+    poly = Pad("1", 0.0, 0.0, 1.0, 1.0, poly=[(-1, -1), (1, -1), (1, 1), (-1, 1)])
+    assert not geom.pad_contains(poly, (nan, nan), 1e-3)

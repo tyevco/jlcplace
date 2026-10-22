@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 
-from .model import BOTTOM, Correction, Part
+from .model import BOTTOM, Correction, CplRow, Part
 
 #: name -> (sigma, kappa) for the bottom side; the top is always C + R(A) . e
 BOTTOM_READINGS = {
@@ -102,3 +102,16 @@ def cpl_row_for(part: Part, corr: Correction, origin, reading: str = DEFAULT):
     q = library_to_board(part, (corr.dx, corr.dy))
     x, y = board_to_cpl(q, origin)
     return round(x, 4) + 0.0, round(y, 4) + 0.0, jlc_angle(part.angle, corr.rot, part.layer, reading)
+
+
+def row_correction(part: Part, row: CplRow, origin, reading: str = DEFAULT) -> Correction:
+    """The correction whose row (cpl_row_for) is `row`: cpl_row_for inverted. The row's point is the EasyEDA origin,
+    so (dx, dy) is that point in the library frame; rot = A - theta on the top and theta - 180 - kappa - sigma . A on
+    the bottom (jlc-2022: A - 180 + theta). dx, dy are rounded to 4 decimals, as a CPL carries them."""
+    dx, dy = board_to_library(part, cpl_to_board((row.x, row.y), origin))
+    if part.layer != BOTTOM:
+        alpha = row.rotation - part.angle
+    else:
+        sigma, kappa = BOTTOM_READINGS[reading]
+        alpha = part.angle - 180.0 - kappa - sigma * row.rotation
+    return Correction(rot=norm_angle(alpha), dx=round(dx, 4) + 0.0, dy=round(dy, 4) + 0.0)

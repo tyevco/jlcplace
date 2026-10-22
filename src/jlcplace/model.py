@@ -194,7 +194,7 @@ class RowResult:
     ref: str
     lcsc: str = ""
     status: str = "ok"             # ok | offset | off-copper | wrong-pad | renumbered | not-simulated | no-row
-                                   # | not-on-board | layer-mismatch | not-placed | duplicate
+                                   # | not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref
     verdict: str = GREEN
     landings: list[PadLanding] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)   # KiCad soldered pads no EE pad lands in

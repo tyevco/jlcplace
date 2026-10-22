@@ -12,8 +12,10 @@ key, KiCad key): the KiCad key hashes the pads and the pin functions, so the sam
 one footprint with other pin names, is two entries; a changed EasyEDA footprint (new key) makes the old entry stale.
 
 Status, strongest first: board-verified (the assembled board was right), preview-verified (JLC's placement preview
-was right), manual (typed in), auto (fitted). A verification can carry the keys pressed in JLC's preview to put the
-part right; presses_to_correction folds them into the correction (Fabrication-Toolkit's convention, derived there).
+was right), manual (typed in), auto (fitted). A verification is of the row that was uploaded: its correction
+(convention.row_correction) replaces the entry's numbers when they differ. A verification can carry the keys pressed
+in JLC's preview to put the part right; they move the uploaded row (presses_to_row, Fabrication-Toolkit's convention,
+derived at presses_to_correction), and the correction is the moved row's.
 """
 
 from __future__ import annotations
@@ -28,16 +30,22 @@ from pathlib import Path
 
 from .convention import norm_angle, rot
 from .cpl import atomic_write
-from .model import RED, VERIFIED, YELLOW, Correction, Part
+from .model import BOTTOM, RED, VERIFIED, YELLOW, Correction, CplRow, Part
 
 TOOL = "jlcplace 0.1.0"
 PRESS_MM = 0.0635                     # one arrow press in JLC's preview: 1/400 in
 PRESS_REASON = "derived from presses (FT convention)"
+ROW_REASON = "taken from the row"   # a correction recorded from the row that was uploaded (and checked)
 STALE_REASON = "footprint changed since verified"
 STATUS_RANK = {"auto": 0, "manual": 1, "preview-verified": 2, "board-verified": 3}
 SOURCES = {"board": "board-verified", "preview": "preview-verified", "manual": "manual",
            "board-verified": "board-verified", "preview-verified": "preview-verified"}
 _SAME_ROT, _SAME_MM = 1e-4, 1e-4      # corrections closer than this are the same correction
+
+
+class DBError(ValueError):
+    """A database file that cannot be read (not JSON: a merge left conflict markers in it; an entry that holds no
+    correction) or written. The command line reports it as bad input."""
 
 
 def _today() -> str:
@@ -118,18 +126,32 @@ class CorrectionDB:
         return self.path / f"{_code(code)}.json"
 
     def _load(self, code: str) -> dict:
+        """The file's document; DBError when it is not JSON or an entry holds no correction (every entry is read
+        here, so no caller meets a broken one later)."""
         f = self.file(code)
         if not f.exists():
             return {"lcsc": _code(code), "entries": []}
-        with open(f, encoding="utf-8") as fh:
-            doc = json.load(fh)
+        try:
+            with open(f, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise DBError(f"{f}: not a valid jlcplace correction file ({e})") from None
         if not isinstance(doc, dict) or not isinstance(doc.get("entries"), list):
-            raise ValueError(f"{f}: not a jlcplace correction file")
+            raise DBError(f"{f}: not a valid jlcplace correction file (no list of entries)")
+        for i, e in enumerate(doc["entries"]):
+            try:
+                _to_correction(e)
+            except (KeyError, TypeError, ValueError, AttributeError) as err:
+                raise DBError(f"{f}: not a valid jlcplace correction file (entry {i + 1}: {type(err).__name__}: "
+                              f"{err})") from None
         return doc
 
     def _save(self, code: str, doc: dict) -> None:
-        self.path.mkdir(parents=True, exist_ok=True)
-        atomic_write(self.file(code), json.dumps(doc, sort_keys=True, indent=1, ensure_ascii=False) + "\n")
+        try:
+            self.path.mkdir(parents=True, exist_ok=True)
+            atomic_write(self.file(code), json.dumps(doc, sort_keys=True, indent=1, ensure_ascii=False) + "\n")
+        except OSError as e:
+            raise DBError(f"{self.file(code)}: cannot write: {e.strerror or e}") from None
 
     def entries(self, code: str) -> list[dict]:
         """The stored entries for a code (copies), [] when there is no file."""
@@ -185,15 +207,19 @@ class CorrectionDB:
 
     def confirm(self, code: str, *, ee_key: str, kicad_hash: str, by: str, source: str, board: str = "",
                 ref: str = "", layer: str = "", ok: bool = True, presses=None, note: str = "",
-                part: Part | None = None) -> Correction:
+                part: Part | None = None, correction: Correction | None = None) -> Correction:
         """Record a verification of the entry (ee_key, kicad_hash) and return its correction as now stored.
 
         source: "board" (the assembled board), "preview" (JLC's placement preview) or "manual". ok=True raises the
         status to the source's (verdict VERIFIED for board/preview; a red entry confirmed manually becomes yellow).
-        ok=False marks the entry red and drops it to
-        "auto". presses = {"space": n, "right": n, "up": n} (or a 3-tuple), the keys pressed in JLC's preview to
-        make the part right: the correction is adjusted with presses_to_correction, which needs the `part` (its
-        angle and side), and the adjusted correction carries only this verification's status."""
+        ok=False marks the entry red and drops it to "auto".
+        `correction`: the correction of the row that was checked (convention.row_correction of the uploaded row,
+        moved by the presses): when its numbers differ from the entry's, it replaces them (its reasons and verdict
+        with them) and carries only this verification's status. A verified entry is not replaced by a verification
+        of other numbers that is no stronger (ValueError: record the failed verification of its own row first).
+        presses = {"space": n, "right": n, "up": n} (or a 3-tuple), the keys pressed in JLC's preview to make the
+        part right, are recorded with the verification; they are relative to the uploaded row, so they come with
+        that row's `correction` (never folded into the stored numbers, which need not be what was uploaded)."""
         if source not in SOURCES:
             raise ValueError(f"source must be one of {sorted(SOURCES)}")
         doc = self._load(code)
@@ -205,12 +231,22 @@ class CorrectionDB:
         if any(p.values()):
             if not ok:
                 raise ValueError("presses describe how the part was put right; they cannot come with ok=False")
-            if part is None:
-                raise ValueError("presses need the part: the arrow directions depend on its angle and side")
-            adjusted = presses_to_correction(part, _to_correction(entry), **p)
-            entry["correction"], entry["fit"] = _corr_block(adjusted), _fit_block(adjusted)
-            entry["reasons"] = adjusted.reasons
-            entry["status"] = "auto"           # earlier verifications were of other numbers
+            if correction is None:
+                raise ValueError("presses are relative to the row that was uploaded: pass that row's correction with "
+                                 "the presses applied (convention.row_correction of presses_to_row)")
+        if correction is not None:
+            if not ok:
+                raise ValueError("a failed verification records no numbers")
+            new = _corr_block(correction)
+            if not _same(entry["correction"], new):
+                rank = STATUS_RANK.get(entry.get("status", "auto"), 0)
+                if rank >= STATUS_RANK["preview-verified"] and rank >= STATUS_RANK[status]:
+                    raise ValueError(f"{code}: the entry is {entry['status']} with other numbers "
+                                     f"({_describe(entry['correction'])}): record the failed verification of its own "
+                                     f"row first")
+                entry["correction"], entry["fit"] = new, _fit_block(correction)
+                entry["reasons"], entry["verdict"] = list(correction.reasons), correction.verdict or YELLOW
+                entry["status"] = "auto"           # earlier verifications were of other numbers
         if part is not None:
             ref, layer = ref or part.ref, layer or part.layer
         if ok:
@@ -234,6 +270,10 @@ class CorrectionDB:
         return _to_correction(entry)
 
 
+def _describe(c: dict) -> str:
+    return f"rot {c['rot']:g}, dx {c['dx']:.4f}, dy {c['dy']:.4f}" + (", mirrored" if c.get("mirror") else "")
+
+
 def _presses(presses) -> dict:
     if presses is None:
         return {"space": 0, "right": 0, "up": 0}
@@ -246,11 +286,23 @@ def _presses(presses) -> dict:
     return {"space": int(space), "right": int(right), "up": int(up)}
 
 
+def presses_to_row(row: CplRow, *, space: int = 0, right: int = 0, up: int = 0) -> CplRow:
+    """The row as JLC's preview shows it after the presses: each space press adds 90 deg to the CPL rotation (FT adds
+    its rotation offset to the CPL angle on both sides), each arrow press moves the part PRESS_MM on the preview's
+    screen, the cpl frame on the top and the cpl frame seen from below (x mirrored) on the bottom. The derivation is
+    at presses_to_correction; row_correction of the moved row is the correction the presses made right."""
+    sigma = -1.0 if row.layer == BOTTOM else 1.0
+    return replace(row, x=round(row.x + sigma * right * PRESS_MM, 6) + 0.0, y=round(row.y + up * PRESS_MM, 6) + 0.0,
+                   rotation=norm_angle(row.rotation + 90.0 * space))
+
+
 def presses_to_correction(part: Part, base: Correction, *, space: int = 0, right: int = 0, up: int = 0
                           ) -> Correction:
     """The correction after pressing keys in JLC's placement preview: `space` presses (each turns the part 90 deg
     counter-clockwise as the preview shows it), `right` and `up` arrow presses (negative = left / down; each moves it
-    PRESS_MM on screen).
+    PRESS_MM on screen), under the jlc-2022 reading. `base` must be the correction of the row that was uploaded
+    (the presses are relative to what the preview showed): the command line takes it from that row instead
+    (presses_to_row, convention.row_correction), which also holds under the other readings.
 
     Derivation (Fabrication-Toolkit's offsets and its README table of which arrow fixes which offset):
     * FT adds its rotation offset to the CPL angle on both sides, positive counter-clockwise, so a space press is

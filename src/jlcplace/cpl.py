@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import os
 import re
 import tempfile
@@ -63,8 +64,15 @@ def assembled(part: Part) -> bool:
     return part.placed and not part.exclude_bom
 
 
+def _finite(v: float, text) -> float:
+    if not math.isfinite(v):
+        raise ValueError(f"not a finite number: {text!r}")
+    return v
+
+
 def parse_length(text: str, unit: str = "mm") -> float:
-    """mm from '12.5', '12.5mm', '500 mil', '0.5in', '12,5' (decimal comma); a bare number is in `unit`."""
+    """mm from '12.5', '12.5mm', '500 mil', '0.5in', '12,5' (decimal comma); a bare number is in `unit`. ValueError
+    for anything else, and for a number too large to be finite ('1e400')."""
     s = str(text).strip().lower()
     if "," in s and "." not in s:
         s = s.replace(",", ".")
@@ -76,19 +84,21 @@ def parse_length(text: str, unit: str = "mm") -> float:
         if rest not in _UNIT_NAMES:
             raise ValueError(f"unknown unit in {text!r}")
         unit = _UNIT_NAMES[rest]
-    return float(m.group(0)) * UNITS[unit] + 0.0
+    return _finite(float(m.group(0)) * UNITS[unit], text) + 0.0
 
 
 def parse_angle(text: str) -> float:
-    """Degrees in [0, 360) from '90', '-90.0', '90°', '90 deg'."""
+    """Degrees in [0, 360) from '90', '-90.0', '90°', '90 deg'. ValueError for anything else, 'nan', 'inf' and
+    numbers too large to be finite among them (norm_angle would make them nan)."""
     s = str(text).strip().lower().replace("°", "")
     s = (s[:-3] if s.endswith("deg") else s).strip()
     if "," in s and "." not in s:
         s = s.replace(",", ".")
     try:
-        return norm_angle(float(s))
+        a = float(s)
     except ValueError:
         raise ValueError(f"not an angle: {text!r}") from None
+    return norm_angle(_finite(a, text))
 
 
 def parse_layer(text: str) -> str:
@@ -112,20 +122,36 @@ def _norm_header(name: str) -> tuple[str, str | None]:
     return re.sub(r"[\s_\-.]+", "", s).lstrip("#"), unit
 
 
-def _read_text(path) -> str:
+_UTF_BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"), (b"\xff\xfe", "utf-16"),
+              (b"\xfe\xff", "utf-16"))
+
+
+def read_text(path) -> str:
+    """A CSV's text: UTF-16 / UTF-32 when it starts with their byte order mark (Excel's 'Unicode Text'), else UTF-8
+    (with or without a BOM), else cp1252. Line ends are left as they are (CR-only files are read by _table)."""
     with open(path, "rb") as f:
         data = f.read()
+    for bom, codec in _UTF_BOMS:
+        if data.startswith(bom):
+            try:
+                return data.decode(codec)
+            except UnicodeDecodeError:
+                break
     try:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return data.decode("cp1252", errors="replace")
 
 
-def _table(text: str, columns: dict, required: tuple[str, ...]):
+def _table(text: str, columns: dict, required: tuple[str, ...], path=""):
     """(rows, header index, {field: column}, {column: unit}) with the first of comma, tab and semicolon under which
-    some row names every required field (so a preamble line or decimal commas do not decide it), else None."""
+    some row names every required field (so a preamble line or decimal commas do not decide it), else None. LF,
+    CRLF and CR-only line ends (Excel for Mac's 'CSV (Macintosh)') alike; ValueError for text csv cannot read."""
     for delim in (",", "\t", ";"):
-        rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+        try:
+            rows = list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
+        except csv.Error as e:
+            raise ValueError(f"{path}: not a readable CSV ({e})") from None
         found = _find_header(rows, columns, required)
         if found:
             return (rows, *found)
@@ -159,10 +185,10 @@ def read_cpl(path, *, units: str = "mm") -> list[CplRow]:
     does not parse."""
     if units not in UNITS:
         raise ValueError(f"units must be one of {sorted(UNITS)}")
-    text = _read_text(path)
+    text = read_text(path)
     if _is_kicad_ascii(text):
         return _read_kicad_ascii(text, units)
-    found = _table(text, _CPL_COLUMNS, ("ref", "x", "y", "layer", "rotation"))
+    found = _table(text, _CPL_COLUMNS, ("ref", "x", "y", "layer", "rotation"), path)
     if found is None:
         raise ValueError(f"{path}: no header with Designator, Mid X, Mid Y, Layer and Rotation columns")
     rows, h, fields, col_units = found
@@ -281,7 +307,7 @@ def atomic_write(path, text: str) -> None:
 def read_bom(path) -> list[dict]:
     """BOM rows as {designators: [...], lcsc, comment, footprint, qty (int or None), extra: {...}}. `lcsc` is the
     normalised code when the cell holds one, else the cell as written (check_bom reports it)."""
-    found = _table(_read_text(path), _BOM_COLUMNS, ("designators",))
+    found = _table(read_text(path), _BOM_COLUMNS, ("designators",), path)
     if found is None:
         raise ValueError(f"{path}: no Designator column")
     rows, h, fields, _ = found

@@ -64,7 +64,7 @@ PLUS_LAYERS = ("3", "12")              # top silkscreen and document: where a fo
 PAD_LAYERS = {"1": TOP, "2": BOTTOM, "11": "multi"}
 PAD_SHAPES = {"RECT": "rect", "OVAL": "oval", "ELLIPSE": "ellipse", "POLYGON": "polygon"}
 
-_CODE = re.compile(r"^C\d+$")
+_CODE = re.compile(r"C[1-9][0-9]*")       # as lcsc.normalize, pipeline.is_code and the database: no leading zero
 
 
 class EEError(Exception):
@@ -83,7 +83,7 @@ def default_cache_dir() -> Path:
 def check_code(code: str) -> str:
     """'c2040 ' -> 'C2040'. Anything else is refused: the code becomes a file name and part of a URL."""
     c = str(code).strip().upper()
-    if not _CODE.match(c):
+    if not _CODE.fullmatch(c):
         raise EEError(f"not an LCSC code: {code!r}")
     return c
 

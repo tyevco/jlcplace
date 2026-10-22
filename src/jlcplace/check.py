@@ -441,9 +441,22 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
     BOM is yellow ("not-placed": JLC places only what the BOM lists). `ee_lookup(code)` returns an EEFootprint,
     NotFound or None; an exception from it counts as no footprint. `corrections` is keyed by reference or code.
     `bom_refs`, the designators a JLC BOM lists: a part only excluded from the board's BOM that the BOM lists is
-    simulated like any other (JLC places what the BOM lists), with a message."""
+    simulated like any other (JLC places what the BOM lists), with a message. A reference that more than one part JLC
+    places carries ("duplicate-ref", red: JLC cannot tell them apart) is never simulated: every row of it gets that
+    result, and a reference with no row gets it once."""
     count = Counter(r.ref for r in rows)
     cache: dict[str, object] = {}
+    placed: dict[str, list[Part]] = {}           # the parts JLC places, by reference
+    for p in board.parts:
+        if assembled(p) or (bom_refs is not None and p.placed and p.exclude_bom and p.ref in bom_refs):
+            placed.setdefault(p.ref, []).append(p)
+    shared = {ref: ps for ref, ps in placed.items() if len(ps) > 1}
+
+    def ambiguous(ref: str, row: CplRow | None) -> RowResult:
+        ps = shared[ref]
+        msg = f"{ref} is on the board {len(ps)} times: JLC cannot tell them apart"
+        return RowResult(ref, ps[0].lcsc, status="duplicate-ref", verdict=RED, row=row,
+                         messages=[msg + (f"; {count[ref]} rows for {ref}" if count[ref] > 1 else "")])
 
     def lookup(code: str):
         if code not in cache:
@@ -455,7 +468,10 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
 
     out = []
     for row in rows:
-        part = board.part(row.ref)
+        if row.ref in shared:
+            out.append(ambiguous(row.ref, row))
+            continue
+        part = placed[row.ref][0] if row.ref in placed else board.part(row.ref)
         if part is None:
             out.append(RowResult(row.ref, status="not-on-board", verdict=RED, row=row,
                                  messages=[f"{row.ref} is not on the board"]))
@@ -485,8 +501,14 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
             res.status, res.verdict = "duplicate", RED
             res.messages.insert(0, f"{count[row.ref]} rows for {row.ref}")
         out.append(res)
+    reported = set()
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
         if assembled(part) and part.lcsc and part.ref not in count:
+            if part.ref in shared:
+                if part.ref not in reported:
+                    reported.add(part.ref)
+                    out.append(ambiguous(part.ref, None))
+                continue
             out.append(RowResult(part.ref, part.lcsc, status="no-row", verdict=RED,
                                  messages=["JLC assembles it (it has an LCSC code) but the CPL has no row"]))
     return out

@@ -68,7 +68,9 @@ sees the board, so the BOM's code is the part that is simulated (and written by 
 names another code; such parts are listed ("JLC places C7519 from the BOM; the board says C2681320"). Parts the board
 only excludes from its BOM are checked too when the BOM lists them, since JLC places what its BOM lists. Without
 `--bom`, a board whose parts mostly have no LCSC code gets a hint to pass the BOM or `--lcsc-field NAME`. The CPL may use JLC's header (Designator, Mid X, Mid Y, Layer, Rotation) or any common spelling. It may also be
-a KiCad position file (CSV or ASCII). Use `--units in` for a CSV position file exported in inches. The CPL origin is
+a KiCad position file (CSV or ASCII). UTF-8, cp1252 and UTF-16 (Excel's "Unicode Text") files are read, with any
+line ends (also Excel for Mac's CR-only "CSV (Macintosh)"); a value that is not a finite number ("nan", "inf") is bad
+input. Use `--units in` for a CSV position file exported in inches. The CPL origin is
 the board's aux (drill/place file) origin; use `--origin grid|absolute|X,Y` for other origins.
 
 **Write the CPL:**
@@ -90,8 +92,14 @@ other evidence): its polarity needs a look in JLC's preview.
 jlcplace confirm board.kicad_pcb --ref SW1 --db jlcplace-db --by you --source manual --note "pins 1-2, 3-4 joined"
 ```
 
-After checking parts in JLC's placement preview, record that too (`--source preview`). If you had to move a part in
-the preview, add the keys you pressed (`--space N --right N --up N`) and the correction is adjusted to match.
+After checking parts in JLC's placement preview, record that too, with the CPL you uploaded: `jlcplace confirm
+board.kicad_pcb --ref U3 --db jlcplace-db --by you --source preview --cpl board-CPL.csv`. What the preview showed is
+that CPL's row, which need not be jlcplace's correction (a CPL from another tool), so the row is what is recorded: its
+correction replaces the stored one when they differ. If you had to move a part in the preview, add the keys you
+pressed (`--space N --right N --up N`): they are relative to the uploaded row, never to the stored correction. Parts
+that share a database entry (one code on one footprint) must agree on it, and a verified entry is not given other
+numbers until its own row is recorded as failed (`--failed`). `--source board` (the assembled board) also takes the
+uploaded CPL; `--source manual` does not need one.
 
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
@@ -102,12 +110,14 @@ Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP or excluded, or is on the wrong layer; a duplicate row; an assembled part with no row. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP or excluded, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
 | yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
-Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input. Outputs:
+Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input (a file
+that cannot be read or written, a database file that cannot be read, a bad option or value), 4 an internal error (a
+bug: the traceback is printed). Outputs:
 `--report` (one self-contained HTML page), `--json`, `--junit`, `--checklist` (`.md` or `.csv`) and
 `--github-annotations`.
 
