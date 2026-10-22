@@ -168,7 +168,7 @@ def compare_boards(a: Board, b: Board, max_err: float = 0.005) -> list:
             continue
         for qa, qb in zip(pa.pads, pb.pads):
             tag = f"{pa.ref}.{qa.number}"
-            for f in ("number", "shape", "kind", "copper", "net", "pin_name", "pin_type"):
+            for f in ("number", "shape", "kind", "copper", "cu", "net", "pin_name", "pin_type"):
                 if getattr(qa, f) != getattr(qb, f):
                     bad.append(f"{tag} {f}: {getattr(qa, f)!r} != {getattr(qb, f)!r}")
             for f in ("x", "y", "w", "h", "rr"):
@@ -442,7 +442,9 @@ def test_built_board_pad_kinds_and_copper(built):
         assert not npth.copper and conn.copper
         aperture = next(p for p in part.pads if p.kind == "smd" and p.number == "")
         assert not aperture.copper and aperture.shape == "roundrect"     # paste only
-        assert not pads["FAR"].copper                      # copper only on the far side of the part
+        assert not pads["FAR"].copper                      # copper only on the far side of the part ...
+        assert pads["FAR"].cu == (TOP if part.bottom else BOTTOM)          # ... which is where the Gerbers have it
+        assert (pads["1"].cu, pads["3"].cu, aperture.cu) == (part.layer, "both", "")
         assert (pads["FIB"].shape, pads["FIB"].w, pads["FIB"].copper, pads["FIB"].poly) == ("circle", 1.2, True, None)
 
 
@@ -717,6 +719,8 @@ def test_minimal_board(tmp_path):
     assert (q2.number, q2.kind, q2.copper) == ("", "npth", False)
     assert (q3.kind, q3.copper) == ("smd", False)                           # F.Cu only, on a bottom part
     assert (q4.kind, q4.copper, q4.net) == ("connect", True, "LATE")
+    # the outer copper each pad has on the board as placed: the Gerbers plot q3 on the top
+    assert (p1.cu, q1.cu, q2.cu, q3.cu, q4.cu) == (TOP, "both", "", TOP, BOTTOM)
 
 
 def test_legacy_module_format(tmp_path):

@@ -120,6 +120,12 @@ def test_kicad_key_tells_parts_apart_by_their_pin_functions():
     for names in (("", ""), ("~", "~"), ("1", "2")):
         r = two("R1", "Resistor_SMD:R_1206_3216Metric", names=names)
         assert kicad_hash(r) == geom.pad_hash(r.copper_pads()), names
+    # the keys stored corrections are found by do not move when the comparison of names learns more: a pad named EP
+    # keys as GND did, a name split at '/' adds no joined part, Input is no synonym there
+    key = kicad_hash(two("U1", "Test:Test", names=("GND", "P0.00/XL1")))
+    assert kicad_hash(two("U1", "Test:Test", names=("EP", "P0.00/XL1"))) == key == "sha1:" + __import__(
+        "hashlib").sha1((geom.pad_hash(two("U1", "Test:Test").copper_pads()) + repr(
+            [("1", ("GND",)), ("2", ("P0.00", "XL1"))])).encode()).hexdigest()[:16]
 
 
 @pytest.mark.parametrize("number, w, kind, exempt", [("39", 0.6, "tht", "via"), ("39", 1.4, "tht", ""),

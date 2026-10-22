@@ -1017,6 +1017,14 @@ def test_an_internal_error_is_not_the_yellow_exit_code(env, capsys, monkeypatch)
     code, out, err = run(capsys, "check", env.board, env.out, *offline(env))
     assert code == 4 and "jlcplace: internal error: RuntimeError: a bug" in err and "Traceback" in err
 
+    # out of memory: printing the traceback fails too, and the exit code must still not be 1
+    def oom(*args, **kwargs):
+        raise MemoryError
+
+    monkeypatch.setattr(cli, "cmd_check", oom)
+    monkeypatch.setattr(cli.traceback, "print_exc", oom)
+    assert run(capsys, "check", env.board, env.out, *offline(env))[0] == 4
+
 
 def test_an_output_that_cannot_be_written_is_bad_input(env, capsys):
     """cli-3: an output under a file (or a read-only directory) crashed with a traceback and exit 1 (the 'yellow'
@@ -1336,9 +1344,12 @@ def test_a_cpl_in_inches_gets_a_hint(env, capsys):
         f"{r.ref},{r.x / 25.4:.6f},{r.y / 25.4:.6f},{r.layer},{r.rotation:g}\n" for r in read_cpl(env.out)),
         encoding="utf-8")
     code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "-q")
-    assert code == 2 and "--units in" in out and "4 of 4 rows" in out, out
+    assert code == 2 and "were in inches" in out and "4 of 4 rows" in out, out
+    # JLC reads a CPL's numbers in mm: --units in reads it as meant, and the CPL is still red (off-2)
+    assert "write it again in mm" in out and "pass --units" not in out, out
     code, out, _ = run(capsys, "check", env.board, inch, *offline(env), "--units", "in", "-q")
-    assert code == 0 and "--units" not in out, out
+    assert code == 2 and out.startswith("jlcplace: red: the CPL's numbers are in inches (read so because of --units "
+                                        "in), but JLC reads a CPL's numbers in mm"), out
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--origin", "-5,3", "-q")
     assert code == 2 and "--units" not in out, out
 

@@ -43,17 +43,21 @@ red      nothing lands every EasyEDA pad (the best partial transform at a multip
          of another net, its own number existing in KiCad) that no pin names vouch for; several non-equivalent
          members that neither numbers nor names separate ("ambiguous"); a polar two-terminal part whose pin names
          and pad numbers disagree with no + mark to settle it (in JLC's preview data the names were right 5 times of
-         6), or whose + mark contradicts the only other evidence: its polarity needs a person (`jlcplace confirm`).
+         6), or whose + mark contradicts the only other evidence: its polarity needs a person (`jlcplace confirm`);
+         a pinout that differs: through the chosen member the EasyEDA names are a permutation of the KiCad pin
+         functions (parts.pin_diffs "swapped": a pin on the net of another pin's function) and no member of S does
+         better by the names, so no rotation wires the part right (not for a non-polar two-terminal part, nor for a
+         polar one whose drawn + the member puts on KiCad's positive pad).
 yellow   names pick a member the numbers do not (the names win, or, for a polar two-terminal part, the + mark
          decides); numbering differs or does not overlap but the members of S are equivalent, or the names pick one;
          the number fit missing or leaving pads off copper while a fit consistent with the numbering lands them; a
          polar two-terminal part whose polarity only the pad numbers decide (no names, no + mark); pin names that
-         differ; an rms above 0.1 mm and a quarter of the smallest KiCad pad the pads land on; < 80 % of the EasyEDA
-         pads whose number KiCad has matched by number (a number only EasyEDA has, a tab 4 or shield pads, cannot
-         match); an angle that is not a multiple of 90 (kept unsnapped); KiCad lands that no EasyEDA pad lands on
-         (parts.uncovered_exemption: vias and stubs of a covered pin excepted); another placement that fits as well
-         on the same numbers and nets (the pads cannot orient the body); all pads on one land (only the pads' shape
-         can tell 0 from 90 degrees).
+         differ otherwise (the reason names the pads); an rms above 0.1 mm and a quarter of the smallest KiCad pad
+         the pads land on; < 80 % of the EasyEDA pads whose number KiCad has matched by number (a number only EasyEDA
+         has, a tab 4 or shield pads, cannot match); an angle that is not a multiple of 90 (kept unsnapped); KiCad
+         lands that no EasyEDA pad lands on (parts.uncovered_exemption: vias and stubs of a covered pin excepted);
+         another placement that fits as well on the same numbers and nets (the pads cannot orient the body); all pads
+         on one land (only the pads' shape can tell 0 from 90 degrees).
          Correction.doubt says when the yellow is about which placement was chosen (check makes such rows yellow).
 green    the number fit lands every pad without numbering conflicts, names agree or are uninformative, and every
          other member of S is equivalent or ruled out by the numbers (for a polar two-terminal part, by the names
@@ -74,8 +78,8 @@ import numpy as np
 from . import geom
 from .convention import ee_to_library, norm_angle, rot
 from .model import BOTTOM, GREEN, RED, YELLOW, Correction, EEFootprint, Pad, PadLanding, Part
-from .parts import compare_names, ee_key, ee_positive_pad, kicad_hash, kicad_positive_pad, name_tokens, norm_number, \
-    pad_size, uncovered_exemption
+from .parts import Pin, PinDiff, compare_names, ee_key, ee_positive_pad, kicad_hash, kicad_positive_pad, name_tokens, \
+    norm_number, pad_size, pin_diffs, pinout_text, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 __all__ = ["compare_names", "ee_landings", "fit_part", "name_tokens", "net_map"]
@@ -491,6 +495,15 @@ class _Fit:
         js = sorted({j for j in land if j >= 0})
         return len(js) >= 2 and _spread(self.K[js]) > MIN_SPREAD
 
+    def pin_diffs(self, m: _Member) -> list[PinDiff]:
+        """parts.pin_diffs through member m: the EasyEDA pin names against the pin functions of the lands the pads
+        land on (a land's several functions joined with '/', its nets as one key)."""
+        names = {norm_number(k): v for k, v in (self.ee.pin_names or {}).items()}
+        ee = [Pin(p.number, names.get(n, ""), t) for p, n, t in zip(self.ee.pads, self.enum, self.etok)]
+        kicad = [Pin(self.label(j), "/".join(dict.fromkeys(p.pin_name for p in ld.pads if p.pin_name)), ld.names,
+                     ld.net) for j, ld in enumerate(self.lands)]
+        return pin_diffs([(ee[i], kicad[j]) for i, j in enumerate(m.land) if j >= 0], ee, kicad)
+
     def uncovered(self, land) -> list[str]:
         """KiCad lands no EasyEDA pad lands on (each label once), unless parts.uncovered_exemption excuses them, as
         check does: thermal vias in or beside a covered pad, the stub of a pin whose tab is covered."""
@@ -782,8 +795,20 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         verdict = YELLOW if verdict == GREEN else verdict
         reasons.append(why)
 
-    if chosen.names_bad:
-        downgrade(f"{chosen.names_bad} pin name(s) differ ({chosen.names_ok} agree)")
+    diffs = f.pin_diffs(chosen) if chosen.names_bad else []
+    swapped = [d for d in diffs if d.kind == "swapped"]
+    plus_ok = mark is not None and f.mark_ok(chosen, mark)
+    if swapped and not nonpolar and not plus_ok and not any(m.name_score > chosen.name_score for m in normal):
+        # the names are permuted under every placement that lands the pads: no rotation wires the part right (a
+        # polar part's drawn + on its positive pad vouches for the polarity against the names, as in JLC's preview)
+        verdict = RED
+        reasons.insert(0, f"pinout differs from the symbol: {pinout_text(swapped)}: no placement that lands every "
+                          f"pad puts the pins on their own functions, so the part is wired wrong whatever the "
+                          f"rotation; check the LCSC part's pinout against the symbol")
+    elif chosen.names_bad:
+        downgrade(f"{chosen.names_bad} pin name(s) differ ({chosen.names_ok} agree): {pinout_text(diffs)}"
+                  + ("" if nonpolar else ": the polarity follows the drawn +" if plus_ok else
+                     ": check the LCSC part's pinout against the symbol"))
     elif chosen.names_ok:
         reasons.append(f"{chosen.names_ok} pin names agree")
     # EasyEDA numbers KiCad does not have (a tab 4 against KiCad's 2, shield pads 1-4 against S1) cannot match, and
