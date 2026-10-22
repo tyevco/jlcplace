@@ -33,7 +33,7 @@ import numpy as np
 from .convention import board_to_library, norm_angle, rot
 from .lcsc import find_lcsc
 from .lcsc import normalize as normalize_lcsc
-from .model import BOTTOM, TOP, Board, Pad, Part
+from .model import BOTTOM, TOP, Board, Pad, Part, ref_problem
 
 #: chord error (mm) of the polygons the S-expression reader makes from arcs; vertices lie on the arc
 ARC_ERR = 1e-3
@@ -89,6 +89,16 @@ def load_snapshot(path) -> Board:
         code = normalize_lcsc(part.lcsc) if part.lcsc else ""
         if code != part.lcsc:
             part.lcsc, part.lcsc_field = code, part.lcsc_field if code else ""
+    return _checked(board)
+
+
+def _checked(board: Board) -> Board:
+    """The board, unless a part's reference cannot be a designator (model.ref_problem): ValueError naming it."""
+    for part in board.parts:
+        why = ref_problem(part.ref)
+        if why:
+            raise ValueError(f"the part at ({part.x:g}, {part.y:g}) has the reference {part.ref!r}, which is not a "
+                             f"designator: {why}")
     return board
 
 
@@ -154,7 +164,7 @@ def board_from_pcbnew(kb, path: str = "", *, origin="aux", lcsc_fields=()) -> Bo
     org, kind = resolve_origin(origin, _mm2(ds.GetAuxOrigin()), _mm2(ds.GetGridOrigin()))
     ver = str(kb.GetFileFormatVersionAtLoad()) if hasattr(kb, "GetFileFormatVersionAtLoad") else ""
     parts = [_pcbnew_part(pcbnew, fp, lcsc_fields) for fp in kb.GetFootprints()]
-    return Board(path=p, origin=org, parts=parts, source="pcbnew", kicad_version=ver, origin_kind=kind)
+    return _checked(Board(path=p, origin=org, parts=parts, source="pcbnew", kicad_version=ver, origin_kind=kind))
 
 
 def _mm2(v) -> tuple[float, float]:
@@ -344,8 +354,8 @@ def load_board_sexpr(path, *, origin="aux", lcsc_fields=()) -> Board:
     nets = {a[0]: (a[1] if len(a) > 1 else "") for a in (_atoms(n) for n in nodes if n[0] == "net") if a}
     parts = [_sexpr_part(n, version, nets, lcsc_fields, min(ARC_ERR, max_err))
              for n in nodes if n[0] in ("footprint", "module")]
-    return Board(path=p, origin=org, parts=parts, source="sexpr", kicad_version=str(version) if version else "",
-                 origin_kind=kind)
+    return _checked(Board(path=p, origin=org, parts=parts, source="sexpr",
+                          kicad_version=str(version) if version else "", origin_kind=kind))
 
 
 def _sexpr_part(fp, version: int, nets: dict, lcsc_fields, err: float) -> Part:

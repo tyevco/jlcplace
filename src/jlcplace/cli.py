@@ -8,9 +8,10 @@
     jlcplace show CODE | BOARD --ref REF
     jlcplace snapshot BOARD -o board.json
 
-BOARD is a .kicad_pcb file or a JSON snapshot. Exit codes: 0 clean; 1 something yellow and --fail-on yellow; 2
-something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a database
-file that cannot be read, bad options); 4 an internal error (a bug), never 1.
+BOARD is a .kicad_pcb file or a JSON snapshot. Only `fetch`, and the other commands with --online, use the network
+(the EasyEDA API); otherwise records come from the cache. Exit codes: 0 clean; 1 something yellow and --fail-on
+yellow; 2 something red (for fetch: records that could not be fetched); 3 bad input (missing or malformed files, a
+database file that cannot be read, bad options); 4 an internal error (a bug), never 1.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
-from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound
+from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, EEFootprint, NotFound, printable
 from .parts import ee_key, kicad_hash
 from .pipeline import apply_bom_codes, bom_overrides, check, correction, describe, fallback, is_code, lookup_ee, \
     resolve, row_lines
@@ -95,8 +96,20 @@ def _bom(path):
         raise BadInput(str(e)) from None
 
 
-def _client(args, offline=None) -> EEClient:
-    return EEClient(args.cache, offline=args.offline if offline is None else offline)
+def _client(args) -> EEClient:
+    """Records from the cache; from the EasyEDA API too only with --online."""
+    return EEClient(args.cache, offline=not args.online)
+
+
+def _misses_note(client: EEClient) -> list[str]:
+    """What to do about records the cache lacked (the commands do not download them unless asked)."""
+    n = len(client.misses)
+    if not n:
+        return []
+    missing = sorted(client.misses, key=natural_key)
+    codes = ", ".join(missing[:8]) + (f" and {n - 8} more" if n > 8 else "")
+    return [(f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {plural(n, 'code')} ({codes}): "
+             f"`jlcplace fetch BOARD` downloads them (rate-limited), or pass --online")]
 
 
 def _db(args) -> CorrectionDB | None:
@@ -137,7 +150,7 @@ def _finish(args, run, notes=()) -> int:
     if not args.quiet:
         out.write(report.summary(run, color=_color(out)))
     for n in notes:
-        print(n, file=out)
+        print(printable(n), file=out)
     if args.github_annotations:
         for line in report.github_annotations(run, fail_on=args.fail_on):
             print(line)
@@ -175,11 +188,12 @@ def cmd_check(args) -> int:
     rows = _rows(args.cpl, args.units)
     bom = _bom(args.bom)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
-    resolved = resolve(board, _client(args), _db(args), snap=args.snap, bom_rows=bom)
+    client = _client(args)
+    resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom)
     run = check(board, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
-    return _finish(args, run, _codeless_hint(run, bom))
+    return _finish(args, run, _codeless_hint(run, bom) + _misses_note(client))
 
 
 def cmd_cpl(args) -> int:
@@ -187,7 +201,8 @@ def cmd_cpl(args) -> int:
     board = _board(args)
     bom = _bom(args.bom)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
-    resolved = resolve(board, _client(args), _db(args), snap=args.snap, use_fallback=True)
+    client = _client(args)
+    resolved = resolve(board, client, _db(args), snap=args.snap, use_fallback=True)
     rows, _ = rows_for_board(board, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
     out = Path(args.output)
     tmp = str(out.parent / f".{out.name}.jlcplace-check.tmp")
@@ -214,7 +229,7 @@ def cmd_cpl(args) -> int:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    return _finish(args, run, [note])
+    return _finish(args, run, [note] + _misses_note(client))
 
 
 # ------------------------------------------------------------------------------------------------------- fit
@@ -270,15 +285,17 @@ def cmd_fit(args) -> int:
         data.append(_fit_dict(part, ee, corr, stored))
         if not args.quiet:
             what = corr.reasons[0] if corr.reasons else ""
-            print(f"{corr.verdict.upper():<6}  {part.ref:<{w}}  {part.lcsc:<10} {part.layer:<6}  "
-                  + (f"rot {corr.rot:g}, dx {corr.dx:.4f}, dy {corr.dy:.4f}{', mirrored' if corr.mirror else ''} "
-                     f"({corr.method}, rms {corr.rms:.3f}, {corr.matched} matched)" if corr.method != "none"
-                     else "not fitted") + (f"  {what}" if what else "") + (f"  [{stored}]" if stored else ""),
-                  file=out)
+            print(printable(f"{corr.verdict.upper():<6}  {part.ref:<{w}}  {part.lcsc:<10} {part.layer:<6}  "
+                            + (f"rot {corr.rot:g}, dx {corr.dx:.4f}, dy {corr.dy:.4f}"
+                               f"{', mirrored' if corr.mirror else ''} ({corr.method}, rms {corr.rms:.3f}, "
+                               f"{corr.matched} matched)" if corr.method != "none" else "not fitted")
+                            + (f"  {what}" if what else "") + (f"  [{stored}]" if stored else "")), file=out)
     if not args.quiet:
         counts = {v: verdicts.count(v) for v in (RED, YELLOW, GREEN)}
         print(f"{plural(len(parts), 'part')}: {counts[RED]} red, {counts[YELLOW]} yellow, {counts[GREEN]} green"
               + (f"; database {args.db}" if db is not None else ""), file=out)
+        for n in _misses_note(client):
+            print(printable(n), file=out)
     if args.json:
         _write(args.json, json.dumps({"tool": report.TOOL, "board": board.path, "fits": data}, indent=1) + "\n")
     return _verdict_code(verdicts, args.fail_on)
@@ -304,17 +321,17 @@ def cmd_fetch(args) -> int:
             res = client.get(code, refresh=args.refresh)
         except EEError as e:
             failed += 1
-            print(f"{code}: failed: {e}")
+            print(printable(f"{code}: failed: {e}"))
             continue
         how = "fetched" if client.requests > before else "cached"
         if isinstance(res, NotFound):
             missing += 1
-            print(f"{code}: not found ({res.message}; {how})")
+            print(printable(f"{code}: not found ({res.message}; {how})"))
         else:
             got += 1
-            print(f"{code}: {res.title}, {len(res.pads)} pads ({how})")
-    print(f"{plural(len(codes), 'code')}: {plural(got, 'footprint')}, {missing} not found, {failed} failed; "
-          f"cache {client.cache_dir}")
+            print(printable(f"{code}: {res.title}, {len(res.pads)} pads ({how})"))
+    print(printable(f"{plural(len(codes), 'code')}: {plural(got, 'footprint')}, {missing} not found, {failed} "
+                    f"failed; cache {client.cache_dir}"))
     return EXIT_RED if failed else EXIT_OK
 
 
@@ -445,7 +462,7 @@ def cmd_confirm(args) -> int:
             x, y, a = cpl_row_for(part, c, board.origin, args.reading)
             row = f"; row X {x:.4f} Y {y:.4f} rot {a:g}"
         was = f"; replaces the {replaced.status} correction {describe(replaced)}" if replaced is not None else ""
-        print(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row}{was} ({db.file(part.lcsc)})")
+        print(printable(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row}{was} ({db.file(part.lcsc)})"))
     return EXIT_OK
 
 
@@ -503,18 +520,19 @@ def _show_ref(args) -> dict:
 
 
 def _print_tree(d, indent: int = 0) -> None:
+    """The data, one key per line (text from EasyEDA and the database with its control characters as \\xNN)."""
     pad = "  " * indent
     for k, v in d.items():
         if isinstance(v, dict) and v and k != "pad_layers":
-            print(f"{pad}{k}:")
+            print(printable(f"{pad}{k}:"))
             _print_tree(v, indent + 1)
         elif isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
-            print(f"{pad}{k}: {len(v)}")
+            print(printable(f"{pad}{k}: {len(v)}"))
             for x in v:
-                print(f"{pad}  - " + ", ".join(f"{a}={json.dumps(b)}" for a, b in x.items()
-                                               if not isinstance(b, (dict, list)) or b))
+                print(printable(f"{pad}  - " + ", ".join(f"{a}={json.dumps(b)}" for a, b in x.items()
+                                                         if not isinstance(b, (dict, list)) or b)))
         else:
-            print(f"{pad}{k}: {v if isinstance(v, str) else json.dumps(v)}")
+            print(printable(f"{pad}{k}: {v if isinstance(v, str) else json.dumps(v)}"))
 
 
 def cmd_show(args) -> int:
@@ -540,8 +558,8 @@ def cmd_snapshot(args) -> int:
         save_snapshot(board, args.output)
     except OSError as e:
         raise BadInput(f"{args.output}: {e}") from None
-    print(f"jlcplace: wrote {args.output}: {len(board.parts)} parts ({board.source}), origin {board.origin_kind} "
-          f"({board.origin[0]:g}, {board.origin[1]:g})")
+    print(printable(f"jlcplace: wrote {args.output}: {len(board.parts)} parts ({board.source}), origin "
+                    f"{board.origin_kind} ({board.origin[0]:g}, {board.origin[1]:g})"))
     return EXIT_OK
 
 
@@ -559,7 +577,11 @@ def build_parser() -> argparse.ArgumentParser:
     ee = argparse.ArgumentParser(add_help=False)
     g = ee.add_argument_group("EasyEDA records")
     g.add_argument("--cache", default=None, metavar="DIR", help=f"record cache (default {default_cache_dir()})")
-    g.add_argument("--offline", action="store_true", help="never use the network; only cached records")
+    m = g.add_mutually_exclusive_group()
+    m.add_argument("--online", action="store_true",
+                   help="download the records the cache lacks from the EasyEDA API (rate-limited; default: only "
+                        "cached records, which `jlcplace fetch` downloads)")
+    m.add_argument("--offline", action="store_true", help="only cached records (the default)")
     g.add_argument("--snap", type=float, default=0.5, metavar="DEG", help=argparse.SUPPRESS)
 
     db = argparse.ArgumentParser(add_help=False)
@@ -657,6 +679,13 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+class _Printable(logging.Formatter):
+    """Log lines with their control characters as \\xNN (EasyEDA's error texts are not ours to print raw)."""
+
+    def format(self, record) -> str:
+        return printable(super().format(record))
+
+
 def main(argv=None) -> int:
     parser = build_parser()
     try:
@@ -665,19 +694,19 @@ def main(argv=None) -> int:
         return int(e.code or 0)
     if not logging.getLogger().handlers and not log.handlers:
         h = logging.StreamHandler(sys.stderr)
-        h.setFormatter(logging.Formatter("jlcplace: %(levelname)s: %(message)s"))
+        h.setFormatter(_Printable("jlcplace: %(levelname)s: %(message)s"))
         log.addHandler(h)
         log.propagate = False
     log.setLevel(logging.INFO if args.verbose else logging.WARNING)
     try:
         return args.func(args)
     except (BadInput, EEError, DBError) as e:       # DBError: a database file that cannot be read or written
-        print(f"jlcplace: {e}", file=sys.stderr)
+        print(printable(f"jlcplace: {e}"), file=sys.stderr)
         return EXIT_INPUT
     except KeyboardInterrupt:
         return 130
     except OSError as e:                       # inputs are BadInput already: an output or the cache
-        print(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}", file=sys.stderr)
+        print(printable(f"jlcplace: {f'{e.filename}: ' if e.filename else ''}{e.strerror or e}"), file=sys.stderr)
         return EXIT_INPUT
     except Exception as e:  # noqa: BLE001 - a crash must not exit 1, the code that means "yellow"
         traceback.print_exc(file=sys.stderr)

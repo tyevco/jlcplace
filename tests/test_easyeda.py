@@ -775,3 +775,34 @@ def test_default_cache_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     assert ee.default_cache_dir() == tmp_path / "home" / ".cache" / "jlcplace"
     assert ee.EEClient().cache_dir == tmp_path / "home" / ".cache" / "jlcplace"
+
+
+# ------------------------------------------------------------------------------------------------------- review: net-1
+
+def test_retry_waits_have_a_budget_for_the_whole_run(tmp_path):
+    """net-1: each success reset the failure count, so a server answering 429 with Retry-After: 290 three times per
+    code held 10 codes for 2.4 hours. The waits of one client add up to at most max_total_wait (600 s by default);
+    then the API is disabled for the run, and the cache still serves."""
+    answers = []
+    for _ in range(10):
+        answers += [(429, b"", {"Retry-After": "290"})] * 3 + [(200, OK)]
+    net = FakeNet(*answers)
+    c, clk = make(tmp_path, net)
+    assert c.max_total_wait == 600.0
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "cache" / "C77.json").write_bytes(OK)
+    errors = []
+    for i in range(1, 11):
+        try:
+            c.get(f"C{i}")
+        except ee.EEError as e:
+            errors.append(str(e))
+    assert sum(clk.sleeps) <= 600.0 and clk.sleeps == [290.0, 290.0], clk.sleeps
+    assert len(errors) == 10 and "580 s" in errors[0] and all("disabled" in e for e in errors), errors[:2]
+    assert c.disabled and c.requests == 3 and c.waited == 580.0
+    assert isinstance(c.get("C77"), EEFootprint)
+    # a smaller budget: the network is down, the third wait would pass it
+    c, clk = make(tmp_path / "b", FakeNet(*[(503, b"")] * 5), max_total_wait=20.0)
+    with pytest.raises(ee.EEError, match="disabled"):
+        c.get("C1")
+    assert c.requests == 3 and clk.sleeps == [3.75, 7.5] and c.disabled

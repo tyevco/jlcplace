@@ -21,11 +21,37 @@ A correction relates the EasyEDA footprint to the KiCad one, independent of the 
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 
 TOP, BOTTOM = "top", "bottom"
 GREEN, YELLOW, RED, VERIFIED = "green", "yellow", "red", "verified"
 VERDICT_ORDER = {RED: 0, YELLOW: 1, GREEN: 2, VERIFIED: 3}
+FORMULA_START = ("=", "+", "-", "@")   # a spreadsheet runs a cell that starts with one of these as a formula
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")    # C0, DEL, C1 and lone surrogates
+
+
+def printable(s) -> str:
+    """str(s) with every control character shown as \\xNN. Text from boards, CPLs, BOMs, the database and EasyEDA
+    goes to terminals and CI logs, where a newline starts a GitHub workflow command ('::stop-commands::...') and ESC
+    a terminal escape."""
+    s = str(s)
+    if not _CONTROL.search(s):
+        return s
+    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}" if ord(m.group()) < 0x100
+                        else f"\\u{ord(m.group()):04x}", s)
+
+
+def ref_problem(ref: str) -> str:
+    """Why a reference cannot be a designator, or "". No KiCad designator holds a control character (it would put
+    workflow commands in a CI log and make the JUnit XML unreadable) or starts with = + - @ (the CPL is a CSV: a
+    spreadsheet would run it as a formula)."""
+    if _CONTROL.search(ref):
+        return "it holds a control character"
+    if ref.startswith(FORMULA_START):
+        return f"it starts with {ref[0]!r}, which makes a spreadsheet cell a formula"
+    return ""
 
 
 @dataclass
