@@ -63,6 +63,12 @@ jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv \
     --report report.html --checklist checklist.md
 ```
 
+`fetch` is the one command that uses the network unasked. `check`, `cpl`, `fit`, `show` and `confirm` read the
+record cache and download nothing unless `--online` is given (then they fetch what the cache lacks, as `fetch` does).
+A check that lacks records says which and how to get them ("no EasyEDA record in the cache ... for 2 codes (C1001,
+C1002): `jlcplace fetch BOARD` downloads them, or pass --online"); those parts are checked from the database, or not
+simulated.
+
 `--bom` checks that the BOM agrees with the board and the CPL. JLC assembles from the BOM's LCSC column and never
 sees the board, so the BOM's code is the part that is simulated (and written by `cpl --bom`), also where the board
 names another code; such parts are listed ("JLC places C7519 from the BOM; the board says C2681320"). Parts the board
@@ -116,15 +122,23 @@ Every CPL row gets a verdict:
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
 Exit codes: 0 clean, 1 something yellow when `--fail-on yellow` is given, 2 something red, 3 bad input (a file
-that cannot be read or written, a database file that cannot be read, a bad option or value), 4 an internal error (a
-bug: the traceback is printed). Outputs:
-`--report` (one self-contained HTML page), `--json`, `--junit`, `--checklist` (`.md` or `.csv`) and
-`--github-annotations`.
+that cannot be read or written, a database file that cannot be read, a bad option or value, a reference that cannot
+be a designator), 4 an internal error (a bug: the traceback is printed). Outputs:
+`--report` (one self-contained HTML page, for your own review: see below), `--json`, `--junit`, `--checklist`
+(`.md` or `.csv`) and `--github-annotations`.
+
+Text from the files and from EasyEDA reaches terminals, CI logs and reports, so a reference with a control character
+(a newline would start a GitHub workflow command in the log) or one that starts with `= + - @` (a formula in a
+spreadsheet) is bad input: no designator looks like that. EasyEDA's and the database's texts are printed with control
+characters as `\xNN`, the JUnit file holds no character XML forbids, the CSV checklist quotes a cell that would be a
+formula (`'=...`), and the Markdown checklist escapes Markdown.
 
 The HTML report has top and bottom views of the board and a card for every part. KiCad copper pads are filled and
 numbered. The EasyEDA pads are outlined where JLC will put them. On the part cards they are blue on their own pin,
 amber on another pin and red off copper; on the board views they take their row's verdict colour. The bottom is drawn
-seen from below, as JLC's preview shows it.
+seen from below, as JLC's preview shows it. Above the board views and above the part cards the report declares the
+source of the outlines, the JLCEDA/EasyEDA Official Library, with links to https://lceda.cn/ and
+https://easyeda.com, as the records' licence asks.
 
 The **preview checklist** lists what only JLC's preview can settle:
 
@@ -189,12 +203,13 @@ stored correction, the part becomes yellow until it is checked again.
 
 ## CI
 
-Commit the database and run the check offline. With no EasyEDA records at hand, a part with a stored correction is
-still simulated: its KiCad pads, taken back through the correction, stand in for the EasyEDA pads. That catches rows
-that no longer match the stored corrections (a part moved, a CPL edited by hand). The verdict cannot be better than
-the correction's, and a row whose verdict the correction caps says so ("yellow because the stored auto correction
-is yellow: ..."). A two-pad non-polar part with neither a record nor a stored correction is still checked against
-its own copper: a row point off its pads is red. For a full simulation, cache the records too.
+Commit the database and run the check; it downloads nothing unless `--online` is given. With no EasyEDA records at
+hand, a part with a stored correction is still simulated: its KiCad pads, taken back through the correction, stand
+in for the EasyEDA pads. That catches rows that no longer match the stored corrections (a part moved, a CPL edited by
+hand). The verdict cannot be better than the correction's, and a row whose verdict the correction caps says so
+("yellow because the stored auto correction is yellow: ..."). A two-pad non-polar part with neither a record nor a
+stored correction is still checked against its own copper: a row point off its pads is red. For a full simulation,
+cache the records too.
 
 ```yaml
 # .github/workflows/cpl.yml
@@ -210,13 +225,16 @@ jobs:
       - run: pip install git+https://github.com/tyevco/jlcplace
       - uses: actions/cache@v4               # optional: EasyEDA records for a full simulation
         with: {path: ~/.cache/jlcplace, key: easyeda-${{ hashFiles('jlcplace-db/*.json') }}, restore-keys: easyeda-}
+      # no --report: the HTML report draws EasyEDA pad outlines; never upload it (or the record cache) as an
+      # artifact of a public repository. The JUnit and JSON outputs hold derived data only.
       - run: >
           jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.csv
-          --db jlcplace-db --offline --github-annotations --junit cpl.xml --report cpl.html
+          --db jlcplace-db --github-annotations --junit cpl.xml
 ```
 
 Without KiCad on the runner, the board is read with the S-expression reader. Pass `--fail-on yellow` to make yellow
-fail the job as well.
+fail the job as well. To fill the record cache, run `jlcplace fetch hardware/board.kicad_pcb` (on a schedule, say)
+before the check; nothing else in the job talks to EasyEDA.
 
 ## Limits
 
@@ -234,8 +252,9 @@ fail the job as well.
 * Symbol pin names are used where EasyEDA has them. Multi-unit symbols are parsed, but no real one has been tested.
 * A part EasyEDA has no record for is not simulated: yellow for a two-pad non-polar part, red otherwise, unless a
   stored correction exists.
-* The EasyEDA API is not a documented, stable interface. jlcplace waits at least 0.7 s between requests, backs off
-  on errors, and stops after repeated failures.
+* The EasyEDA API is not a documented, stable interface. Only `fetch` and `--online` use it. jlcplace waits at least
+  0.7 s between requests, backs off on errors (honouring Retry-After up to 5 minutes), and stops using it for the
+  run after 5 failures in a row or once its retry waits add up to 10 minutes.
 * KiCad 10 variant overrides are ignored, and pcbnew from KiCad 6 to 8 is untested; the S-expression reader covers
   those files.
 
@@ -251,6 +270,7 @@ and never redistributes them. The JSON, JUnit, checklist and annotation outputs 
 hashes; the correction database holds those and the EasyEDA footprint's title (a package name such as
 `SOIC-8_L5.3-W5.3-P1.27-LS8.0-BL`), and the JSON report and `fit --json` name it too.
 
-The HTML report draws EasyEDA pad outlines and states their source. It is meant for your own review; do not publish
-it. This repository contains no EasyEDA data: its tests build their EasyEDA records by hand, or read a local cache
-when one is present.
+The HTML report draws EasyEDA pad outlines. It declares their source prominently, with both links, above the board
+views and the part cards and again in its footer, and asks search engines not to index it. It is meant for your own
+review: do not publish it, for example as a CI artifact of a public repository. This repository contains no EasyEDA
+data: its tests build their EasyEDA records by hand, or read a local cache when one is present.

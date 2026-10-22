@@ -10,7 +10,12 @@ Conventions for every module:
 * Python >= 3.10, standard library + numpy only at runtime. `pcbnew` is optional: import it lazily, inside
   functions, and only in `board.py` (and tests marked `pcbnew`).
 * mm and degrees everywhere. Angles normalised with `convention.norm_angle` before they are written or compared.
-* No network access unless a caller passes `offline=False` *and* the code path is in `easyeda.py`.
+* No network access unless a caller passes `offline=False` *and* the code path is in `easyeda.py`. The command line
+  passes it only for `fetch` and with `--online`.
+* References from boards, CPLs and BOMs that `model.ref_problem` refuses (a control character; a leading = + - @, a
+  spreadsheet formula) are bad input: the readers raise ValueError naming them escaped. Text printed to a terminal or
+  log goes through `model.printable` (control characters as \xNN): a newline in it would start a GitHub workflow
+  command.
 * Never write EasyEDA geometry anywhere except the user's cache directory (EasyEDA claims copyright over its
   library; the correction database stores derived numbers and hashes only). The one exception is the HTML report,
   a local review file that draws EasyEDA pad outlines and states their source (the JLCEDA/EasyEDA Official Library).
@@ -49,7 +54,8 @@ def resolve_origin(origin, aux, grid) -> ((x, y), kind)
   another named origin raises ValueError, and so does a coordinate that is not a finite number ("nan,nan"). A
   snapshot keeps `source` = the reader that made it; a file that is not JSON or not a snapshot (`{}`, `[]`) raises
   ValueError, and a code in it is normalised as the readers do (`lcsc.normalize`: "C0402" is no code).
-* `Board.kicad_version` is the file-format version (e.g. "20241229"). Malformed or truncated files raise ValueError.
+* `Board.kicad_version` is the file-format version (e.g. "20241229"). Malformed or truncated files raise ValueError,
+  and so does a reference `model.ref_problem` refuses (every reader, snapshots included).
 * Parts: every footprint, as in model.Part. `fields` always holds Reference, Value, Datasheet and Description (as
   pcbnew 9 does). KiCad 5 `(attr virtual)` sets exclude_pos and exclude_bom.
 * Pads in the **library frame**: `library = (x, -y)` on the bottom, and the library pad angle is psi = a - theta on
@@ -95,18 +101,20 @@ def pin_names(result) -> dict[str, str]; def title_tokens(title) -> list[str]
 class EEClient:
     def __init__(self, cache_dir=None, *, offline=False, min_interval=0.7, timeout=30.0, max_failures=5,
                  notfound_ttl_days=7, opener=None, sleep=None, clock=None, now=None, rng=None, max_wait=300.0,
-                 user_agent=USER_AGENT)
+                 max_total_wait=600.0, user_agent=USER_AGENT)
     def get(self, code, *, refresh=False) -> EEFootprint | NotFound   # EEError: network failure, offline miss
     def raw(self, code) -> dict | None; def cache_path(self, code) -> Path
-    failures, requests, disabled
+    failures, requests, disabled, waited (s slept before retries), misses (codes an offline client lacked)
 ```
 * API: `https://easyeda.com/api/products/{code}/components?version=6.4.19.5`. Retried with BACKOFF 3, 6, 12, 24,
   48 s (the last repeats) plus up to 25 % jitter, or Retry-After when longer: HTTP 403, 408, 425, 429, 5xx, network
   errors, 2xx non-JSON bodies (a CDN's HTML page), 2xx JSON errors 403/429/5xx. Other failures (400, an HTML 404,
-  JSON without a success flag) fail at once but count. A Retry-After above `max_wait` gives up. After
-  `max_failures` consecutive failures the client stops using the network (EEError); cached records are still
-  served. `success: false, code: 404` (and a record without a footprint) is NotFound, cached and trusted for
-  `notfound_ttl_days` by file mtime; a failed refetch returns the stale NotFound.
+  JSON without a success flag) fail at once but count. A Retry-After above `max_wait` gives up, and so does a wait
+  that would bring the client's retry waits above `max_total_wait` (a success resets the failure count, not this
+  sum). After `max_failures` consecutive failures, or either of those, the client stops using the network for the
+  run (EEError); cached records are still served. `success: false, code: 404` (and a record without a footprint)
+  is NotFound, cached and trusted for `notfound_ttl_days` by file mtime; a failed refetch returns the stale NotFound.
+  An offline cache miss is an EEError, and its code is added to `misses`.
 * Cache: `cache_dir/<code>.json` holds the raw response verbatim (atomic write); parsing always reads that file.
 * Frame: `e = 0.254 * (p - head)` (mm, y down). `EEPad.angle = r`: EasyEDA's rotation has R's sense, proven from the
   corner order of every rotated RECT pad in the cached records; RECT/OVAL pads at other angles are checked against
@@ -260,7 +268,7 @@ def write_cpl(path, rows: list[CplRow])
 def read_bom(path) -> list[dict]       # designators, lcsc (normalised when valid, else raw), comment, footprint, qty
 def rows_for_board(board, corrections, reading="jlc-2022") -> tuple[list[CplRow], list[str]]
 def assembled(part) -> bool; def correction_for(corrections, part) -> Correction | None; def natural_key(ref)
-def atomic_write(path, text)           # temp file + rename; keeps an existing file's mode, else the umask's
+def atomic_write(path, text)           # temp file + rename; keeps an existing file's mode, else 0666 less the umask
 ```
 * `read_cpl`: CSV, TSV or semicolons (the first delimiter under which a header names all five columns), header
   variants case-insensitive, rows in file order with duplicates kept, KiCad's ASCII `.pos` too. A value with a unit
@@ -270,6 +278,9 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
   "Unicode Text"); LF, CRLF or CR-only line ends; text csv cannot read is a ValueError naming the file (`read_bom`
   alike).
 * `write_cpl`: JLC's header, CRLF, `%.4fmm`, Top/Bottom, rotation `norm_angle(round(norm_angle(a), 3))` with `:g`.
+* `atomic_write` creates its temporary file with mode 0666 (the kernel applies the umask; the umask is never read,
+  since reading it means setting it, process-wide) and gives it an existing file's mode before the rename.
+* `read_cpl` and `read_bom` raise ValueError (with the line) for a designator `model.ref_problem` refuses.
 * `rows_for_board`: rows for assembled parts with a code; refs without a correction or with a mirrored one are
   returned as missing. Both sorted naturally.
 
@@ -339,23 +350,27 @@ class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, r
 ## report.py and cli.py
 
 * report: `summary(run, color=False)` (one line per red or yellow result: `headline(res)`, "status: first message",
-  the status left out when the message says it), `plural(n, word)`, `to_dict(run)` (strict JSON: a landing with no
-  copper to measure to has dist null; no EasyEDA geometry),
-  `checklist_markdown`,
-  `checklist_csv`, `junit(run, fail_on=)`, `github_annotations(run, fail_on=)`, `html(run)` (one page, inline CSS
-  and SVG, no external resources; bottom drawn seen from below with x mirrored; footer carries the EasyEDA source
-  notice).
+  the status left out when the message says it; text through `model.printable`), `plural(n, word)`, `to_dict(run)`
+  (strict JSON: a landing with no copper to measure to has dist null; no EasyEDA geometry), `checklist_markdown`
+  (references, file names and messages Markdown-escaped), `checklist_csv` (a cell starting with = + - @, tab or CR
+  gets a leading apostrophe), `junit(run, fail_on=)` (characters XML 1.0 forbids become U+FFFD),
+  `github_annotations(run, fail_on=)`, `html(run)` (one page, inline CSS and SVG, no external resources, noindex;
+  bottom drawn seen from below with x mirrored; the EasyEDA source, the JLCEDA/EasyEDA Official Library with links
+  to https://lceda.cn/ and https://easyeda.com, declared above the board views and above the part cards, and in the
+  footer).
 * cli (`jlcplace`, also `python -m jlcplace`):
-  `check BOARD CPL [--bom] [--db] [--offline] [--cache] [--origin] [--reading] [--fail-on red|yellow] [--report]
-  [--json PATH|-] [--junit] [--checklist .md|.csv] [--github-annotations] [--lcsc-field]... [--reader] [--units]
-  [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless
+  `check BOARD CPL [--bom] [--db] [--online|--offline] [--cache] [--origin] [--reading] [--fail-on red|yellow]
+  [--report] [--json PATH|-] [--junit] [--checklist .md|.csv] [--github-annotations] [--lcsc-field]... [--reader]
+  [--units] [-q]`; `cpl BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless
   --force; parts without a footprint or entry get the fallback row); `fit BOARD [--ref]... [--db] [--json]`;
   `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME --source manual|preview|board
   [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx --dy]` (preview and board need
   --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the correction recorded, refs of one
   entry must agree on it, a reference two placed parts carry is refused, and everything is checked before anything
   is written); `show CODE | BOARD --ref REF [--json]`;
-  `snapshot BOARD -o board.json`. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red
+  `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache (the
+  default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache lacked
+  and say how to fetch them. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red
   (fetch: records that could not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and
   database files included; when one output cannot be written the others still are), 4 an internal error (the
   traceback is printed): no crash exits 1.

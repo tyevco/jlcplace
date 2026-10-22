@@ -128,7 +128,7 @@ def lookup_ee(client, code: str) -> EEFootprint | NotFound:
     except EEError as e:
         msg = str(e)
         if "offline" in msg and "not in the cache" in msg:
-            msg = "no EasyEDA record in the cache (offline; `jlcplace fetch` downloads it)"
+            msg = "no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)"
         return NotFound(code, msg)
     except OSError as e:
         return NotFound(code, f"lookup failed ({type(e).__name__}: {e})")

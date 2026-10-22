@@ -7,7 +7,9 @@ numbered; the EasyEDA pads are outlined where JLC puts them for the CPL row (con
 bottom reading); "+" marks the row's point and "o" the point jlcplace would write.
 
 The JSON, checklist, JUnit and annotation outputs hold derived data only (verdicts, pad numbers, distances). The HTML
-draws EasyEDA pad outlines: it is for the user's own review, like the cache, and is not meant to be published.
+draws EasyEDA pad outlines: it is for the user's own review, like the cache, and is not meant to be published. As the
+records' licence asks, it declares their source, the JLCEDA/EasyEDA Official Library with links to its home pages,
+above the board views and the part cards (where the outlines are drawn) and in its footer.
 """
 
 from __future__ import annotations
@@ -24,7 +26,8 @@ from pathlib import Path
 from . import __version__, geom
 from .convention import BOTTOM_READINGS, cpl_to_board, ee_to_board, library_to_board
 from .cpl import assembled, natural_key
-from .model import BOTTOM, GREEN, RED, TOP, VERIFIED, YELLOW, CplRow, EEFootprint, NotFound, RowResult
+from .model import BOTTOM, FORMULA_START, GREEN, RED, TOP, VERIFIED, YELLOW, CplRow, EEFootprint, NotFound, \
+    RowResult, printable
 from .parts import norm_number
 from .pipeline import CheckItem, Run, key_reasons, proxy_footprint
 
@@ -33,9 +36,10 @@ _ANSI = {RED: "\033[1;31m", YELLOW: "\033[1;33m", GREEN: "\033[32m", VERIFIED: "
 _ORDER = {RED: 0, YELLOW: 1, GREEN: 2, VERIFIED: 3}           # report order: worst first
 SHOW = 12                                                      # checklist refs per category in the summary
 #: where the drawn EasyEDA pad outlines come from, as the library's own notice asks it to be declared
-SOURCE_NOTICE = ("The EasyEDA pad outlines drawn here are derived from footprints of the JLCEDA/EasyEDA Official "
-                 "Library (https://lceda.cn/, https://easyeda.com), whose copyright and related rights belong to "
-                 "JLCEDA/EasyEDA.")
+SOURCE_LIBRARY = "JLCEDA/EasyEDA Official Library"
+SOURCE_LINKS = ("https://lceda.cn/", "https://easyeda.com")
+SOURCE_NOTICE = (f"The EasyEDA pad outlines drawn here are derived from footprints of the {SOURCE_LIBRARY} "
+                 f"({', '.join(SOURCE_LINKS)}), whose copyright and related rights belong to JLCEDA/EasyEDA.")
 
 
 def _sorted(results: list[RowResult]) -> list[tuple[int, RowResult]]:
@@ -70,26 +74,27 @@ def headline(res: RowResult) -> str:
 
 def summary(run: Run, *, color: bool = False) -> str:
     """One line per red or yellow result with its first reason (and the correction's, where the numbering rests on
-    it), BOM issues, a count line, and the preview checklist grouped by category."""
+    it), BOM issues, a count line, and the preview checklist grouped by category. Text from files and from EasyEDA
+    is shown with its control characters as \\xNN (model.printable): it goes to terminals and CI logs."""
     def paint(v: str, text: str) -> str:
         return f"{_ANSI[v]}{text}\033[0m" if color and v in _ANSI else text
 
     b = run.board
-    out = [f"{TOOL}: {_name(b.path)} ({b.source}, {len(b.parts)} parts, origin {b.origin_kind} "
-           f"{b.origin[0]:g}, {b.origin[1]:g}) vs {_name(run.cpl_path) or 'the rows jlcplace makes'} "
-           f"({len(run.rows)} rows), bottom reading {run.reading}"]
+    out = [printable(f"{TOOL}: {_name(b.path)} ({b.source}, {len(b.parts)} parts, origin {b.origin_kind} "
+                     f"{b.origin[0]:g}, {b.origin[1]:g}) vs {_name(run.cpl_path) or 'the rows jlcplace makes'} "
+                     f"({len(run.rows)} rows), bottom reading {run.reading}")]
     bad = [r for _, r in _sorted(run.results) if r.verdict in (RED, YELLOW)]
-    w = max((len(r.ref) for r in bad), default=0)
+    w = max((len(printable(r.ref)) for r in bad), default=0)
     for r in bad:
-        out.append(f"{paint(r.verdict, f'{r.verdict.upper():<6}')}  {r.ref:<{w}}  {r.lcsc or '-':<10} "
-                   f"{_layer(run, r):<6}  {headline(r)}")
+        out.append(f"{paint(r.verdict, f'{r.verdict.upper():<6}')}  "
+                   + printable(f"{printable(r.ref):<{w}}  {r.lcsc or '-':<10} {_layer(run, r):<6}  {headline(r)}"))
         info = run.resolved.get(r.ref)
         if (info is not None and info.corr is not None and r.status in ("renumbered", "wrong-pad")
                 and info.corr.verdict in (RED, YELLOW) and info.corr.reasons):
-            out.append(f"{'':6}  {'':<{w}}  correction ({info.source}, {info.corr.status}, {info.corr.verdict}): "
-                       f"{key_reasons(info.corr, 1)[0]}")
+            out.append(printable(f"{'':6}  {'':<{w}}  correction ({info.source}, {info.corr.status}, "
+                                 f"{info.corr.verdict}): {key_reasons(info.corr, 1)[0]}"))
     for m in run.bom_messages:
-        out.append(f"{paint(YELLOW, 'BOM   ')}  {m}")
+        out.append(f"{paint(YELLOW, 'BOM   ')}  {printable(m)}")
     c = run.counts()
     out.append(f"{len(run.results)} results: "
                + ", ".join(paint(v, f"{c[v]} {v}") for v in (RED, YELLOW, GREEN, VERIFIED))
@@ -104,13 +109,13 @@ def summary(run: Run, *, color: bool = False) -> str:
         for cat, its in groups.items():
             if cat == "uncertain correction":
                 for k, it in enumerate(its):
-                    out.append(f"  {cat if k == 0 else '':<{cw}}  {it.ref}: {it.what}")
+                    out.append(printable(f"  {cat if k == 0 else '':<{cw}}  {it.ref}: {it.what}"))
             elif cat == "odd angle":
-                out.append(f"  {cat:<{cw}}  " + ", ".join(f"{it.ref} ({it.rotation:g})" for it in its[:SHOW])
-                           + (f" and {len(its) - SHOW} more" if len(its) > SHOW else ""))
+                out.append(printable(f"  {cat:<{cw}}  " + ", ".join(f"{it.ref} ({it.rotation:g})" for it in its[:SHOW])
+                                     + (f" and {len(its) - SHOW} more" if len(its) > SHOW else "")))
             else:
-                out.append(f"  {cat:<{cw}}  " + " ".join(it.ref for it in its[:2 * SHOW])
-                           + (f" and {len(its) - 2 * SHOW} more" if len(its) > 2 * SHOW else ""))
+                out.append(printable(f"  {cat:<{cw}}  " + " ".join(it.ref for it in its[:2 * SHOW])
+                                     + (f" and {len(its) - 2 * SHOW} more" if len(its) > 2 * SHOW else "")))
     return "\n".join(out) + "\n"
 
 
@@ -168,10 +173,20 @@ def _item(it: CheckItem) -> dict:
 
 # ------------------------------------------------------------------------------------------------------- checklist
 
+_MARKDOWN = re.compile(r"([\\`*_\[\]<>])")
+
+
+def _md(s) -> str:
+    """Text for Markdown that renders as itself: no links, images, HTML, code or emphasis from a reference, a file
+    name or a message (the checklist is posted to job summaries and pull requests)."""
+    return _MARKDOWN.sub(r"\\\1", printable(s))
+
+
 def checklist_markdown(run: Run) -> str:
+    """The preview checklist as Markdown tick boxes, by category; references, file names and messages escaped."""
     items = run.checklist()
-    out = [f"# JLC preview checklist: {_name(run.board.path)}", "",
-           f"CPL `{_name(run.cpl_path) or 'made by jlcplace'}`, bottom reading `{run.reading}`, {TOOL}.", "",
+    out = [f"# JLC preview checklist: {_md(_name(run.board.path))}", "",
+           f"CPL {_md(_name(run.cpl_path) or 'made by jlcplace')}, bottom reading `{run.reading}`, {TOOL}.", "",
            "Open the order's placement preview at JLC and look at each part below. Tick it when the part sits on "
            "its pads with pin 1 / polarity where the board wants it."]
     if not items:
@@ -184,17 +199,25 @@ def checklist_markdown(run: Run) -> str:
             out += ["", f"## {cat.capitalize()}", ""]
         rot = f", rot {it.rotation:g}" if it.rotation is not None else ""
         flag = " **(red: fix the row first)**" if it.verdict == RED else ""
-        out.append(f"- [ ] **{it.ref}** ({it.lcsc or 'no code'}, {it.layer}{rot}){flag}: {it.what}")
+        out.append(f"- [ ] **{_md(it.ref)}** ({_md(it.lcsc or 'no code')}, {it.layer}{rot}){flag}: {_md(it.what)}")
     return "\n".join(out) + "\n"
 
 
+def _cell(s: str) -> str:
+    """A CSV cell a spreadsheet shows as text: one that starts like a formula (= + - @, tab, CR) gets a leading
+    apostrophe."""
+    return "'" + s if s.startswith(FORMULA_START + ("\t", "\r")) else s
+
+
 def checklist_csv(run: Run) -> str:
+    """The preview checklist as CSV for a spreadsheet (a cell that would be a formula starts with an apostrophe)."""
     buf = io.StringIO(newline="")
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["category", "ref", "lcsc", "layer", "rotation", "row verdict", "what", "checked"])
     for it in run.checklist():
-        w.writerow([it.category, it.ref, it.lcsc, it.layer, "" if it.rotation is None else f"{it.rotation:g}",
-                    it.verdict, it.what, ""])
+        w.writerow([_cell(printable(v)) for v in (it.category, it.ref, it.lcsc, it.layer,
+                                                   "" if it.rotation is None else f"{it.rotation:g}", it.verdict,
+                                                   it.what, "")])
     return buf.getvalue()
 
 
@@ -204,30 +227,39 @@ def _fails(verdict: str, fail_on: str) -> bool:
     return verdict == RED or (fail_on == YELLOW and verdict == YELLOW)
 
 
+_XML_INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _xml(s: str) -> str:
+    """s with the characters XML 1.0 cannot hold replaced by U+FFFD (ElementTree writes them as they are, and every
+    JUnit reader then refuses the file)."""
+    return _XML_INVALID.sub("\ufffd", s)
+
+
 def junit(run: Run, *, fail_on: str = RED) -> str:
     """One testsuite per run and one testcase per result (classname jlcplace.<board stem>, name = ref): red results
     fail, yellow ones too with fail_on yellow (otherwise their messages go to system-out); BOM issues are one more
-    testcase."""
-    stem = Path(run.board.path).stem or "board"
+    testcase. Characters XML cannot hold become U+FFFD."""
+    stem = _xml(Path(run.board.path).stem or "board")
     cases = []
     for res in run.results:
-        tc = ET.Element("testcase", classname=f"jlcplace.{stem}", name=res.ref)
-        text = "\n".join(res.messages)
+        tc = ET.Element("testcase", classname=f"jlcplace.{stem}", name=_xml(res.ref))
+        text = _xml("\n".join(res.messages))
         if _fails(res.verdict, fail_on):
             ET.SubElement(tc, "failure", type=res.verdict,
-                          message=headline(res) if res.messages else f"{res.status}: {res.verdict}").text = text
+                          message=_xml(headline(res)) if res.messages else f"{res.status}: {res.verdict}").text = text
         elif text:
             ET.SubElement(tc, "system-out").text = f"{res.verdict} {res.status}\n{text}"
         cases.append(tc)
     if run.bom_messages:
         tc = ET.Element("testcase", classname=f"jlcplace.{stem}", name="BOM")
         tag = "failure" if fail_on == YELLOW else "system-out"
-        el = ET.SubElement(tc, tag, type=YELLOW, message=run.bom_messages[0]) if tag == "failure" else \
+        el = ET.SubElement(tc, tag, type=YELLOW, message=_xml(run.bom_messages[0])) if tag == "failure" else \
             ET.SubElement(tc, tag)
-        el.text = "\n".join(run.bom_messages)
+        el.text = _xml("\n".join(run.bom_messages))
         cases.append(tc)
     failures = sum(1 for tc in cases if tc.find("failure") is not None)
-    suite = ET.Element("testsuite", name=f"jlcplace {_name(run.cpl_path) or stem}", tests=str(len(cases)),
+    suite = ET.Element("testsuite", name=_xml(f"jlcplace {_name(run.cpl_path) or stem}"), tests=str(len(cases)),
                        failures=str(failures), errors="0", skipped="0",
                        timestamp=datetime.datetime.now().replace(microsecond=0).isoformat())
     suite.extend(cases)
@@ -238,8 +270,9 @@ def junit(run: Run, *, fail_on: str = RED) -> str:
 
 
 def _gh(s: str, prop: bool = False) -> str:
-    """GitHub workflow-command escaping (data; properties also escape ':' and ',')."""
-    s = s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    """GitHub workflow-command escaping (data; properties also escape ':' and ','); other control characters (ESC)
+    are shown as \\xNN."""
+    s = printable(s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
     return s.replace(":", "%3A").replace(",", "%2C") if prop else s
 
 
@@ -536,6 +569,8 @@ dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 ul{margin:4px 0 8px;padding-left:18px}li{margin:2px 0;overflow-wrap:anywhere}
 details.sub>summary{cursor:pointer;color:var(--muted);font-size:12px}
 footer{color:var(--muted);font-size:12px;margin:32px 0 16px;border-top:1px solid var(--line);padding-top:8px}
+.source{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--own);border-radius:8px;
+padding:8px 12px;margin:12px 0}
 """.replace("DARK", _DARK)
 
 
@@ -589,6 +624,14 @@ def _card(run: Run, res: RowResult, anchor: str, side_pads) -> str:
             + "".join(body) + "</details>")
 
 
+def _source(lead: str = "Source of the EasyEDA pad outlines") -> str:
+    """The licence's source declaration, with links: above the drawings, not only in the footer."""
+    links = ", ".join(f'<a href="{_esc(u)}">{_esc(u)}</a>' for u in SOURCE_LINKS)
+    return (f'<p class="source"><b>{_esc(lead)}:</b> footprints of the <b>{_esc(SOURCE_LIBRARY)}</b> ({links}). The '
+            f'copyright and related rights in that library belong to JLCEDA/EasyEDA. This page is for your own '
+            f'review: please do not publish it.</p>')
+
+
 def html(run: Run) -> str:
     """The whole report as one HTML page with no external resources: counts, top and bottom overlays, the preview
     checklist, BOM issues, and one card per result (red, yellow, green, verified)."""
@@ -602,6 +645,7 @@ def html(run: Run) -> str:
     title = f"jlcplace: {_name(b.path)}"
     alts = ", ".join(k for k in BOTTOM_READINGS if k != run.reading)
     out = ['<!doctype html><html lang="en"><head><meta charset="utf-8">'
+           '<meta name="robots" content="noindex">'
            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_esc(title)}</title>'
            f'<style>{_CSS}</style></head><body><main>',
            f"<h1>{_esc(title)}</h1>",
@@ -618,6 +662,7 @@ def html(run: Run) -> str:
            '<div class="legend"><span class="l-kp">KiCad copper pad</span><span class="l-own">EasyEDA pad as JLC '
            'places it, on its own number</span><span class="l-other">on another number</span><span class="l-off">'
            'off copper</span><span class="l-mark">+ CPL row point, &#9675; jlcplace&rsquo;s row point</span></div>',
+           _source(),
            "<h2>Board</h2>",
            f'<div class="boards"><figure><figcaption>Top, seen from above</figcaption>'
            f'{_board_svg(run, TOP, side_pads, anchors)}</figure><figure><figcaption>Bottom, seen from below as '
@@ -640,7 +685,11 @@ def html(run: Run) -> str:
     if run.bom_messages:
         out.append("<h2>BOM</h2><ul>" + "".join(f"<li>{_esc(m)}</li>" for m in run.bom_messages) + "</ul>")
     out.append(f"<h2>Parts ({len(run.results)})</h2>")
+    out.append(_source("EasyEDA pads outlined on the cards"))
     out.extend(_card(run, res, f"r{i}", side_pads) for i, res in order)
-    out.append(f"<footer>Made by {_esc(TOOL)}. {_esc(SOURCE_NOTICE)} This page is for your own review: please do "
-               "not publish it.</footer></main></body></html>")
+    notice = _esc(SOURCE_NOTICE)
+    for u in SOURCE_LINKS:
+        notice = notice.replace(_esc(u), f'<a href="{_esc(u)}">{_esc(u)}</a>')
+    out.append(f"<footer>Made by {_esc(TOOL)}. {notice} This page is for your own review: please do not publish it."
+               "</footer></main></body></html>")
     return "".join(out) + "\n"

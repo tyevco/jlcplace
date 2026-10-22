@@ -16,11 +16,11 @@ import io
 import math
 import os
 import re
-import tempfile
+import secrets
 
 from .convention import cpl_row_for, norm_angle
 from .lcsc import normalize as normalize_lcsc
-from .model import BOTTOM, TOP, Board, Correction, CplRow, Part
+from .model import BOTTOM, TOP, Board, Correction, CplRow, Part, printable, ref_problem
 
 UNITS = {"mm": 1.0, "mil": 0.0254, "in": 25.4}
 _UNIT_NAMES = {"mm": "mm", "millimeter": "mm", "millimeters": "mm", "mil": "mil", "mils": "mil", "thou": "mil",
@@ -173,6 +173,14 @@ def _find_header(rows: list[list[str]], columns: dict, required: tuple[str, ...]
     return None
 
 
+def _designator(ref: str) -> str:
+    """ref, unless it cannot be a designator (model.ref_problem): ValueError."""
+    why = ref_problem(ref)
+    if why:
+        raise ValueError(f"{ref!r} is not a designator: {why}")
+    return ref
+
+
 def _extra(header: list[str], row: list[str], known) -> dict[str, str]:
     return {header[j].strip(): row[j] for j in range(min(len(row), len(header))) if j not in known}
 
@@ -201,12 +209,13 @@ def read_cpl(path, *, units: str = "mm") -> list[CplRow]:
         if not cell["ref"]:
             continue
         try:
+            _designator(cell["ref"])
             x = parse_length(cell["x"], col_units[fields["x"]] or units)
             y = parse_length(cell["y"], col_units[fields["y"]] or units)
             out.append(CplRow(cell["ref"], x, y, parse_layer(cell["layer"]), parse_angle(cell["rotation"]),
                               _extra(rows[h], row, known)))
         except ValueError as e:
-            raise ValueError(f"{path}: line {n} ({cell['ref']}): {e}") from None
+            raise ValueError(f"{path}: line {n} ({printable(cell['ref'])}): {e}") from None
     return out
 
 
@@ -249,10 +258,11 @@ def _read_kicad_ascii(text: str, units: str) -> list[CplRow]:
         ref, (px, py, rot, side) = t[0], t[-4:]
         extra = dict(zip(header[1:-4], t[1:-4])) if len(t) == len(header) else {"text": " ".join(t[1:-4])}
         try:
+            _designator(ref)
             out.append(CplRow(ref, parse_length(px, units), parse_length(py, units), parse_layer(side),
                               parse_angle(rot), extra))
         except ValueError as e:
-            raise ValueError(f"{ref}: {e}") from None
+            raise ValueError(f"{printable(ref)}: {e}") from None
     return out
 
 
@@ -274,23 +284,36 @@ def write_cpl(path, rows: list[CplRow]) -> None:
     atomic_write(path, buf.getvalue())
 
 
-def _file_mode(path: str) -> int:
-    """The mode a new file would get (0666 less the umask), or the existing file's."""
-    try:
-        return os.stat(path).st_mode & 0o7777
-    except OSError:
-        mask = os.umask(0)
-        os.umask(mask)
-        return 0o666 & ~mask
+def _create_temp(path: str) -> tuple[int, str]:
+    """A new file next to path under a random name, created 0666 so that the kernel applies the umask (reading the
+    umask would mean setting it, and another thread's files made in that instant would get 0666), or given the
+    existing file's mode."""
+    d = os.path.dirname(os.path.abspath(path))
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    for _ in range(100):
+        tmp = os.path.join(d, f".jlcplace-{secrets.token_hex(8)}.tmp")
+        try:
+            fd = os.open(tmp, flags, 0o666)
+        except FileExistsError:
+            continue
+        try:
+            os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            os.close(fd)
+            os.unlink(tmp)
+            raise
+        return fd, tmp
+    raise FileExistsError(f"no free temporary file name in {d}")
 
 
 def atomic_write(path, text: str) -> None:
     """Write text (UTF-8, newlines as given) to a temporary file next to path, fsync, then rename over path. The file
-    keeps its mode, or gets the umask's (mkstemp alone would leave it 0600)."""
+    keeps its mode, or gets 0666 less the umask, as any new file does (mkstemp alone would leave it 0600)."""
     path = os.fspath(path)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".jlcplace-", suffix=".tmp")
+    fd, tmp = _create_temp(path)
     try:
-        os.chmod(tmp, _file_mode(path))
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
             f.write(text)
             f.flush()
@@ -324,7 +347,11 @@ def read_bom(path) -> list[dict]:
             except ValueError:
                 raise ValueError(f"{path}: line {n}: Qty {cell['qty']!r} is not a number") from None
         raw = cell.get("lcsc", "")
-        out.append({"designators": [d for d in re.split(r"[,;\s]+", cell["designators"]) if d],
+        try:
+            refs = [_designator(d) for d in re.split(r"[,;\s]+", cell["designators"]) if d]
+        except ValueError as e:
+            raise ValueError(f"{path}: line {n}: {e}") from None
+        out.append({"designators": refs,
                     "lcsc": normalize_lcsc(raw) or raw, "comment": cell.get("comment", ""),
                     "footprint": cell.get("footprint", ""), "qty": qty, "extra": _extra(rows[h], row, known)})
     return out

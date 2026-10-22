@@ -420,9 +420,11 @@ class EEClient:
 
     Network policy: at least `min_interval` s between requests; HTTP 403/429/5xx, network errors and non-JSON bodies
     (a CDN's HTML error page) are retried after BACKOFF[n] s plus up to 25 % jitter, or after Retry-After when that is
-    longer; after `max_failures` consecutive failures the client stops calling the network and raises EEError. A
-    not-found answer is cached and trusted for `notfound_ttl_days` (by the file's mtime), then fetched again. With
-    `offline=True` the network is never used and a cache miss raises EEError.
+    longer; after `max_failures` consecutive failures, a Retry-After above `max_wait`, or retry waits that would add
+    up to more than `max_total_wait` s over the client's life (a success resets the failure count, not this), the
+    client stops calling the network and raises EEError. A not-found answer is cached and trusted for
+    `notfound_ttl_days` (by the file's mtime), then fetched again. With `offline=True` the network is never used and a
+    cache miss raises EEError (the code is added to `misses`).
 
     `opener(request, timeout=...)` defaults to urllib.request.urlopen; `sleep`, `clock` (monotonic, for the interval)
     and `now` (wall clock, for the TTL and HTTP dates) and `rng` (jitter) are injectable for tests.
@@ -430,7 +432,7 @@ class EEClient:
 
     def __init__(self, cache_dir=None, *, offline: bool = False, min_interval: float = 0.7, timeout: float = 30.0,
                  max_failures: int = 5, notfound_ttl_days: float = 7, opener=None, sleep=None, clock=None, now=None,
-                 rng=None, max_wait: float = 300.0, user_agent: str = USER_AGENT):
+                 rng=None, max_wait: float = 300.0, max_total_wait: float = 600.0, user_agent: str = USER_AGENT):
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir is not None else default_cache_dir()
         self.offline = offline
         self.min_interval = float(min_interval)
@@ -438,6 +440,7 @@ class EEClient:
         self.max_failures = max(1, int(max_failures))
         self.notfound_ttl = float(notfound_ttl_days) * 86400.0
         self.max_wait = float(max_wait)
+        self.max_total_wait = float(max_total_wait)
         self.user_agent = user_agent
         self._open = opener or urllib.request.urlopen
         self._sleep = sleep or time.sleep
@@ -447,6 +450,9 @@ class EEClient:
         self._last: float | None = None
         self.failures = 0              # consecutive
         self.requests = 0              # made by this client
+        self.waited = 0.0              # s slept before retries, over the client's life
+        self.misses: list[str] = []    # codes an offline client did not find in the cache
+        self._stopped = ""             # why the network was disabled, when not by consecutive failures
 
     @property
     def disabled(self) -> bool:
@@ -479,6 +485,8 @@ class EEClient:
                 stale = res
             elif self.offline:
                 why = "is not valid JSON" if path.exists() else "is not in the cache"
+                if code not in self.misses:
+                    self.misses.append(code)
                 raise EEError(f"{code}: offline and {path} {why}")
         elif self.offline:
             raise EEError(f"{code}: refresh needs the network, but the client is offline")
@@ -554,7 +562,8 @@ class EEClient:
     def _fetch(self, code: str) -> bytes:
         """The raw body of a usable response (a record or a not-found answer)."""
         if self.disabled:
-            raise EEError(f"{code}: EasyEDA API disabled for this run after {self.failures} consecutive failures")
+            raise EEError(f"{code}: EasyEDA API disabled for this run "
+                          + (f"({self._stopped})" if self._stopped else f"after {self.failures} consecutive failures"))
         while True:
             self._wait_interval()
             status, body, retry_after, err = self._request(API_URL.format(code=code))
@@ -596,7 +605,14 @@ class EEClient:
                 wait = max(wait, ra)
             if wait > self.max_wait:
                 self.failures = self.max_failures
+                self._stopped = f"asked to wait {wait:.0f} s"
                 raise EEError(f"{code}: {err}; asked to wait {wait:.0f} s, EasyEDA API disabled for this run")
+            if self.waited + wait > self.max_total_wait:
+                self.failures = self.max_failures
+                self._stopped = f"{self.waited:.0f} s of retry waits, at most {self.max_total_wait:g} s per run"
+                raise EEError(f"{code}: {err}; {self.waited:.0f} s waited in this run, another {wait:.0f} s would pass "
+                              f"the {self.max_total_wait:g} s it may wait: EasyEDA API disabled for this run")
             log.warning("EasyEDA %s: %s; retrying in %.1f s (failure %d of %d)", code, err, wait, self.failures,
                         self.max_failures)
+            self.waited += wait
             self._sleep(wait)

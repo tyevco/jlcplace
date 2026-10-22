@@ -873,3 +873,32 @@ def test_missing_file_with_pcbnew(tmp_path):
     pytest.importorskip("pcbnew")
     with pytest.raises(FileNotFoundError):
         jb.load_board(tmp_path / "nope.kicad_pcb")
+
+
+# ------------------------------------------------------------------------------------------------------- review: sec-1
+
+@pytest.mark.parametrize("ref, why", [("R3\\n::error::x\\x1b[8m", "control character"),
+                                      ('=HYPERLINK(\\"http://evil.example/\\")', "formula")])
+def test_a_reference_that_is_no_designator_is_refused_by_every_reader(tmp_path, ref, why):
+    """sec-1 / sec-4: KiCad strings take \\n and \\x escapes, so a board can carry a reference that puts workflow
+    commands in a CI log, or a formula in the CPL jlcplace writes. No designator looks like that: ValueError, with
+    the reference shown escaped."""
+    text = ('(kicad_pcb (version 20241229)\n  (footprint "R:R" (layer "F.Cu") (at 10 20 0)\n'
+            f'    (property "Reference" "{ref}") (property "Value" "1k")\n'
+            '    (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu"))))\n')
+    path = write_board(tmp_path, text)
+    readers = ["sexpr"]
+    try:
+        import pcbnew  # noqa: F401
+        readers.append("pcbnew")
+    except ImportError:
+        pass
+    for reader in readers:
+        with pytest.raises(ValueError, match=f"not a designator: .*{why}") as e:
+            jb.load_board(path, reader=reader)
+        assert "\n" not in str(e.value) and "\x1b" not in str(e.value), reader
+    good = jb.load_board_sexpr(write_board(tmp_path, text.replace(f'"{ref}"', '"R3"'), "good.kicad_pcb"))
+    good.parts[0].ref = ref.replace("\\n", "\n").replace("\\x1b", "\x1b").replace('\\"', '"')
+    jb.save_snapshot(good, tmp_path / "s.json")
+    with pytest.raises(ValueError, match=why):
+        jb.load_board(tmp_path / "s.json")
