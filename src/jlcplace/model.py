@@ -204,6 +204,8 @@ class Correction:
                                    # pad: "polarity" (pad numbers only, or names / + mark decided), "orientation" (the
                                    # pads do not fix the body's orientation), "" none
     polar: bool | None = None      # two-terminal part judged polar by the fit (parts.nonpolar); None: not judged
+    ee_title: str = ""             # a stored correction's EasyEDA title: check judges a part the fit judged non-polar
+                                   # by it when the record is not at hand (BI, a crystal's title)
     verifications: list[dict] = field(default_factory=list)  # a stored correction's verifications of these numbers
                                    # (db.py's records: by, date, source, ok, board, ref, layer, ...), in order
 

@@ -240,7 +240,7 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
 ```python
 NONPOLAR_REFS          # R RN RT RV C L FB F NTC Y XTAL SW JP: two terminals that may be swapped (X only for a crystal)
 POLAR_FOOTPRINT        # footprint names that make such a part polar (diode, LED, tant, Elec, CP_, battery ...)
-def nonpolar(part, ee=None) -> bool          # the one polarity rule fit and check use (below)
+def nonpolar(part, ee=None, *, title="") -> bool   # the one polarity rule fit and check use (below)
 def trimmer(part, ee=None) -> bool           # a two-terminal trimmer capacitor: its rotor is a terminal of its own
 def name_tokens(name, number="") -> frozenset[str]; def compare_names(a, b) -> int
 def kicad_positive_pad(part) -> (number, how) | None; def ee_positive_pad(ee) -> str | None
@@ -269,7 +269,9 @@ def pinout_text(diffs, n=4, board="on the board") -> str   # "pad 2 is S on the 
   category: turned round its rotor moves to the other pad), anode / cathode pin functions, and with `ee` its title
   (LED, SOD, diode, tant, elec; a polarised capacitor's CAP-SMD_ / CASE-x_ / CP- unless its categories name a
   non-polar class), its categories (tantalum, electrolytic, polymer, diode, LED, zener, schottky, TVS, rectifier) and
-  its symbol's anode / cathode pin names. Unknown parts are polar.
+  its symbol's anode / cathode pin names. Unknown parts are polar. `title` (check, without the record: a stored
+  correction's EasyEDA title, one the fit judged non-polar): only what in it says non-polar (BI; a crystal's title for
+  an X reference), never what says polar (the fit read that with the record's categories).
 * `name_tokens`: as fit.py describes; a name that only repeats its pad number is uninformative unless it means
   something of its own (K on a pad numbered K), and so are LOCATION_NAMES (EP, PAD, EPAD, TAB, THERMAL, THERMALPAD:
   where a pad is, not what it is; a regulator's tab is often its output). A name split at '/' also gives its parts
@@ -397,7 +399,9 @@ def check_row(part, row, ee, origin, *, corr=None, reading="jlc-2022", alt_readi
 def check_cpl(board, rows, ee_lookup, *, corrections=None, reading="jlc-2022", bom_refs=None) -> list[RowResult]
 def check_bom(board, bom_rows, cpl_rows) -> list[str]
 def jlc_part(board, ref) -> Part | None   # the part JLC places for a ref: first assembled, else placed, else first
-def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so
+def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so;
+                                                   # without the record, one it judged non-polar is judged with its
+                                                   # entry's EasyEDA title (corr.ee_title: BI, a crystal's)
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
   `convention.ee_to_board`, then to the library frame, then onto the copper pad containing it (`LAND_TOL` 1e-3
@@ -520,7 +524,8 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
   status, verifications: [{by, date, source, ok, board, ref, layer, presses, note, correction}], tool, fitted}]}`
   (a verification's `correction`: the numbers it was of, rot, dx, dy, mirror; older records lack it); `ee.key` is
   `parts.ee_key`, `kicad.pad_hash` is `parts.kicad_hash` (pads and pin functions), `ee.title` the EasyEDA
-  footprint's title (a package name, for people reading the file). Atomic writes, sorted keys, 1-space indent,
+  footprint's title (a package name, for people reading the file; `lookup` returns it as `Correction.ee_title`, which
+  the check reads without the record: check.nonpolar). Atomic writes, sorted keys, 1-space indent,
   trailing newline. `jlcplace fit --db` does not let a second part with the same keys and other numbers replace the
   entry a first part stored in the same run. A file that is not JSON (git conflict markers), whose entries do not
   hold a correction (`"rot": "x"`), or that cannot be written raises `DBError` (a ValueError) naming the file; the
@@ -801,7 +806,9 @@ its steps with a local runner.
 * Corrections stored before the fit read holes, trimmers, "_Horizontal" footprints or a mirror image that only
   renumbers a symmetric land pattern keep their numbers, verdict and `mirror` flag (a mirrored entry: no row) until
   `jlcplace fit --db` refits them; the check's polarity rule applies at once (a stored entry does not make a trimmer
-  or a right-angle part non-polar again).
+  or a right-angle part non-polar again). Without the record, a part the fit judged non-polar (`fit.polar` false) is
+  judged by its own reference prefix, footprint name and pin functions and its entry's EasyEDA title (BI, a crystal's);
+  one stored before `fit.polar` was recorded, by its own alone.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.
 * Gerbers: Excellon drill files are skipped, not read (a set whose copper carries no pads, or a check against the
   drill holes, would need an Excellon reader). Only flips, a half turn and the 25.4 scales are tried: a set turned a

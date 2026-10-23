@@ -61,7 +61,7 @@ The two hashes in a database entry identify the footprints the correction was ma
 KiCad's. Each is the first 16 hex digits of a SHA-1 over the pads' numbers, positions, sizes and angles (the KiCad
 one also over the pins' functions): enough to notice when a footprint changes, not enough to rebuild it. The
 title, such as `BUZ-SMD_L9.0-W9.0_PKMCS0909E4000-R1`, is EasyEDA's name for the package, kept for people reading
-the file. See [File formats](../reference/files#correction-database).
+the file (and for the check without the record: a BI in it marks a bidirectional TVS). See [File formats](../reference/files#correction-database).
 
 ## The HTML report
 

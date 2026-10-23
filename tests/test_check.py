@@ -941,6 +941,34 @@ def test_bidirectional_tvs_may_be_turned_round():
     assert check_row(uni, turned(row_for(uni, corr), 180), ee, ORIGIN, corr=corr).verdict == RED
 
 
+def test_without_its_record_a_part_the_fit_judged_non_polar_keeps_its_titles_word_for_it():
+    """A bidirectional TVS (BI in its EasyEDA title) on KiCad's D_SMA, and an X-referenced crystal on a footprint whose
+    name says nothing (its EasyEDA title says oscillator), checked from the database alone: the record's title was
+    gone, so the D or X prefix made the part polar, and a row half a turn from the correction was red "polarity
+    reversed" (green with the record). The entry keeps the title, and only its non-polar evidence counts: the
+    reference prefix, footprint name and pin functions are the part's own, so a two-pin header referenced J that
+    shares a JP's entry is still reversed, and a title that says polar does not undo a fit that judged with the
+    record's part categories."""
+    from jlcplace.pipeline import proxy_footprint
+
+    def turned_round(part, title, polar=False):
+        corr = Correction(0.0, verdict=GREEN, polar=polar, ee_title=title)
+        res = check_row(part, turned(row_for(part, corr), 180), proxy_footprint(part, corr), ORIGIN, corr=corr)
+        return res.status, res.verdict
+
+    tvs = two_pad("D1", footprint="Diode_SMD:D_SMA", lcsc="C140894")
+    assert turned_round(tvs, "SMA_L4.4-W2.6-LS5.0-BI") == ("renumbered", GREEN)
+    assert turned_round(two_pad("X1", footprint="MyParts:HC49US_P4.88mm", lcsc="C21263"),
+                        "OSC-TH_L10.0-W4.5-P5.00") == ("renumbered", GREEN)
+    assert turned_round(two_pad("C1", footprint="Capacitor_SMD:C_1206_3216Metric"),
+                        "CAP-SMD_L3.2-W1.6") == ("renumbered", GREEN)
+    header = "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical"
+    assert turned_round(two_pad("J3", footprint=header, lcsc="C124375"),
+                        "HDR-TH_2P-P2.54-V-M-1") == ("reversed", RED)
+    assert turned_round(tvs, "") == ("reversed", RED)                            # an entry without a title
+    assert turned_round(tvs, "SMA_L4.4-W2.6-LS5.0-BI", polar=True) == ("reversed", RED)
+
+
 # ------------------------------------------------------------------------------------------------------- golden
 
 # CONTRACT.md: JLCPLACE_DIAL_ME_SPINNER (a dial-me-spinner checkout), JLCPLACE_TEST_EASYEDA (holding fab-before/, the

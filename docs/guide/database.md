@@ -116,7 +116,7 @@ cat jlcplace-db/C2681320.json
 | field | what it is |
 |---|---|
 | `correction` | the correction: `rot` in degrees and `dx`, `dy` in mm, the EasyEDA footprint's origin in the KiCad footprint's own frame. `mirror` is true only when EasyEDA's footprint is a mirror image of KiCad's, which no CPL row can place |
-| `ee` | the key of the EasyEDA footprint the entry was made with, and its title (the package name, for people reading the file) |
+| `ee` | the key of the EasyEDA footprint the entry was made with, and its title (the package name, for people reading the file; without the record, the check reads in it what made the fit judge a two-terminal part non-polar: BI, a crystal's title) |
 | `kicad` | the KiCad footprint's library name, and the key of its pads |
 | `fit` | how the fit went: method, residual (`rms`, mm), pads matched, and the other placements it considered, as numbers |
 | `verdict`, `reasons` | the correction's verdict and why: what the fit found, and later what people recorded |

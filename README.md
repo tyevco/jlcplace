@@ -399,7 +399,8 @@ EasyEDA footprint's pads and a hash of the KiCad pads and their pin functions, s
 or on one footprint with other pin names (a diode with pad 1 the cathode, and one with pad 1 the anode), gets two
 entries: one part's correction or verification never stands for another's. Entries hold derived numbers: rot, dx,
 dy, the fit's verdict and reasons, and the verification history, plus the EasyEDA footprint's title (its package
-name, e.g. `SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR`) for people reading the file. They never hold pad geometry.
+name, e.g. `SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR`) for people reading the file; without the record, the check reads
+in it what the fit found non-polar (BI, a bidirectional TVS; a crystal's title). They never hold pad geometry.
 
 Status, strongest first:
 

@@ -58,6 +58,16 @@ def test_file_layout(db):
         ("number", 6, 90, 0.0123, "uuid1:100", "sha1:aaaa")
 
 
+def test_a_looked_up_correction_carries_its_entrys_easyeda_title(db):
+    """The check judges a part the fit judged non-polar by its EasyEDA title (BI, a crystal's) when the record is not
+    at hand: the stored entry's title comes back with its polarity."""
+    db.upsert("C140894", corr(polar=False), ee_title="SMA_L4.4-W2.6-LS5.0-BI")
+    got = db.lookup("C140894", ee_key="uuid1:100", kicad_hash="sha1:aaaa")
+    assert (got.polar, got.ee_title) == (False, "SMA_L4.4-W2.6-LS5.0-BI")
+    db.upsert("C1", corr())
+    assert (db.lookup("C1").polar, db.lookup("C1").ee_title) == (None, "")
+
+
 def test_no_pad_geometry_is_stored(db):
     alternatives = [{"rot": 270.0, "dx": 0.0, "dy": 1.5, "mirror": False, "nets": "same",
                      "pads": [[1.0, 2.0], [3.0, 4.0]], "landings": [{"ee": "1", "x": 0.1, "y": 0.2}],

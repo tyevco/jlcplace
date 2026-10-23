@@ -6,7 +6,8 @@
              "alternatives", "doubt"?, "polar"?}, "verdict", "reasons", "status", "verifications": [{"by", "date",
              "source", "ok", "board", "ref", "layer", "presses", "note", "correction"}], "tool", "fitted"}
 
-Only derived numbers, hashes and the EasyEDA footprint's title (for people reading the file) are stored, never pad
+Only derived numbers, hashes and the EasyEDA footprint's title (for people reading the file, and for the check of a
+part the fit judged non-polar when its record is not at hand: BI, a crystal's title) are stored, never pad
 geometry: EasyEDA claims copyright over its library, and the numbers are all a CPL needs. An entry is keyed by (ee
 key, KiCad key): the KiCad key hashes the pads and the pin functions, so the same code on two KiCad footprints, or on
 one footprint with other pin names, is two entries; a changed EasyEDA footprint (new key) makes the old entry stale.
@@ -115,7 +116,7 @@ def _to_correction(e: dict, status: str | None = None) -> Correction:
                       alternatives=copy.deepcopy(f.get("alternatives", [])), matched=int(f.get("matched", 0)),
                       ee_key=_keys(e)[0], kicad_hash=_keys(e)[1], status=status or e.get("status", "auto"),
                       doubt=str(f.get("doubt") or ""), polar=None if f.get("polar") is None else bool(f["polar"]),
-                      verifications=_of_numbers(e))
+                      ee_title=str((e.get("ee") or {}).get("title") or ""), verifications=_of_numbers(e))
     if corr.failure is not None:
         corr.verdict = RED                 # verified wrong: nothing about these numbers makes them right again
     return corr
