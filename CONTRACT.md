@@ -753,10 +753,10 @@ def origin_lines(run) -> list[(verdict, text)]
   Gerbers and drill files are plotted from the board's aux origin (x, y), which was not checked: pass --gerbers"); else
   a note that nothing was written; the exit code stays the given CPL's (a file it cannot write is bad input once the
   summary and the other outputs are written). Under -q the findings are still printed ("jlcplace: red: origin
-  mismatch: ..."). `cpl` with a red finding and no red row says "not written: the origin is red". `--overlay DIR` (check, cpl): `report.write_overlays` with the Gerbers' outline (else the
-  board's Edge.Cuts), the Gerbers' (0, 0), and the findings and offset hints as notes; PNGs when a renderer is at hand,
-  else a note on stderr; a renderer that fails is a warning, a directory that cannot be written bad input (after the
-  other outputs). `-v` is taken before or after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl`
+  mismatch: ..."). `cpl` with a red finding and no red row says "not written: the origin is red". `--overlay DIR`
+  (check, cpl): `report.write_overlays` with the Gerbers' outline (else the board's Edge.Cuts), the Gerbers' (0, 0),
+  and the findings and offset hints as notes; PNGs when a renderer is at hand, else a note on stderr; a renderer that
+  fails is a warning, a directory that cannot be written bad input (after the other outputs). `-v` is taken before or after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl`
   and `show` warn on stderr when `--db` does not exist (`fit` and `confirm` create it); a `--db` that exists and is not
   a directory is bad input. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch:
   records that could not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and database files
