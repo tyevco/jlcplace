@@ -186,9 +186,9 @@ def coax(ref="J1", body=(-8.0, -30.0, 8.0, 3.0)):
 
 def test_a_part_without_a_footprint_is_written_at_the_centre_of_its_body(env, capsys):
     """field: a coaxial connector EasyEDA has no footprint for was written at KiCad's anchor, which is its pin 1, well
-    over 10 mm from the courtyard centre a hand-made CPL used: JLC places a part by its centre. The row is at its courtyard's centre, and
-    the check says where a not-simulated row point lies; with no courtyard drawn, the reason says the anchor is
-    pin 1."""
+    over 10 mm from the courtyard centre a hand-made CPL used: JLC places a part by its centre. The row is at its
+    courtyard's centre, and the check says where a not-simulated row point lies; with no courtyard drawn, the reason
+    says the anchor is pin 1."""
     board = env.make(coax())
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force", "--json", env.tmp / "r.json")
     row = next(r for r in read_cpl(env.out) if r.ref == "J1")
