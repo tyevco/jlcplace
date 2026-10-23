@@ -42,7 +42,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-CPL-JLCPCB.cs
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only (rot 180 also lands both pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's preview
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 0 red, 2 yellow, 182 green, 0 verified
@@ -59,7 +59,7 @@ Twelve items cover 99 of the 184 parts JLC places on this board. The file says t
 ```md
 # JLC preview checklist: dial-me-spinner-main.kicad\_pcb
 
-CPL dial-me-spinner-main-CPL-JLCPCB.csv, bottom reading `jlc-2022`, jlcplace 0.1.0; 12 items, 99 parts.
+CPL dial-me-spinner-main-CPL-JLCPCB.csv, bottom reading `jlc-2022`, jlcplace 0.2.0; 12 items, 99 parts.
 
 Open the order's placement preview at JLC and look at each part below. Tick it when the part sits on its pads with pin 1 / polarity where the board wants it. An item for several parts names the one to look at.
 
@@ -222,7 +222,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-CPL-JLCPCB.cs
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 184 results: 0 red, 0 yellow, 181 green, 3 verified
 Preview checklist (4 items, 90 parts): look at these in JLC's placement preview
   odd angle  C107 of C102..C112 C114..C124 C126..C136 C138..C148 (C1525, 44 parts at 8 to 353 deg: look at C107)
@@ -263,7 +263,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv --db jlcplac
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
 YELLOW  SW1  C318884    top     renumbered: numbering accepted by the correction (manual): 2->1
              correction (db, manual, yellow): accepted manually (you): pins 1-2, 3-4 joined
 17 results: 0 red, 1 yellow, 15 green, 1 verified
@@ -340,7 +340,7 @@ grep U1 example-CPL-bad.csv example-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL.csv (7 rows), bottom reading jlc-2022
 7 results: 0 red, 0 yellow, 6 green, 1 verified
 Preview checklist (1 item): look at these in JLC's placement preview
   bottom reading  Q1
@@ -375,7 +375,7 @@ jlcplace cpl example.json -o example-CPL.csv --db jlcplace-db --cache cache
 ```
 
 ```text
-jlcplace 0.1.0: example.json (json, 14 parts, origin aux 100, 118) vs the rows jlcplace would write (7 rows), bottom reading jlc-2022
+jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs the rows jlcplace would write (7 rows), bottom reading jlc-2022
 RED     U1  C1001      top     verified wrong by JLC's preview on 2026-10-23 (U1, you: pin-1 dot at the wrong corner): the row is the stored correction's; fix the correction (`jlcplace confirm` with the presses that put the part right in the preview, or --rot/--dx/--dy) and confirm it again
 7 results: 1 red, 0 yellow, 6 green, 0 verified
 Preview checklist (2 items): look at these in JLC's placement preview

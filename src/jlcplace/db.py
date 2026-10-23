@@ -32,12 +32,13 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+from . import __version__
 from .check import OFFSET_ANGLE, OFFSET_FLOOR
 from .convention import norm_angle, rot
 from .cpl import atomic_write
 from .model import BOTTOM, RED, VERIFIED, YELLOW, Correction, CplRow, Part
 
-TOOL = "jlcplace 0.1.0"
+TOOL = f"jlcplace {__version__}"      # the "tool" every entry it stores records
 PRESS_MM = 0.0635                     # one arrow press in JLC's preview: 1/400 in
 PRESS_REASON = "derived from presses (FT convention)"
 ROW_REASON = "taken from the row"   # a correction recorded from the row that was uploaded (and checked)

@@ -1,4 +1,4 @@
-# jlcplace module contract (v0.1, as built)
+# jlcplace module contract (v0.2, as built)
 
 This file fixes the interfaces between modules. It was written before the modules were built in parallel and has been
 brought up to date with what was built and proven (the change requests accepted at integration are folded in;
@@ -513,11 +513,12 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
 ## db.py — the shared correction database (one JSON file per code, safe to keep in git)
 
 ```python
+TOOL = f"jlcplace {__version__}"           # the "tool" an entry records ("jlcplace 0.2.0"), as report.TOOL
 class CorrectionDB:
     def __init__(self, path)
     def file(self, code) -> Path; def entries(self, code) -> list[dict]
     def lookup(self, code, *, ee_key="", kicad_hash="") -> Correction | None
-    def upsert(self, code, corr: Correction, *, footprint="", ee_title="", tool="jlcplace 0.1.0") -> None
+    def upsert(self, code, corr: Correction, *, footprint="", ee_title="", tool=TOOL) -> None
     def confirm(self, code, *, ee_key, kicad_hash, by, source, board="", ref="", layer="", ok=True,
                 presses=None, note="", part=None, correction=None) -> Correction
 def presses_to_row(row: CplRow, *, space=0, right=0, up=0) -> CplRow
