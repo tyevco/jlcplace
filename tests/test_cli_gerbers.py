@@ -619,6 +619,29 @@ def test_confirm_takes_the_row_of_a_part_whose_body_overhangs_the_board_edge(env
                                         "10.0000 Y 24.2500 rot 0"), out + err
 
 
+def test_confirm_refuses_a_far_off_row_of_a_part_without_a_body_or_an_outline(env, capsys):  # noqa: F811
+    """A part without an EasyEDA footprint, a body or two non-polar pads was refused off its pads only outside the
+    board outline: on a snapshot board, which has none, its row read from another origin was stored preview-verified
+    141 mm off (also when a wrong origin lands inside an outline). A row further off its pads than NEAR_MM and their
+    size is refused; cpl's own row, KiCad's anchor, is taken."""
+    env.make(coax(body=None), two("D9", TOP, 115.0, 70.0, 33.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric",
+                                  half=0.7875))
+    assert run(capsys, "cpl", env.board, "-o", env.out, "--force", *offline(env))[0] == 2   # J1, D9 red
+    page = shifted(env.out, env.tmp / "page.csv", 100.0, -100.0)
+    db = env.tmp / "db"
+    confirm = ["confirm", env.board, "--db", db, "--by", "ann", "--source", "preview", *offline(env)]
+    for ref, mm in (("J1", "132.09"), ("D9", "140.78")):
+        code, out, err = run(capsys, *confirm, "--ref", ref, "--cpl", page)
+        assert code == 3 and not db.exists() and err.strip() == (
+            f"jlcplace: {ref}: read from the aux origin (100, 100), the row in page.csv puts the row point {mm} mm off "
+            f"the part's pads, so it is not what was seen right: the rows are usually read from another origin than "
+            f"the CPL's: give the Gerbers it was ordered with (--gerbers), or the origin `jlcplace check` names on "
+            f"its first line (--origin); nothing recorded"), err
+    code, out, err = run(capsys, *confirm, "--ref", "J1", "--ref", "D9", "--cpl", env.out)
+    assert code == 0 and out.startswith("J1 C1003: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
+    assert out.splitlines()[1].startswith("D9 C1003: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
+
+
 def test_without_gerbers_the_origin_is_a_reminder_said_once(made, capsys):
     e = made
     t = e.tmp

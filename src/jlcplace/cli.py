@@ -681,7 +681,8 @@ NEAR_MM = 5.0             # a row seen right this close to its part was moved by
 def _seen_off(part, ee, seen: CplRow, uploaded: Correction, board, rings) -> tuple[str, float] | None:
     """Why a row cannot be where a part that came out right was, and how far off it is: every EasyEDA pad off copper
     (the nearest one's distance from a KiCad pad centre), or, without EasyEDA pads, its point off the part
-    (check.unsimulated_off: the board outline's `rings` say whether it is outside it); None when it can be."""
+    (check.unsimulated_off: the board outline's `rings` say whether it is outside it, and a part without a body is off
+    further than NEAR_MM and its pads' size); None when it can be."""
     if isinstance(ee, EEFootprint) and ee.pads:
         lands = ee_landings(part, ee, uploaded)
         if all(lnd.kicad_number is None for lnd in lands):
@@ -689,7 +690,7 @@ def _seen_off(part, ee, seen: CplRow, uploaded: Correction, board, rings) -> tup
             return f"puts every EasyEDA pad off copper (the nearest {d:.2f} mm from a KiCad pad centre)", d
         return None
     q = cpl_to_board((seen.x, seen.y), board.origin)
-    off = unsimulated_off(part, seen, board.origin,
+    off = unsimulated_off(part, seen, board.origin, near=NEAR_MM,
                           outside=bool(rings) and not sum(geom.point_in_polygon(q, r) for r in rings) % 2)
     return None if off is None else (f"puts the row point {off[0]:.2f} mm off {off[1]}", off[0])
 
