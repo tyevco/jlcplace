@@ -244,7 +244,7 @@ Every CPL row gets a verdict:
 | verdict | meaning |
 |---|---|
 | red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it (status `reversed`), or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, or a two-pad trimmer capacitor (the checklist asks which pad is its rotor, which turned round it is on the other one); a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -304,7 +304,7 @@ from the CPL's origin. Then, in this order:
   bare KiCad pad, a numbering, a manual decision. A green row whose fit is yellow only because the land patterns
   differ (every pad lands) is left out: the preview cannot settle that.
 * **not simulated**: parts with no EasyEDA footprint, each on its own (not a part without an LCSC code: JLC does
-  not place it, so its preview never shows it).
+  not place it, so its preview never shows it); a trimmer capacitor's item asks which pad is its rotor.
 * **bottom reading**: bottom parts whose pins would move if JLC read the bottom rotation differently (see below),
   said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
   green part that moves under every other reading comes first, and when it sits right the others follow. Parts of
@@ -494,8 +494,8 @@ checklist files hold derived data only.
 * Symbol pin names are used where EasyEDA has them. Multi-unit symbols are parsed through every unit, a unit's
   names before the main symbol's; on three real records (two 324-ball BGAs, a 3-unit module) they name exactly
   the footprint's pads.
-* A part EasyEDA has no record for is not simulated: yellow for a two-pad non-polar part, red otherwise, unless a
-  stored correction exists.
+* A part EasyEDA has no record for is not simulated: yellow for a two-pad non-polar part or trimmer capacitor (its
+  rotor is a checklist item), red otherwise, unless a stored correction exists.
 * The EasyEDA API is not a documented, stable interface. Only `fetch` and `--online` use it. jlcplace waits at least
   0.7 s between requests, backs off on errors (honouring Retry-After up to 5 minutes), and stops using it for the
   run after 5 failures in a row or once its retry waits add up to 10 minutes.

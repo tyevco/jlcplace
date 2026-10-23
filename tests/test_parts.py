@@ -101,6 +101,18 @@ def test_horizontal_connectors_and_switches_are_right_angle_parts(ref, footprint
     assert both(two(ref, footprint)) is (not oriented)
 
 
+def test_trimmers_are_not_turned_round():
+    """field: a trimmer capacitor's rotor is a terminal of its own, often wanted on ground: by its KiCad footprint
+    (C_Trim, C_Trimmer, Trimmer anywhere in the name) or its EasyEDA title or part category."""
+    from jlcplace.parts import trimmer
+    for fp in ("Capacitor_SMD:C_Trimmer_3x4mm", "MyLib:C_Trim_SMD", "MyLib:Cap_Ceramic_Trimmer"):
+        assert both(two("C10", fp)) is False and trimmer(two("C10", fp)), fp
+    c = two("C11", "Capacitor_SMD:C_0603_1608Metric")
+    assert both(c) is True and not trimmer(c)
+    assert both(c, ee2("CAP-SMD_TRIMMER_L3.2-W2.5")) is False
+    assert both(c, ee2("C0603", tags=["Trimmer Capacitors"])) is False and trimmer(c, ee2("x", tags=["Trimmers"]))
+
+
 def test_bidirectional_parts_may_be_turned_round():
     """truth-7: a bidirectional TVS (pin functions A1 / A2, or EasyEDA's -BI title token) has no polarity."""
     assert both(two("D13", "Diode_SMD:D_SMF", names=("A1", "A2"))) is True

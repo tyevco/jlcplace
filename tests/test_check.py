@@ -701,6 +701,24 @@ def test_rows_off_a_known_correction_are_yellow():
         != "offset"
 
 
+def test_a_trimmer_has_a_rotor():
+    """field: a trimmer capacitor (C, on a C_Trimmer footprint) counted as non-polar, so a row turned half a turn,
+    its rotor on the other pad, was a harmless swap. Its rotor is a terminal of its own: the row is reversed (red)
+    against its correction. Without its EasyEDA record its row stays yellow, as a non-polar two-pad part's does, and
+    says what to look at: which pad is the rotor."""
+    c = two_pad("C12", footprint="Capacitor_SMD:C_Trimmer_3x4mm")
+    corr = Correction(rot=0.0)
+    assert not nonpolar(c)
+    res = check_row(c, turned(row_for(c, corr), 180), ee_for(c, corr), ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("reversed", RED), res.messages
+    for ee in (None, NotFound("C1", "Component not found")):
+        res = check_row(c, row_for(c, corr), ee, ORIGIN)
+        assert (res.status, res.verdict) == ("not-simulated", YELLOW), res.messages
+        assert "trimmer: which pad is the rotor" in res.messages[0], res.messages
+    res = check_row(c, turned(row_for(c, corr), dx=25.0), None, ORIGIN)
+    assert res.verdict == RED and "mm off the part's pads" in res.messages[0]
+
+
 def test_unsimulated_row_far_from_its_part_is_red():
     """ci-1: no EasyEDA record for a resistor, and its row 25 mm off and turned: not 'probably fine'."""
     r = two_pad("R1", angle=90.0)

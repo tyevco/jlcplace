@@ -231,6 +231,7 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
 NONPOLAR_REFS          # R RN RT RV C L FB F NTC Y XTAL SW JP: two terminals that may be swapped (X only for a crystal)
 POLAR_FOOTPRINT        # footprint names that make such a part polar (diode, LED, tant, Elec, CP_, battery ...)
 def nonpolar(part, ee=None) -> bool          # the one polarity rule fit and check use (below)
+def trimmer(part, ee=None) -> bool           # a two-terminal trimmer capacitor: its rotor is a terminal of its own
 def name_tokens(name, number="") -> frozenset[str]; def compare_names(a, b) -> int
 def kicad_positive_pad(part) -> (number, how) | None; def ee_positive_pad(ee) -> str | None
 def uncovered_exemption(pad, covered_pads) -> str   # "inside" | "via" | "same pin" | ""
@@ -245,16 +246,17 @@ def pin(number, name, net=None) -> Pin
 def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]  # pairs [(EasyEDA Pin, KiCad Pin)] of the pads on copper
 def pinout_text(diffs, n=4, board="on the board") -> str   # "pad 2 is S on the LCSC part, D on the board; ..."
 ```
-* `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI)
-  or a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
-  designates connectors X) with nothing that says polar: the KiCad footprint name (polar words as words, not
-  "Angled" or "KOHERelec"; a right-angle body, `ORIENTED_FOOTPRINT`: Angled, right angle, or "Horizontal" in
-  KiCad's Connector*, TerminalBlock*, Button_Switch*, Rotary_Encoder, Potentiometer* and Crystal libraries or on a
-  footprint named SW_, PinHeader_, PinSocket_, Conn_, Crystal_, ...: not an axial passive lying flat, nor fuse clips),
-  anode / cathode pin functions, and with `ee` its title (LED, SOD, diode, tant, elec; a polarised capacitor's
-  CAP-SMD_ / CASE-x_ / CP- unless its categories name a non-polar class), its categories (tantalum, electrolytic,
-  polymer, diode, LED, zener, schottky, TVS, rectifier) and its symbol's anode / cathode pin names. Unknown parts are
-  polar.
+* `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI) or
+  a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
+  designates connectors X) with nothing that says polar: the KiCad footprint name (polar words as words, not "Angled"
+  or "KOHERelec"; a right-angle body, `ORIENTED_FOOTPRINT`: Angled, right angle, or "Horizontal" in KiCad's
+  Connector*, TerminalBlock*, Button_Switch*, Rotary_Encoder, Potentiometer* and Crystal libraries or on a footprint
+  named SW_, PinHeader_, PinSocket_, Conn_, Crystal_, ...: not an axial passive lying flat, nor fuse clips), a trimmer
+  (`trimmer`: C_Trim / C_Trimmer / Trimmer in the footprint name, or "trimmer" in the EasyEDA title or a part
+  category: turned round its rotor moves to the other pad), anode / cathode pin functions, and with `ee` its title
+  (LED, SOD, diode, tant, elec; a polarised capacitor's CAP-SMD_ / CASE-x_ / CP- unless its categories name a
+  non-polar class), its categories (tantalum, electrolytic, polymer, diode, LED, zener, schottky, TVS, rectifier) and
+  its symbol's anode / cathode pin names. Unknown parts are polar.
 * `name_tokens`: as fit.py describes; a name that only repeats its pad number is uninformative unless it means
   something of its own (K on a pad numbered K), and so are LOCATION_NAMES (EP, PAD, EPAD, TAB, THERMAL, THERMALPAD:
   where a pad is, not what it is; a regulator's tab is often its output). A name split at '/' also gives its parts
@@ -406,8 +408,9 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   that lands as a fitted ("auto") yellow correction does whose `doubt` is set is yellow. KiCad soldered pads no
   EasyEDA pad lands on: yellow, listed in `uncovered` (status stays "ok"; `parts.uncovered_exemption` pads are a
   message). No EasyEDA footprint: "not-simulated", yellow for a non-polar part with two copper pads whose row point
-  is within 0.1 mm of its pads' box (red when it is not), red otherwise, with the reason (a polar two-pad part, a
-  one-pad part, N copper pads). Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
+  is within 0.1 mm of its pads' box (red when it is not), and so for a two-pad trimmer ("trimmer: which pad is the
+  rotor", the checklist item it makes), red otherwise, with the reason (a polar two-pad part, a one-pad part, N copper
+  pads). Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
   or None off copper), natural order. With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm /
@@ -508,7 +511,8 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 
 ```python
 def correction(part, ee, db=None, *, snap=0.5) -> (Correction | None, source)     # db | fit | ""
-def fallback(part, ee) -> Correction          # KiCad's own row (rot 0); yellow for a non-polar 2-pad part, else red
+def fallback(part, ee) -> Correction          # KiCad's own row (rot 0); yellow for a non-polar 2-pad part or a
+                                              # two-pad trimmer, else red
 def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None) -> dict[ref, Resolved]
 def check(board, rows, resolved, *, reading=DEFAULT, bom_rows=None, cpl_path="") -> Run
 def proxy_footprint(part, corr) -> EEFootprint   # KiCad pads through the inverse correction

@@ -60,7 +60,7 @@ from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
 from .parts import compare_names, ee_positive_pad, kicad_positive_pad, norm_number, pad_size, pin, pin_diffs, \
-    pinout_text, uncovered_exemption
+    pinout_text, trimmer, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 LAND_TOL = 1e-3            # mm: a centre this close outside a pad's edge is on it (CPL values carry 1e-4 mm)
@@ -98,8 +98,9 @@ def nonpolar(part: Part, ee=None, corr: Correction | None = None) -> bool:
 
 
 def _harmless_unsimulated(part: Part, corr: Correction | None = None) -> bool:
-    """A part whose placement is safe to leave unchecked: two pads, no polarity."""
-    return nonpolar(part, None, corr) and len(part.copper_pads()) == 2
+    """A part whose placement is safe to leave unchecked: two pads, no polarity; or a trimmer's two pads (which is its
+    rotor goes on the checklist, not against the row)."""
+    return (nonpolar(part, None, corr) or trimmer(part)) and len(part.copper_pads()) == 2
 
 
 def _not_harmless(part: Part) -> str:
@@ -239,8 +240,9 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
             far = _off_part(part, row, origin)
             res.verdict = YELLOW if far is None else RED
             res.messages.insert(0, f"placement not simulated: {why}" + (
-                "; a two-pad non-polar part, and the row point is on it" if far is None else
-                f"; the row point is {far:.2f} mm off the part's pads"))
+                f"; the row point is {far:.2f} mm off the part's pads" if far is not None else
+                "; trimmer: which pad is the rotor (its two pads, and the row point is on them): look at it in JLC's "
+                "preview" if trimmer(part) else "; a two-pad non-polar part, and the row point is on it"))
         else:
             res.verdict = RED
             res.messages.insert(0, f"placement not simulated: {why}; {_not_harmless(part)}")
