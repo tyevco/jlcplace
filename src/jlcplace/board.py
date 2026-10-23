@@ -301,18 +301,19 @@ def _pcbnew_body(pcbnew, fp, part: Part) -> tuple[tuple | None, str]:
     side = "B" if part.bottom else "F"
     layers = {getattr(pcbnew, f"{side}_{name}"): name for name, _ in _BODY_LAYERS}
     textbox = getattr(pcbnew, "PCB_TEXTBOX", ())
+    rect = getattr(pcbnew, "SHAPE_T_RECTANGLE", getattr(pcbnew, "SHAPE_T_RECT", None))   # KiCad 9 renamed it
+
+    def lib(v):
+        return board_to_library(part, _mm2(v))
+
     found: dict[str, list] = {}
     for g in fp.GraphicalItems():
         if not isinstance(g, pcbnew.PCB_SHAPE) or isinstance(g, textbox) or g.GetLayer() not in layers:
             continue
-
-        def lib(v):
-            return board_to_library(part, _mm2(v))
-
         k = g.GetShape()
         if k == pcbnew.SHAPE_T_SEGMENT:
             pts = [lib(g.GetStart()), lib(g.GetEnd())]
-        elif k == pcbnew.SHAPE_T_RECTANGLE:
+        elif k == rect:
             pts = [lib(v) for v in g.GetRectCorners()]
         elif k == pcbnew.SHAPE_T_CIRCLE:
             c, r = lib(g.GetCenter()), g.GetRadius() / 1e6
