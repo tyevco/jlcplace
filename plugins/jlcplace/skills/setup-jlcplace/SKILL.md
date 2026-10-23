@@ -14,7 +14,9 @@ The other jlcplace skills link here. Do the steps below once per session, before
 jlcplace --version
 ```
 
-It prints `jlcplace 0.1.0` or later. If the command is not found, look in these places before installing anything:
+It prints `jlcplace 0.2.0` or later: the skills need 0.2.0 (`--gerbers`, `--fixed-cpl`, `--overlay`, `fetch --bom`).
+If it prints an older version, update it (end of step 2) before going on. If the command is not found, look in these
+places before installing anything:
 
 * the project's own virtual environment: `.venv/bin/jlcplace` (Windows: `.venv/Scripts/jlcplace.exe`);
 * the uv and pipx tool directory: `~/.local/bin/jlcplace` (Windows: `~/.local/bin/jlcplace.exe`);
@@ -81,16 +83,16 @@ plugin's skills, the user runs `claude plugin marketplace update jlcplace`, then
   records. They contact the EasyEDA API, rate-limited. Nothing else uses the network. Ask the user before running
   `jlcplace fetch`, and never add `--online` to any command: the skills pre-approve `jlcplace check *` and the like
   with any options, so `--online` there would download without the user seeing a prompt.
-* **Licensing.** EasyEDA's footprint data belongs to the JLCEDA/EasyEDA Official Library. Keep the record cache and
-  any `--report` HTML file (it draws EasyEDA pad outlines) on this machine. Never commit them, attach them to a
-  public issue or pull request, or upload them as CI artifacts. The JSON, JUnit, checklist and CPL outputs and the
+* **Licensing.** EasyEDA's footprint data belongs to the JLCEDA/EasyEDA Official Library. Keep the record cache, any
+  `--report` HTML file and any `--overlay` images (they draw EasyEDA pad outlines) on this machine. Never commit
+  them, attach them to a public issue or pull request, or upload them as CI artifacts. The JSON, JUnit, checklist and CPL outputs and the
   correction database hold derived numbers only, so they can be committed.
 
 ## 4. Check the flags before using them
 
 Flags change between versions. Before the first use of a command, read its help: `jlcplace check --help`,
-`jlcplace cpl --help`, `jlcplace confirm --help`. A skill may mention a newer option, for example `--gerbers`: if
-`jlcplace check --help` lists it, the installed version has it. Otherwise leave it out.
+`jlcplace cpl --help`, `jlcplace confirm --help`. An option a skill gives that the help does not list means a
+jlcplace older than 0.2.0: update it (step 2) rather than leave the option out.
 
 Exit codes for every command: 0 clean, 1 yellow with `--fail-on yellow`, 2 red (for `fetch`: records that could not
 be fetched), 3 bad input (the message says which file or option), 4 internal error (a bug: report it with the

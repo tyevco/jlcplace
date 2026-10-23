@@ -17,10 +17,12 @@ preview proved, so that the next `jlcplace cpl` writes those rows as verified.
 * The board (`*.kicad_pcb`) and **the CPL exactly as uploaded**. What the preview shows is that file's rows, which
   need not be jlcplace's.
 * The checklist: `checklist.md`, from `--checklist` on `jlcplace check` or `jlcplace cpl`. If it is missing, make it
-  from the uploaded files:
+  from the uploaded files (leave out `--gerbers` when the zip is not at hand). `--overlay` draws each side as the
+  preview shows it, the parts to look at circled (`overlay/top.svg`, `overlay/bottom.svg`), to hold beside the
+  preview; like `--report`, it draws EasyEDA pad outlines, so keep it local:
 
   ```sh
-  jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --db jlcplace-db --checklist checklist.md
+  jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md --overlay overlay
   ```
 
 * The correction database directory (`jlcplace-db/` unless the project has another; `confirm` creates it) and the

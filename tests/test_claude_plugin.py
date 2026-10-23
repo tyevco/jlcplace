@@ -1,10 +1,9 @@
 """The Claude Code marketplace (.claude-plugin/marketplace.json) and the jlcplace plugin (plugins/jlcplace/) stay
 installable and true to the CLI: the manifests have what Claude Code needs and agree with each other and with
 pyproject, every skill's frontmatter is valid, every `jlcplace ...` command in the plugin parses with the real
-parser, every relative link resolves inside the plugin (only that directory reaches users), options that are not in
-the CLI yet are mentioned only conditionally, nothing copyrighted ships, the origin-check script works, and, where
-the `claude` CLI is installed, `claude plugin validate --strict` passes on both and the plugin installs from this
-checkout."""
+parser, every relative link resolves inside the plugin (only that directory reaches users), nothing copyrighted
+ships, and, where the `claude` CLI is installed, `claude plugin validate --strict` passes on both and the plugin
+installs from this checkout."""
 import importlib.util
 import json
 import os
@@ -12,8 +11,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -30,15 +27,11 @@ MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PLUGIN = ROOT / "plugins" / "jlcplace"
 SKILLS = sorted(p for p in (PLUGIN / "skills").iterdir() if p.is_dir())
 PAGES = sorted(PLUGIN.rglob("*.md"))
-ORIGIN_CHECK = PLUGIN / "skills" / "prepare-jlc-order" / "scripts" / "origin_check.py"
-DIAL = Path(os.environ.get("JLCPLACE_DIAL_ME_SPINNER", "/home/user/dial-me-spinner")) / "hardware"   # CONTRACT.md
 REPO = "https://github.com/tyevco/jlcplace"
 NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 FENCE = re.compile(r"^ *```(\w*)[^\n]*\n(.*?)^ *```", re.M | re.S)
 INLINE = re.compile(r"(?<!`)`(jlcplace [^`]+)`(?!`)")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
-# options of features that are not in the CLI on main yet: mention them only with "if `jlcplace ... --help` lists"
-UNMERGED = ("--gerbers", "--overlay")
 # fields `claude plugin validate --strict` accepts without an "Unknown field" warning (checked with claude 2.1.308)
 MARKET_KEYS = {"$schema", "name", "owner", "description", "metadata", "plugins"}
 ENTRY_KEYS = {"name", "source", "description", "category", "tags", "homepage", "repository", "author", "license",
@@ -158,7 +151,6 @@ def test_plugin_root_paths_exist():
     on it names a file of this plugin."""
     paths = [m for page in PAGES for m in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}(/[^\s)`\"']+)",
                                                      page.read_text(encoding="utf-8"))]
-    assert len(paths) >= 4, paths
     for p in paths:
         assert (PLUGIN / p.lstrip("/")).is_file(), p
     assert "${CLAUDE_SKILL_DIR}" not in "".join(p.read_text(encoding="utf-8") for p in PAGES)
@@ -215,22 +207,6 @@ def test_commands_in_the_plugin_parse(page):
                 assert opt in subs[words[1]]._option_string_actions, f"{rel(page)}: `{span}`: no option {opt}"
 
 
-@pytest.mark.parametrize("page", PAGES + [ROOT / "README.md"], ids=rel)
-def test_unmerged_options_are_only_conditional(page):
-    """A skill must not tell Claude to pass an option the installed jlcplace may not have."""
-    from jlcplace.cli import build_parser
-    known = {o for s in _subparsers(build_parser()).values() for o in s._option_string_actions}
-    text = page.read_text(encoding="utf-8")
-    for opt in UNMERGED:
-        if opt in known:
-            continue                       # it has landed: the conditional wording is harmless
-        for _, body in FENCE.findall(text):
-            assert opt not in body, f"{rel(page)}: {opt} in a code block"
-        for para in re.split(r"\n\s*\n", FENCE.sub("", text)):
-            if opt in para:
-                assert re.search(r"[Ii]f\s+`jlcplace \w+ --help`\s+lists", para), f"{rel(page)}: {opt} unconditionally"
-
-
 @pytest.mark.parametrize("page", PAGES, ids=rel)
 def test_relative_links_resolve_inside_the_plugin(page):
     """Only plugins/jlcplace/ is copied into the user's plugin cache: a link out of it is dead for every user."""
@@ -250,7 +226,7 @@ def test_the_readme_links_to_the_plugin():
 def test_the_plugin_ships_no_easyeda_data():
     """EasyEDA's records and the HTML report (it draws EasyEDA pads) never go into the repository, and everything under
     plugins/jlcplace/ is copied to every user."""
-    allowed = {".md", ".py", ".json", ".png"}
+    allowed = {".md", ".json", ".png"}
     for f in PLUGIN.rglob("*"):
         if f.is_dir() or "__pycache__" in f.parts:
             continue
@@ -276,103 +252,6 @@ def test_the_facts_the_skills_state():
     assert "Only `jlcplace fetch` and the `--online` option download" in setup
     for verdict in ("red", "yellow", "green", "verified"):
         assert f"| {verdict} |" in check
-
-
-# ------------------------------------------------------------------------------------------------------- origin check
-
-def _gerber(path: Path, points, *, inch=False):
-    """A board outline as KiCad writes it: format 4.6, absolute coordinates, one closed polygon."""
-    lines = ["%TF.FileFunction,Profile,NP*%", "%FSLAX46Y46*%", "%MOIN*%" if inch else "%MOMM*%", "%LPD*%", "G01*",
-             "%ADD10C,0.100000*%", "D10*"]
-    div = 25.4 if inch else 1.0
-    for i, (x, y) in enumerate(list(points) + [points[0]]):
-        lines.append(f"X{round(x / div * 1e6)}Y{round(y / div * 1e6)}D0{2 if i == 0 else 1}*")
-    path.write_text("\n".join(lines + ["M02*"]) + "\n", encoding="utf-8")
-    return path
-
-
-def _drill(path: Path, holes):
-    path.write_text("M48\nFMAT,2\nMETRIC\nT1C0.300\n%\nG90\nG05\nT1\n"
-                    + "".join(f"X{x:.3f}Y{y:.3f}\n" for x, y in holes) + "M30\n", encoding="utf-8")
-    return path
-
-
-def _cpl(path: Path, rows, unit="mm"):
-    path.write_text("Designator,Mid X,Mid Y,Layer,Rotation\r\n"
-                    + "".join(f"{r},{x:.4f}{unit},{y:.4f}{unit},Top,0\r\n" for r, x, y in rows), encoding="utf-8")
-    return path
-
-
-def _run(*args):
-    return subprocess.run([sys.executable, "-I", str(ORIGIN_CHECK), *map(str, args)], capture_output=True,
-                          encoding="utf-8")
-
-
-BOX = [(0, 0), (50, 0), (50, 40), (0, 40)]
-PARTS = [("R1", 10.0, 10.0), ("R2", 40.0, 30.0), ("U1", 25.0, 20.0), ("C1", 5.0, 35.0), ("C2", 45.0, 5.0),
-         ("J1", 51.5, 20.0)]                 # J1: a connector's EasyEDA origin a little past the edge
-
-
-def test_origin_check_same_origin(tmp_path):
-    g = tmp_path / "gerbers"
-    g.mkdir()
-    _gerber(g / "board-Edge_Cuts.gm1", BOX)
-    _drill(g / "board.drl", [(3, 3), (47, 37)])
-    (g / "board-F_Cu.gtl").write_text("%FSLAX46Y46*%\n%MOMM*%\nX900000000Y900000000D03*\n", encoding="utf-8")
-    cpl = _cpl(tmp_path / "cpl.csv", PARTS)
-    r = _run(g, cpl)
-    assert r.returncode == 0 and "same origin" in r.stdout, r.stdout + r.stderr
-    assert "board outline (board-Edge_Cuts.gm1): x 0.000 to 50.000, y 0.000 to 40.000 mm" in r.stdout
-    z = tmp_path / "gerbers.zip"
-    with zipfile.ZipFile(z, "w") as f:
-        for p in g.iterdir():
-            f.write(p, p.name)
-    assert _run(z, cpl).returncode == 0
-    assert _run(_gerber(tmp_path / "inch.gm1", BOX, inch=True), cpl).returncode == 0     # %MOIN outline, mm CPL
-
-
-def test_origin_check_finds_the_mismatches(tmp_path):
-    outline = _gerber(tmp_path / "board-Edge_Cuts.gm1", BOX)
-    page = _cpl(tmp_path / "page.csv", [(r, x + 100, y - 100) for r, x, y in PARTS])      # another origin
-    r = _run(outline, page)
-    assert r.returncode == 1 and "ORIGIN MISMATCH: 6 of 6 CPL rows" in r.stdout
-    assert "the rows' centre is (103.250, -100.000) mm from the outline's" in r.stdout, r.stdout
-    inches = _cpl(tmp_path / "in.csv", [(r, x / 25.4, y / 25.4) for r, x, y in PARTS], unit="")
-    r = _run(outline, inches)
-    assert r.returncode == 1 and "UNITS?" in r.stdout, r.stdout
-    assert _run(outline, _cpl(tmp_path / "mil.csv", [(r, x / 0.0254, y / 0.0254) for r, x, y in PARTS],
-                              unit="mil")).returncode == 0
-    g = tmp_path / "g"
-    g.mkdir()
-    _gerber(g / "board-Edge_Cuts.gm1", BOX)
-    _drill(g / "board-PTH.drl", [(103, -97), (147, -63)])                               # drill from the page origin
-    r = _run(g, _cpl(tmp_path / "ok.csv", PARTS))
-    assert r.returncode == 1 and "DRILL MISMATCH: 2 of 2" in r.stdout, r.stdout
-
-
-def test_origin_check_bad_input(tmp_path):
-    assert _run(tmp_path / "missing.gm1", tmp_path / "missing.csv").returncode == 2
-    (tmp_path / "x.gm1").write_text("not a gerber\n", encoding="utf-8")
-    cpl = _cpl(tmp_path / "cpl.csv", PARTS)
-    assert _run(tmp_path / "x.gm1", cpl).returncode == 2
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    r = _run(empty, cpl)
-    assert r.returncode == 2 and "no board outline" in r.stderr
-    (tmp_path / "bad.csv").write_text("a,b\n1,2\n", encoding="utf-8")
-    assert _run(_gerber(tmp_path / "o.gm1", BOX), tmp_path / "bad.csv").returncode == 2
-    assert _run().returncode == 2 and _run("--help").returncode == 0
-
-
-@pytest.mark.parametrize("board", ["main", "base"])
-def test_origin_check_on_the_dial_me_spinner_fab_outputs(board):
-    fab = DIAL / "fab" / board
-    gerbers, cpl = fab / "gerbers.zip", fab / f"dial-me-spinner-{board}-CPL-JLCPCB.csv"
-    if not (gerbers.is_file() and cpl.is_file()):
-        pytest.skip(f"needs the dial-me-spinner fab outputs in {DIAL} (set JLCPLACE_DIAL_ME_SPINNER)")
-    r = _run(gerbers, cpl)
-    assert r.returncode == 0 and "same origin" in r.stdout, r.stdout + r.stderr
-    assert "drill hits" in r.stdout and not re.search(r"\b0 on the board", r.stdout)
 
 
 # ------------------------------------------------------------------------------------------------------- version gate

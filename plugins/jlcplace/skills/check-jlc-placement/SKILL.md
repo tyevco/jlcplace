@@ -20,27 +20,31 @@ to be installed.
    * the CPL: `*CPL*.csv`, `*-pos.csv`, `*.pos` or `*-all-pos.csv`;
    * the JLC BOM, if there is one: `*BOM*.csv`. JLC assembles from the BOM's LCSC column, so pass it whenever it
      exists;
+   * the Gerbers ordered with the CPL, if they are at hand: a Gerber zip or directory. JLC lays the CPL over them
+     from their own (0, 0), so pass them whenever they exist;
    * the correction database: a directory of `C<digits>.json` files, often `jlcplace-db/`.
-3. Run the check. Leave out `--bom` when there is no BOM. Pass the project's database path (`jlcplace-db` unless it
-   has another) even before it exists: a missing directory only warns.
+3. Run the check. Leave out `--bom` or `--gerbers` when there is none. Pass the project's database path
+   (`jlcplace-db` unless it has another) even before it exists: a missing directory only warns.
 
    ```sh
-   jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv --db jlcplace-db --checklist checklist.md
+   jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv --gerbers board-gerbers.zip --db jlcplace-db --checklist checklist.md
    ```
 
-4. If the output has a line `jlcplace: no EasyEDA record in the cache ... for N codes`, those parts were not
-   simulated. Tell the user that `jlcplace fetch BOARD` downloads the records once (it contacts the EasyEDA API,
-   rate-limited, and caches them locally). Ask before running it, and never add `--online` to the check instead:
+4. If the output has a line `jlcplace: no EasyEDA record in the cache ...` (right under the first line when the cache
+   lacks nearly every record, else after the summary), those parts were not simulated. The line names the
+   `jlcplace fetch` command that downloads the records once (it contacts the EasyEDA API, rate-limited, and caches
+   them locally); with a BOM, `--bom` fetches the BOM's codes too. Ask before running it, and never add `--online`
+   to the check instead:
 
    ```sh
-   jlcplace fetch board.kicad_pcb
+   jlcplace fetch board.kicad_pcb --bom board-BOM.csv
    ```
 
-   If the BOM names codes the board does not have, add them: `jlcplace fetch board.kicad_pcb C7519`. Then run the
-   check again.
-5. Read the result: the exit code first, then any `jlcplace:` hint lines, then the rows. See the next two sections.
+   Then run the check again.
+5. Read the result: the exit code first, then any red line before the rows (a finding about the whole order), then
+   any `jlcplace:` hint lines, then the rows. See the next two sections.
 6. Report to the user:
-   * every red row, then every yellow row, by reference, with the message in plain words and the fix;
+   * every finding, every red row, then every yellow row, by reference, with the message in plain words and the fix;
    * the summary line (`N results: r red, y yellow, g green, v verified`);
    * the preview checklist (written with `--checklist`), which is the user's to-do list for JLC's preview.
 
@@ -56,19 +60,33 @@ go away, delete rows, or edit a row's numbers by hand.
 
 ## When most rows are red, the file is wrong, not the parts
 
-jlcplace then prints a hint. Act on it before you look at individual rows:
+jlcplace then says so in one line. Act on it before you look at individual rows:
 
-* `would sit on their parts if the CPL's numbers were in inches: pass --units in`. The position file is in inches,
-  which is kicad-cli's default. JLC's CPL is in mm. Re-export the file in mm, or write the CPL with
+* With `--gerbers`, a red line before the rows, `origin mismatch: JLC lays the CPL over the Gerbers from their (0,
+  0), ... but the CPL was written from ...`: the CPL and the Gerbers use different origins, and the rows are red
+  because of it. Its `fix:` names the ways out: plot the Gerbers from the CPL's origin, write the CPL from the
+  Gerbers' (`jlcplace cpl BOARD --gerbers GERBERS`), or shift every row. A red `gerbers` line: the Gerbers are not
+  this board's as it is (mirrored, in the wrong unit, another board's or an older plot, a side or the outline
+  missing or from another origin, two plots in one set). Re-plot them: see
+  [prepare-jlc-order](../prepare-jlc-order/SKILL.md).
+* Without `--gerbers`, `jlcplace: origin mismatch: N of M rows would sit on their parts if shifted by (...) mm: the
+  CPL was written from the page origin (0, 0), not the board's aux origin ...`. The position file was exported
+  without "use drill/place file origin". Which origin JLC uses depends on the Gerbers: pass them with `--gerbers`.
+  The `--origin` it names shows per-part results, and is right only if the Gerbers use that origin too.
+* `... if the CPL's numbers were in inches: JLC reads a CPL's numbers in mm: write it again in mm`. The position file
+  is in inches, which is kicad-cli's default. Re-export it in mm, or write the CPL with
   [write-jlc-cpl](../write-jlc-cpl/SKILL.md).
-* `would sit on their parts if the CPL were relative to the page origin ... pass --origin absolute`. The position file
-  was exported without "use drill/place file origin". Pass `--origin absolute` to see per-part results. The upload
-  is only right if the Gerbers and the drill file use the page origin too. Re-exporting everything from the
-  drill/place origin is safer: see [prepare-jlc-order](../prepare-jlc-order/SKILL.md).
+* `... with Mid Y negated`: the CPL was written from KiCad's Y-down coordinates. Write it with write-jlc-cpl.
+* `N of M rows are displaced alike from where they belong, by (...) mm (...), while K sit on their parts`: not an
+  origin error. Those rows (often one footprint's) carry an offset of their writer's: read them one by one.
 * `N of M rows have no LCSC code on the board: pass --bom BOM.csv ... or --lcsc-field NAME`. The codes are only in
   the BOM, or in a footprint field with an unusual name. Pass the BOM, or name the field.
-* Every row red and far off, with no hint: the Y sign is flipped, or the file uses some other origin. Hand over to
+* Every row red and far off, with no line about it: hand over to
   [diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md).
+
+For an origin, unit or Y error, `--fixed-cpl fixed-CPL.csv` writes the CPL's own rows with it taken out and prints
+how that file checks. Without `--gerbers` its note says the moved rows are right only for Gerbers plotted from the
+board's origin. A CPL from `jlcplace cpl` is better still: the fixed file keeps its writer's angles.
 
 ## Verdicts
 
@@ -91,7 +109,8 @@ jlcplace show board.kicad_pcb --ref U3
 
 Its `x:` and `y:` are KiCad's board coordinates (from the page origin, Y down). Its `rows:`, like a CPL and the
 check's `row` and `expected`, are CPL coordinates (from the drill/place origin, Y up): KiCad's (x, y) is
-(x - aux_x, aux_y - y) there, with the aux origin from the check's first line (`origin aux 100, 100`).
+(x - aux_x, aux_y - y) there, with the origin from the check's first line (`origin aux 100, 100`, or
+`origin 100, 100 from the Gerbers (aux)`).
 
 ## The bottom side is never proven offline
 
@@ -105,10 +124,16 @@ look at first. Say so whenever the board has bottom parts: JLC's placement previ
 
 * `--checklist checklist.md` (or `.csv`): what only JLC's preview can settle, in order.
 * `--json results.json`, `--junit cpl.xml`, `--github-annotations`: for CI and scripts. They hold derived data only.
-* `--report report.html`: one self-contained page with top and bottom views and a card for every part. It draws
-  EasyEDA pad outlines, so it is for the user's own review only. Never commit it, publish it, or upload it as a CI
-  artifact.
+* `--report report.html`: one self-contained page with top and bottom views and a card for every part.
+* `--overlay overlay/`: `top.svg` and `bottom.svg` (and PNGs when a renderer is at hand), each side as JLC's preview
+  shows it, with the EasyEDA pads where the rows put them and the red and yellow parts circled.
+* The report and the overlay images draw EasyEDA pad outlines, so they are for the user's own review only. Never
+  commit them, publish them, or upload them as CI artifacts.
 * `-q`: no terminal summary. `--fail-on yellow`: exit 1 on yellow too, for CI.
+* In CI, jlcplace's GitHub Action (`uses: tyevco/jlcplace@<commit SHA>` with `board`, `cpl`, and `bom`, `gerbers`,
+  `db` when the project has them) installs jlcplace, fetches the EasyEDA records into the Actions cache and runs the
+  check, with annotations and the checklist in the job summary; it uploads nothing. Commit the database
+  (`jlcplace fit board.kicad_pcb --db jlcplace-db`) so that the job does not depend on EasyEDA.
 
 ## Next
 
