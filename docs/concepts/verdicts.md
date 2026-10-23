@@ -27,6 +27,7 @@ bug, 130, 141) are in [Exit codes and environment](../reference/environment).
 | `ok` | green or verified; yellow or red in [the cases below](#ok) | every EasyEDA pad lands on its own pin | nothing, unless the verdict is yellow or red: then read the message |
 | `off-copper` | red | some EasyEDA pads land off copper: the part is turned or shifted | fix the row's Rotation or position ([why](./why)) |
 | `wrong-pad` | red; [yellow](#wrong-pad) against a fitted correction | EasyEDA pads land on copper, but on other pins' nets | fix the Rotation: a part turned 180 degrees, or a polar part reversed |
+| `reversed` | red | a polar two-terminal part (a diode, an LED, a tantalum capacitor) is the other way round than its correction puts it: its two terminals swapped | turn the row half a turn, as the row jlcplace writes has it; or, if the correction is wrong, fix it and confirm it |
 | `renumbered` | green when the difference is harmless; else the correction's verdict | EasyEDA pads land on KiCad pads of other numbers, and that is accepted | nothing when green; otherwise settle the correction |
 | `offset` | yellow | every pad lands, but the row is off where a known correction puts the part | compare the row with the one jlcplace writes |
 | `verified-wrong` | red | the row is the stored correction's, and JLC's preview, the assembled board or a person showed that correction wrong (`jlcplace confirm --failed`) | fix the correction and confirm it again ([below](#verified-wrong)) |
@@ -34,12 +35,13 @@ bug, 130, 141) are in [Exit codes and environment](../reference/environment).
 | `no-row` | red | JLC assembles the part (it has an LCSC code and is placed) but the CPL has no row for it | add the row, or take the part out of the assembly |
 | `not-on-board` | red | the row's reference is not on the board | remove the row, or fix the reference |
 | `layer-mismatch` | red | the row says one side, the part is on the other | fix the row's Layer |
-| `not-placed` | red for a DNP, board-only (KiCad's "Not in schematic") or "exclude from position files" part; yellow when the part is only excluded from the BOM | the row is for a part JLC must not place | remove the row, or fix the part's flags in KiCad |
+| `not-placed` | red for a DNP or board-only (KiCad's "Not in schematic") part; yellow for a part the board excludes from its position files or its BOM that nothing else lists (with `--bom`: that the BOM does not list) | the row is for a part JLC must not place, or does not place unless its BOM lists it | remove the row, or fix the part's flags in KiCad |
 | `duplicate` | red | the CPL has more than one row for the reference (every copy gets this) | keep one row |
 | `duplicate-ref` | red | two parts that JLC places carry the same reference: JLC cannot tell them apart | give one of them another reference in KiCad ([Troubleshooting](../guide/troubleshooting#duplicate-references)) |
 
 Here the released base CPL is edited by hand: R4's row deleted, C1 moved to the bottom side, C2 repeated, U2 moved
-0.3 mm, and rows added for TP1 (a test point excluded from the position files) and R9 (not on the board):
+0.3 mm, and rows added for TP1 (a test point excluded from the position files and the BOM) and R9 (not on the
+board):
 
 ```sh
 { grep -v -E '^(R4|C1|U2),' released-base-CPL.csv; echo 'C1,-5.3476mm,-16.0420mm,Bottom,0'; echo 'C2,-7.5714mm,-19.0100mm,Top,90'; echo 'U2,18.7720mm,-0.0773mm,Top,0'; echo 'TP1,23.3720mm,-3.8450mm,Top,0'; echo 'R9,10.0000mm,10.0000mm,Top,0'; } > edited-base-CPL.csv
@@ -55,9 +57,9 @@ RED     R4   C25741     top     JLC assembles it (it has an LCSC code) but the C
 RED     R9   -          top     not-on-board: R9 is not on the board
 RED     SW1  C318884    top     renumbered: the pads land as the correction (auto) puts them, but it is red, so nothing vouches for this numbering: 2->1
              correction (fit, auto, red): numbering conflict: EE 2 -> KiCad 1 (pads on another terminal's net) and no pin names confirm it; check the pinout, or confirm the placement in JLC's preview
-RED     TP1  -          top     not-placed: the board part is excluded from position files, excluded from the BOM: JLC must not place it
+YELLOW  TP1  -          top     not-placed: the board part is excluded from position files, excluded from the BOM: JLC does not place it unless the BOM lists it
 YELLOW  U2   C7519      top     offset: differs from the row jlcplace writes (18.7720, -0.3773, top, 0): 0.300 mm and 0 deg away, more than 0.15 mm or 2 deg: the part sits off where the correction puts it
-20 results: 7 red, 1 yellow, 12 green, 0 verified
+20 results: 6 red, 2 yellow, 12 green, 0 verified
 ...
 ```
 
@@ -236,16 +238,23 @@ through the stored auto correction: ...` (or the correction's own status). See [
 ### `no-row`, `not-on-board`, `layer-mismatch`, `duplicate`
 
 These compare the CPL's list of rows with the board's list of parts JLC assembles: parts that are placed (not DNP,
-not board-only, not excluded from the position files), not excluded from the BOM, and have an LCSC code. A `no-row`
-result may add why jlcplace cannot write that row either: `no row is possible: the EasyEDA footprint is a mirror
+not board-only, not excluded from the position files), not excluded from the BOM, and have an LCSC code. With
+`--bom`, so is a part the BOM lists that the board excludes from its position files or its BOM (JLC never sees
+KiCad's attributes): `JLC assembles it (the BOM lists it) but the CPL has no row (the board excludes it from the
+position files, so KiCad's position file leaves it out)`. A `no-row` result may add why jlcplace cannot write that row either: `no row is possible: the EasyEDA footprint is a mirror
 image of the KiCad one`, or `no correction to make a row from (...)`.
 
 ### `not-placed`
 
-`the board part is DNP: JLC must not place it`, or excluded from the position files, or board-only: red. A part that
-is only excluded from the BOM is yellow, since JLC places what the BOM it receives lists. With `--bom`, a row for such
-a part that the BOM does list is simulated like any other, with the message `the board excludes it from the BOM, but
-the BOM lists it: JLC will place it`.
+`the board part is DNP: JLC must not place it`, or board-only: red. A part the board excludes from its position
+files or its BOM is yellow when nothing else lists it (`the board part is excluded from position files, excluded from
+the BOM: JLC does not place it unless the BOM lists it`; with `--bom`, `... and the BOM does not list it: JLC does not
+place it`): JLC never sees KiCad's attributes and places what the BOM and the CPL it receives list. A row for such a
+part that the BOM lists (or, without `--bom`, a part only the position files exclude) is simulated like any other,
+with the message `the board excludes it from the BOM, but the BOM lists it: JLC will place it`, or, for an exclusion
+from the position files, `the board excludes it from the position files, but the BOM and the CPL list it: JLC places
+it (it never sees KiCad's attributes); untick 'Exclude from position files' if it is to be assembled, else drop its
+row and BOM line`, which makes the row yellow at least.
 
 ### `duplicate-ref`
 

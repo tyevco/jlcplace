@@ -692,8 +692,8 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
             flags = [n for n, f in (("DNP", part.dnp), ("excluded from position files", part.exclude_pos),
                                     ("board-only", part.board_only), ("excluded from the BOM", part.exclude_bom)) if f]
             must = part.dnp or part.board_only
-            why = (": JLC must not place it" if must or bom_refs is None else
-                   " and the BOM does not list it: JLC does not place it")
+            why = (": JLC must not place it" if must else ": JLC does not place it unless the BOM lists it"
+                   if bom_refs is None else " and the BOM does not list it: JLC does not place it")
             out.append(RowResult(row.ref, part.lcsc, status="not-placed", verdict=RED if must else YELLOW, row=row,
                                  messages=[f"the board part is {', '.join(flags)}{why}"]))
             continue

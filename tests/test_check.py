@@ -853,6 +853,26 @@ def test_a_part_excluded_from_the_position_files_is_placed_when_the_bom_or_cpl_l
     assert res.messages == ["the board part is DNP, excluded from position files: JLC must not place it"]
 
 
+def test_a_row_nothing_else_lists_says_jlc_does_not_place_it_unless_the_bom_lists_it():
+    """A test point the board excludes from its position files and its BOM, with a row and no BOM given: yellow
+    "not-placed", but the message said "JLC must not place it", the words of a red DNP row. JLC places it if the BOM
+    it gets lists it."""
+    tp = two_pad("TP1", lcsc="")
+    tp.exclude_pos = tp.exclude_bom = True
+    board = Board("b", ORIGIN, [tp])
+    row = CplRow("TP1", 10.0, 5.0, TOP, 0.0)
+    res = check_cpl(board, [row], lambda code: None)[0]
+    assert (res.status, res.verdict) == ("not-placed", YELLOW)
+    assert res.messages == ["the board part is excluded from position files, excluded from the BOM: JLC does not "
+                            "place it unless the BOM lists it"], res.messages
+    res = check_cpl(board, [row], lambda code: None, bom_refs=set())[0]
+    assert res.messages == ["the board part is excluded from position files, excluded from the BOM and the BOM does "
+                            "not list it: JLC does not place it"], res.messages
+    tp.dnp = True
+    assert check_cpl(board, [row], lambda code: None)[0].messages == [
+        "the board part is DNP, excluded from position files, excluded from the BOM: JLC must not place it"]
+
+
 def test_a_reference_two_placed_parts_share_is_red():
     """cli-9 / logic-7: two assembled footprints called R7 (a copied block, an unannotated board). Board.part gave
     the first, so the one row was checked against it (green, or off-copper when it was the other one's) and the
