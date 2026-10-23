@@ -233,8 +233,9 @@ Preview checklist (4 items, 90 parts): look at these in JLC's placement preview
 The yellow rows are gone and three rows are verified. A confirmed part leaves the checklist. J1, verified, would
 have moved under every other bottom reading, so none of them is left: the bottom reading items are gone, and the
 odd angles of J40 and U10, folded into their bottom reading items before, are items of their own. An odd angle item
-stays until a part of it is looked at: a part verified at its angle (BZ1, J1) has been, and so has every part of its
-code on its side once one of them was verified at an odd angle (C107 for the ring of capacitors).
+stays until a part of it is looked at: a part verified at its angle (BZ1, J1) has been, and so has every verified
+part of its entry (the same code on the same KiCad footprint) on its side once one of them was verified at an odd
+angle (C107 for the ring of capacitors).
 
 `confirm` needs the part's EasyEDA record in the cache, because a verification is stored under the EasyEDA footprint
 it was made with: when EasyEDA later changes that footprint, the verification no longer applies. If the record is
@@ -247,8 +248,11 @@ before anything is written.
 `confirm` reads the uploaded CPL's rows from `--origin` (default aux), like the check without Gerbers. A CPL written
 from the Gerbers' own (0, 0), as `jlcplace cpl --gerbers` writes it, is read from there with the same `--gerbers`;
 the check's first line names the origin (`origin 0, 0 from the Gerbers (absolute)`), and `--origin absolute` does
-the same. Read from the wrong origin, every EasyEDA pad of the row lands off copper, and `confirm` refuses it rather
-than store a correction that far off.
+the same. A row that puts every EasyEDA pad off copper, or, for a part with no EasyEDA footprint (R26), whose point
+lies off the part, is refused rather than stored as a correction that far off. It is usually read from another
+origin (or, for a bottom part, another bottom reading: pass the `--reading` the CPL was written with, which the
+message names when one lands the pads). Read from the Gerbers' (0, 0), or a few mm from the part, the row itself is
+off, as the check reports it: if the part came out right, JLC moved it, and there is nothing to record.
 
 ### A decision of your own
 
