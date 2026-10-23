@@ -191,6 +191,16 @@ def test_resistor_any_rotation(alpha):
     assert swap and swap[0]["equivalent"] and swap[0]["nets_changed"] == ["1", "2"]
 
 
+def test_a_trimmer_is_placed_by_its_pad_numbers_with_its_rotor_in_doubt():
+    """A trimmer capacitor turned round puts its rotor on the other pad: a polarity, which only the pad numbers
+    decide here (it was a resistor's harmless swap, green)."""
+    pads = r0402()
+    c = fit.fit_part(kpart(pads, "C1", "Capacitor_SMD:C_Trimmer_3x4mm"), to_ee(pads, 90, (0.2, 0.1)))
+    assert_recovers(c, 90, (0.2, 0.1))
+    assert c.verdict == YELLOW and c.doubt == "polarity" and c.polar is True
+    assert has(c, "polarity decided by pad numbers only") and has(c, "trimmer: which pad is the rotor"), c.reasons
+
+
 def test_diode_polarity_needs_a_second_source():
     pads = r0402()
     part = kpart(pads, "D1", "Diode_SMD:D_SOD-123")

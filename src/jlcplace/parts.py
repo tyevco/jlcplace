@@ -35,6 +35,9 @@ ORIENTED_FOOTPRINT = re.compile(r"(?<![a-z])angled|right.?angle"
                                 r"|^(?:(?:Connector|TerminalBlock|Button_Switch|Rotary_Encoder|Potentiometer|Crystal)"
                                 r"[^:]*:|(?:[^:]*:)?(?:SW|Switch|Button|PinHeader|PinSocket|Header|Socket|Conn"
                                 r"|Connector|Jack|TerminalBlock|Crystal)[_-]).*horizontal", re.I)
+#: KiCad footprint names, EasyEDA titles and part categories of trimmer capacitors: their two terminals differ, a
+#: rotor (designs often want it on ground, away from the tuning tool) and a stator
+TRIMMER = re.compile(r"C_Trim|trimmer", re.I)
 #: what makes an X-referenced two-terminal part a crystal
 CRYSTAL = re.compile(r"crystal|xtal|resonator|(?<![a-z])osc", re.I)
 
@@ -266,10 +269,11 @@ def nonpolar(part, ee=None) -> bool:
     """Two numbered terminals that may be swapped. True for a two-terminal part whose two terminals are alike (KiCad
     pin functions equal up to an index, A1 / A2, or an EasyEDA title marked BI: a bidirectional TVS); otherwise it
     takes a non-polar reference prefix (X only for a crystal) and nothing that says polar: the KiCad footprint name
-    (polar words, or a right-angle body), anode / cathode / + / - KiCad pin functions, and with the EasyEDA footprint
-    `ee` its title (a polarised capacitor's CAP-SMD_ / CASE-x_ unless its categories name a non-polar class), its
-    part categories (tantalum, electrolytic, diode, LED, TVS, ...) and its symbol's pin names. Unknown parts count as
-    polar. fit and check both use this, so they cannot judge a part differently."""
+    (polar words, or a right-angle body), a trimmer (its rotor, `trimmer`), anode / cathode / + / - KiCad pin
+    functions, and with the EasyEDA footprint `ee` its title (a polarised capacitor's CAP-SMD_ / CASE-x_ unless its
+    categories name a non-polar class), its part categories (tantalum, electrolytic, diode, LED, TVS, ...) and its
+    symbol's pin names. Unknown parts count as polar. fit and check both use this, so they cannot judge a part
+    differently."""
     kicad = _terminal_names(part)
     if len(kicad) != 2:
         return False
@@ -280,7 +284,7 @@ def nonpolar(part, ee=None) -> bool:
             ee is not None and CRYSTAL.search(ee.title or "")))):
         return False
     if POLAR_FOOTPRINT.search(part.footprint or "") or ORIENTED_FOOTPRINT.search(part.footprint or "") \
-            or any(t & POLARITY_NAMES for t in kicad.values()):
+            or trimmer(part, ee) or any(t & POLARITY_NAMES for t in kicad.values()):
         return False
     if ee is not None:
         tags = ee.tags or []
@@ -292,6 +296,17 @@ def nonpolar(part, ee=None) -> bool:
         if len(names) == 2 and any(t & POLARITY_NAMES for t in names.values()):
             return False
     return True
+
+
+def trimmer(part, ee=None) -> bool:
+    """A two-terminal trimmer capacitor (KiCad's C_Trim symbol on a C_Trimmer footprint, or a footprint, EasyEDA title
+    or part category that says trimmer): turned round, its rotor moves to the other pad, so it is not a part that may
+    be turned round (nonpolar); without its EasyEDA record its row is still checked like a non-polar two-pad part's,
+    and which pad is the rotor goes on the checklist."""
+    if len(_terminal_names(part)) != 2:
+        return False
+    return bool(TRIMMER.search(part.footprint or "")) or (ee is not None and (
+        bool(TRIMMER.search(ee.title or "")) or any(TRIMMER.search(t) for t in ee.tags or [])))
 
 
 def kicad_positive_pad(part) -> tuple[str, str] | None:

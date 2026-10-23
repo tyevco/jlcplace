@@ -102,7 +102,7 @@ from . import geom
 from .convention import ee_to_library, norm_angle, rot
 from .model import BOTTOM, GREEN, RED, YELLOW, Correction, EEFootprint, Pad, PadLanding, Part
 from .parts import POLARITY_NAMES, Pin, PinDiff, compare_names, ee_key, ee_positive_pad, kicad_hash, \
-    kicad_positive_pad, name_tokens, norm_number, pad_size, pin_diffs, pinout_text, uncovered_exemption
+    kicad_positive_pad, name_tokens, norm_number, pad_size, pin_diffs, pinout_text, trimmer, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 __all__ = ["compare_names", "ee_landings", "fit_part", "name_tokens", "net_map"]
@@ -869,8 +869,9 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
             else:
                 verdict, doubt = YELLOW, "polarity"
                 reasons.append(f"polarity decided by pad numbers only (rot {others} also {_lands_word(alts)} both "
-                               f"pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's "
-                               f"preview")
+                               f"pads, and no pin names or drawn + confirm it"
+                               + ("; trimmer: which pad is the rotor" if trimmer(part, ee) else "")
+                               + "): check the polarity mark in JLC's preview")
         elif alts and polar2 and by_mark([N] + alts) not in (None, N):
             # the pad numbers and the pin names outvote the drawn +, but it is evidence all the same
             verdict, doubt = YELLOW, "polarity"

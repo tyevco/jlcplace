@@ -1547,6 +1547,18 @@ def test_checklist_leaves_out_rows_jlc_does_not_place(env, capsys):
         ("not simulated", ["R3"])], d["checklist"]
 
 
+def test_a_trimmer_without_its_record_asks_which_pad_is_the_rotor(env, capsys):
+    """field: a trimmer capacitor EasyEDA has no record for. Its row stays yellow, as a non-polar two-pad part's
+    does (`cpl` writes it), and the checklist asks what only the preview shows: which pad is the rotor."""
+    env.make(two("C30", TOP, 112.0, 70.0, 0.0, "C1005", footprint="Capacitor_SMD:C_Trimmer_3x4mm", half=1.5))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 0 and "YELLOW  C30" in out and "trimmer: which pad is the rotor" in out, out
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--json", "-")
+    d = json.loads(out)
+    item = next(i for i in d["checklist"] if i["ref"] == "C30")
+    assert item["category"] == "not simulated" and "trimmer: which pad is the rotor" in item["what"], item
+
+
 def test_html_report_labels_legends_and_checklist(env, capsys):
     """cli-12: the board views' labels sat on their part's pad outlines in the same colour; the legend said '+ CPL
     row point' where the board views draw the CPL origin, and 'off copper' dashed where they use verdict colours; the

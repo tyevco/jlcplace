@@ -38,7 +38,7 @@ from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
 from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
-from .parts import ee_key, kicad_hash, norm_number
+from .parts import ee_key, kicad_hash, norm_number, trimmer
 
 _CODE = re.compile(r"C[1-9][0-9]*", re.I)
 
@@ -225,9 +225,10 @@ def correction(part: Part, ee, db=None, *, snap: float = 0.5) -> tuple[Correctio
 
 def fallback(part: Part, ee) -> Correction:
     """No EasyEDA footprint and no stored correction: KiCad's own position and angle (rot 0, no offset). Right for
-    the usual centred two-pad passive; the check says not-simulated (red unless non-polar with two pads)."""
+    the usual centred two-pad passive; the check says not-simulated (red unless non-polar with two pads, or a two-pad
+    trimmer)."""
     why = ee.message if isinstance(ee, NotFound) else "no EasyEDA footprint"
-    ok = nonpolar(part) and len(part.copper_pads()) == 2
+    ok = (nonpolar(part) or trimmer(part)) and len(part.copper_pads()) == 2
     return Correction(rot=0.0, method="none", verdict=YELLOW if ok else RED, kicad_hash=kicad_hash(part),
                       reasons=[f"no EasyEDA footprint ({why}): the row is KiCad's own position and angle"])
 
