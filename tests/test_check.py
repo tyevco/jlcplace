@@ -618,6 +618,54 @@ def test_led_rows_when_only_the_drawn_plus_disagrees_with_the_numbers():
     assert rows[0].rotation == 0.0
 
 
+def sod323(ref="D6", nets=("TVS_K", "TVS_A")):
+    """KiCad's D_SOD-323 (pad 1 = cathode by its library convention), no pin functions."""
+    pads = [Pad(n, px, 0.0, 0.6, 0.45, shape="roundrect", rr=0.25, net=net)
+            for n, px, net in (("1", -1.05, nets[0]), ("2", 1.05, nets[1]))]
+    return Part(ref, TOP, 115.0, 75.0, 0.0, footprint="Diode_SMD:D_SOD-323", lcsc="C20617918", pads=pads)
+
+
+def ee_sod323(names=None, plus_beside=None, half=1.14, size=(0.63, 0.83, 90.0)):
+    """The field report's SOD-323 diodes, reduced: C20617918 (pad 1 = C at -x, pad 2 = A, no +; the default) and
+    C42413887 (half 1.1999, 0.8 mm square pads, pins named 1 / 2, a + beside pad 2)."""
+    w, h, a = size
+    return EEFootprint("C20617918", "SOD-323_L1.7-W1.3-LS2.6-RD-1",
+                       pads=[EEPad("1", -half, 0.0, w, h, a), EEPad("2", half, 0.0, w, h, a)],
+                       pin_names=dict(names or {"1": "1", "2": "2"}), tokens=["RD"],
+                       plus={None: [], "1": [(-half, 0.0, 0.6)], "2": [(half, 0.0, 0.6)]}[plus_beside])
+
+
+C42413887 = {"half": 1.1999, "size": (0.8, 0.8, 0.0)}
+
+
+@pytest.mark.parametrize("ee, rot, fit_verdict, row_verdict", [
+    (ee_sod323({"1": "C", "2": "A"}), 0.0, GREEN, GREEN),                   # C20617918: names confirm the numbers
+    (ee_sod323(), 0.0, YELLOW, YELLOW),                                      # nothing but the numbers
+    (ee_sod323(plus_beside="2", **C42413887), 0.0, YELLOW, GREEN),           # C42413887: + and numbers agree
+    (ee_sod323(plus_beside="1", **C42413887), 180.0, YELLOW, YELLOW),        # the + alone against the numbers
+], ids=["C20617918", "numbers-only", "C42413887", "plus-against-numbers"])
+def test_sod323_rows_by_their_pin_names_and_drawn_plus(ee, rot, fit_verdict, row_verdict):
+    """The SOD-323 diodes of the field report on D_SOD-323 without pin functions: the row the evidence gives is
+    written and passes (green where the names or the + confirm the numbers; yellow where only the numbers decide, the
+    fit was unsure, or the + is followed against them), and the row turned round is red, its polarity reversed."""
+    from jlcplace import report
+    part = sod323()
+    corr, run = led_run(part, ee, lambda c: [row_for(part, c)])
+    assert (corr.verdict, corr.rot) == (fit_verdict, rot), corr.reasons
+    if rot:
+        assert corr.reasons[0].startswith("polarity evidence conflicts: the pad numbers put + on pad 2 (KiCad's "
+                                          "positive pad, by KiCad's library convention (pad 1 = cathode)), the drawn "
+                                          "+ on pad 1"), corr.reasons
+    rows, _ = rows_for_board(Board("b.kicad_pcb", ORIGIN, [part]), {part.ref: corr})
+    assert rows[0].rotation == rot
+    res = run.results[0]
+    assert res.verdict == row_verdict and res.status in ("ok", "renumbered"), res.messages
+    assert "wrong-pad" not in report.summary(run)
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("reversed", RED) and res.messages[0].startswith("polarity reversed"), \
+        res.messages
+
+
 def test_rows_off_a_known_correction_are_yellow():
     """truth-4 / logic-4: every pad centre still on its own pad, but the row is off where the correction puts the
     part: yellow ("offset") beyond max(0.15 mm, a quarter of the smallest pad it lands on) or 2 degrees, and the

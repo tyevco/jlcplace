@@ -353,15 +353,20 @@ def test_the_correction_never_takes_the_side_most_evidence_rejects(record, names
 def test_polarity_names_are_given_only_to_two_terminal_parts():
     """KiCad's positive pad names the lands of a polar two-terminal part only: an SOT-23 transistor whose EasyEDA
     pins are B, E, C (C is no cathode there) and pads without pin functions is fitted by its numbers alone (an
-    op-amp's + and - alike); a tantalum on KiCad's CP footprint (pad 1 = +) reads EasyEDA's + / - against it."""
-    pads = [P("1", -0.9375, -0.95, 1.475, 0.6), P("2", -0.9375, 0.95, 1.475, 0.6), P("3", 0.9375, 0.0, 1.475, 0.6)]
-    q = kpart(pads, "Q1", "Package_TO_SOT_SMD:SOT-23")
-    c = fit.fit_part(q, to_ee(pads, 180, names={"1": "B", "2": "E", "3": "C"}))
-    assert c.verdict == GREEN and not has(c, "pin name"), c.reasons
+    op-amp's + and -, a TL431 shunt regulator's K and A, a regulator's pins alike); a tantalum on KiCad's CP
+    footprint (pad 1 = +) reads EasyEDA's + / - against it."""
+    def sot23():
+        return [P("1", -0.9375, -0.95, 1.475, 0.6), P("2", -0.9375, 0.95, 1.475, 0.6), P("3", 0.9375, 0.0, 1.475, 0.6)]
+
+    for ref, names in (("Q1", ("B", "E", "C")), ("U2", ("REF", "K", "A")), ("U3", ("GND", "VOUT", "VIN"))):
+        pads = sot23()
+        c = fit.fit_part(kpart(pads, ref, "Package_TO_SOT_SMD:SOT-23"),
+                         to_ee(pads, 180, names=dict(zip("123", names))))
+        assert (c.verdict, c.rot) == (GREEN, 180.0) and not has(c, "pin name"), (names, c.reasons)
     u = kpart(soic8(), "U1", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
     c = fit.fit_part(u, to_ee(u.pads, 0, names=dict(zip("12345678", ("OUT", "-", "+", "V-", "+", "-", "OUT", "V+")))))
     assert c.verdict == GREEN and not has(c, "pin name"), c.reasons
-    cp =[P("1", -1.4, 0, 1.35, 1.35), P("2", 1.4, 0, 1.35, 1.35)]
+    cp = [P("1", -1.4, 0, 1.35, 1.35), P("2", 1.4, 0, 1.35, 1.35)]
     tant = kpart(cp, "C7", "Capacitor_Tantalum_SMD:CP_EIA-3216-18_Kemet-A")
     c = fit.fit_part(tant, to_ee(cp, 0, names={"1": "+", "2": "-"}, title="CASE-A_3216"))
     assert c.verdict == GREEN and has(c, "2 pin names agree"), c.reasons
