@@ -13,7 +13,8 @@ function repoLinks(md: any) {
     const href: string | null = token.attrGet('href')
     if (href && !/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(href)) {
       const [path, hash] = href.split('#')
-      const isPage = path === '' || /\.(md|html)$/i.test(path) || !/[./]/.test(posix.basename(path))
+      const isPage = path === '' || /\.(md|html)$/i.test(path)
+        || (!path.endsWith('/') && !/[./]/.test(posix.basename(path)))
       if (!isPage) {
         const target = posix.normalize(posix.join('docs', posix.dirname(env.relativePath ?? ''), path))
         const kind = path.endsWith('/') ? 'tree' : 'blob'
@@ -32,7 +33,7 @@ export default defineConfig({
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
-  srcExclude: ['**/node_modules/**', 'README.md'],
+  srcExclude: ['**/node_modules/**', '**/README.md'],
   head: [['link', { rel: 'icon', href: '/jlcplace/favicon.svg', type: 'image/svg+xml' }]],
   markdown: {
     config: (md) => { md.use(repoLinks) },
@@ -41,7 +42,7 @@ export default defineConfig({
     logo: '/favicon.svg',
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'Why parts misalign', link: '/concepts/why' },
+      { text: 'Why parts end up misaligned', link: '/concepts/why' },
       { text: 'Reference', link: '/reference/cli' },
     ],
     sidebar: [

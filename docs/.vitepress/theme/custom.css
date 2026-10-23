@@ -1,0 +1,35 @@
+/* Commands, terminal output and file listings: wrap long lines instead of hiding the end of each line behind a
+   scroll bar. A wrapped line continues indented, so each real line still starts at the left edge, and the copy
+   button still copies the lines as they are. YAML keeps its own lines, since its indentation means something. */
+.vp-doc div[class*='language-text'] pre,
+.vp-doc div[class*='language-md'] pre,
+.vp-doc div[class*='language-sh'] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vp-doc div[class*='language-text'] code,
+.vp-doc div[class*='language-md'] code,
+.vp-doc div[class*='language-sh'] code {
+  width: auto;
+  white-space: pre-wrap;
+}
+
+.vp-doc div[class*='language-text'] .line,
+.vp-doc div[class*='language-md'] .line,
+.vp-doc div[class*='language-sh'] .line {
+  display: inline-block;
+  width: 100%;
+  padding-left: 4ch;
+  text-indent: -4ch;
+}
+
+/* Inline SVG figures: legible at phone width by scrolling sideways rather than shrinking the text. */
+.vp-doc .figure-scroll {
+  overflow-x: auto;
+  margin: 24px 0;
+}
+
+.vp-doc .figure-scroll > svg {
+  min-width: 640px;
+}

@@ -21,8 +21,8 @@ Conventions for every module:
   library; the correction database stores derived numbers and hashes only). The exceptions are the HTML report and
   the overlay images (`--overlay`), local review files that draw EasyEDA pad outlines and state their source (the
   JLCEDA/EasyEDA Official Library).
-* Tests: `tests/test_<module>.py`, pytest, deterministic (seeded random), markers `pcbnew`, `cache`, `network`
-  (see pyproject). Tests that need a file that may be absent skip with a reason. Run with
+* Tests: `tests/test_<module>.py`, pytest, deterministic (seeded random), markers `pcbnew`, `cache`, `network`,
+  `claude` (see pyproject). Tests that need a file that may be absent skip with a reason. Run with
   `/home/user/jlcplace/.venv/bin/python -m pytest -q -p no:cacheprovider`.
 * Fixture locations can be overridden, and every test module reads them: `JLCPLACE_DIAL_ME_SPINNER` (the
   dial-me-spinner checkout), `JLCPLACE_TEST_EASYEDA` (the directory holding `ee_raw/`, `dl/`, `fab-before/`, `src/`),
@@ -30,8 +30,12 @@ Conventions for every module:
   `.github/workflows/ci.yml` runs the unmarked tests without KiCad on Linux, macOS and Windows with Python 3.10 to
   3.13 (the classifiers' versions), under `python -X warn_default_encoding` so that text I/O without an explicit
   encoding fails on every OS (pyproject's `filterwarnings`); builds and checks the sdist and wheel; runs the pcbnew
-  tests in KiCad's image (kicad/kicad:9.0, its Python 3.11 in a `--system-site-packages` venv); and, optionally, the
-  cache tests with records `jlcplace fetch` puts in an Actions cache. `.github/skip_gate.py` fails a job on any skip
+  tests in KiCad's image (kicad/kicad:9.0, its Python 3.11 in a `--system-site-packages` venv); validates the Claude
+  Code marketplace and plugin (`.claude-plugin/`, `plugins/jlcplace/`, `tests/test_claude_plugin.py`) with a pinned
+  `claude` CLI, the only job that runs the `claude` tests, and fails a pull request that changes the plugin without
+  raising its version (`.github/plugin_version_gate.py`: installed copies update only then; the version is the
+  package's); and, optionally, the cache tests with records
+  `jlcplace fetch` puts in an Actions cache. `.github/skip_gate.py` fails a job on any skip
   whose reason it does not allow. The unmarked tests assume nothing POSIX (file modes, line ends, `HOME`, `/tmp`)
   and open every text file with `encoding="utf-8"`; the fixture defaults above are the development machine's paths.
   `tests/test_packaging.py` checks pyproject, that workflow and the README's CI recipe as data.
