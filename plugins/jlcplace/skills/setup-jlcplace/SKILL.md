@@ -15,8 +15,8 @@ jlcplace --version
 ```
 
 It prints `jlcplace 0.2.0` or later: the skills need 0.2.0 (`--gerbers`, `--fixed-cpl`, `--overlay`, `fetch --bom`).
-If it prints an older version, update it (end of step 2) before going on. If the command is not found, look in these
-places before installing anything:
+If it prints an older version, offer to update it (end of step 2) before going on. If the command is not found, look
+in these places before installing anything:
 
 * the project's own virtual environment: `.venv/bin/jlcplace` (Windows: `.venv/Scripts/jlcplace.exe`);
 * the uv and pipx tool directory: `~/.local/bin/jlcplace` (Windows: `~/.local/bin/jlcplace.exe`);
@@ -75,8 +75,10 @@ plugin's skills, the user runs `claude plugin marketplace update jlcplace`, then
 ## 3. What jlcplace needs
 
 * **No KiCad.** jlcplace reads `.kicad_pcb` files (KiCad 5 to 10) with a built-in reader. It uses KiCad's `pcbnew`
-  Python module only when it can import it. If a run reports a problem with the pcbnew reader, add `--reader sexpr`.
-  Never install KiCad just for jlcplace.
+  Python module only when it can import it. A board from a newer KiCad than that pcbnew gets a warning, `written by a
+  newer KiCad (version N) than pcbnew X reads; reading it with the S-expression reader`, and is read all the same.
+  If a run reports another problem with the pcbnew reader, add `--reader sexpr`. Never install KiCad just for
+  jlcplace.
 * **EasyEDA records.** JLC assembles with the footprints of its EasyEDA library, and jlcplace simulates those
   footprints. It reads them from a local cache: `$JLCPLACE_CACHE`, else `$XDG_CACHE_HOME/jlcplace`, else
   `~/.cache/jlcplace`. `--cache DIR` picks another one. Only `jlcplace fetch` and the `--online` option download
@@ -85,8 +87,8 @@ plugin's skills, the user runs `claude plugin marketplace update jlcplace`, then
   with any options, so `--online` there would download without the user seeing a prompt.
 * **Licensing.** EasyEDA's footprint data belongs to the JLCEDA/EasyEDA Official Library. Keep the record cache, any
   `--report` HTML file and any `--overlay` images (they draw EasyEDA pad outlines) on this machine. Never commit
-  them, attach them to a public issue or pull request, or upload them as CI artifacts. The JSON, JUnit, checklist and CPL outputs and the
-  correction database hold derived numbers only, so they can be committed.
+  them, attach them to a public issue or pull request, or upload them as CI artifacts. The JSON, JUnit, checklist
+  and CPL outputs and the correction database hold derived numbers only, so they can be committed.
 
 ## 4. Check the flags before using them
 

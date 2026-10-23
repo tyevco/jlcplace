@@ -33,16 +33,18 @@ and many EasyEDA footprints (SOT-23 variants, connectors, LGA sensors) use other
    jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom board-BOM.csv --gerbers board-gerbers.zip --db jlcplace-db --checklist checklist.md
    ```
 
-   Leave out `--bom` or `--gerbers` when there is none. Always pass the project's database (`jlcplace-db`, or the project's own
-   path), even before it exists: jlcplace then only warns and uses no stored corrections, and `jlcplace confirm`
-   creates it with the first decision, so every later `cpl` and `check` uses it. Do not pass `-o -`: the CPL must be
-   a file (exit 3).
+   Leave out `--bom` or `--gerbers` when there is none. Always pass the project's database (`jlcplace-db`, or the
+   project's own path), even before it exists: jlcplace then only warns and uses no stored corrections, and
+   `jlcplace confirm` creates it with the first decision, so every later `cpl` and `check` uses it. Do not pass
+   `-o -`: the CPL must be a file (exit 3).
 5. Read the result:
    * Exit 0 and `jlcplace: wrote board-CPL.csv (N rows)`: done. Yellow rows are written, and they need a look in
      JLC's preview.
    * Exit 2 and `jlcplace: board-CPL.csv not written: the rows above are red (--force writes it anyway)`: nothing was
      written. If a CPL was already at that path, it is left unchanged. Resolve each red row as described in the next
-     section, then run the command again.
+     section, then run the command again. The note adds `the stored correction of U3 was verified wrong: fix it and
+     confirm again` for a `verified-wrong` row, and says `the origin is red` or `the Gerbers are red` when only a
+     finding is (see [check-jlc-placement](../check-jlc-placement/SKILL.md)).
    * Exit 3: bad input. The message names the file or option.
 
 ## Resolving red rows
@@ -78,13 +80,27 @@ Read the message, and for detail `jlcplace show board.kicad_pcb --ref REF`. The 
   EasyEDA footprint, from the part's datasheet or JLC's preview. Find it on the KiCad footprint too: by KiCad's
   library convention, a diode or LED's pad 1 is the cathode and a polarised capacitor's pad 1 is "+". Record the
   decision as above, or verify the part in JLC's preview ([review-jlc-preview](../review-jlc-preview/SKILL.md)).
+  The same goes for `polarity undecided: the pad numbers pick rot A, but the EasyEDA footprint's hole lands in
+  KiCad's unplated holes only at rot B`: a right-angle part whose peg fits only the other way round than its pad
+  numbers place it. Compare both footprints with the datasheet.
+* **Numbering mirrored**: `numbering mirrored between the libraries (symmetric land pattern): rot R lands every pad
+  ..., but renumbered: EE 1 -> KiCad 3, EE 3 -> KiCad 1`. The land pattern is symmetric (a trimmer's three pins and
+  two mounting pads), and the two libraries number it as mirror images. The row lands every pad; which numbering is
+  the part's (for a trimmer, which end is clockwise) is in its datasheet. Decide and record it as for a numbering.
 * **ambiguous**: several placements land every pad, and nothing tells them apart. Decide from the datasheet, or in the
   preview, as above.
-* **Mirrored**: `the mirrored fit beats every normal one: mirrored footprint or wrong footprint`, or `no row is
-  possible: the EasyEDA footprint is a mirror image of the KiCad one`. No row can fix this. The LCSC part does not
-  match the KiCad footprint. Pick another part, or fix the footprint.
+* **Mirrored**: `no row is possible: the EasyEDA footprint is a mirror image of the KiCad one`. Only the mirror image
+  lands, so no row can fix this: the LCSC part does not match the KiCad footprint. Pick another part, or fix the
+  footprint. `the mirrored fit beats every normal one: mirrored footprint or wrong footprint; the correction is rot
+  R, which lands every pad too`: a normal row exists, but check the footprint against the datasheet before a manual
+  decision accepts it.
+* **Pinout**: `pinout differs from the symbol: ...`. The LCSC part's pins are on other functions whatever the
+  rotation: no row fixes it. See [diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md) ("Wrong pins").
+* **Verified wrong**: `verified wrong by JLC's preview on ...`. The preview or the board showed the stored
+  correction wrong. Fix it as [review-jlc-preview](../review-jlc-preview/SKILL.md) says ("Afterwards").
 * **No EasyEDA footprint** for a polar or multi-pin part (`Component not found`): check the code on lcsc.com. If the
-  code is right, the part can only be checked in JLC's preview.
+  code is right, the part can only be checked in JLC's preview. `--force` writes its row at KiCad's angle and the
+  centre of its courtyard (else its fabrication drawing, else KiCad's anchor), as JLC places a part by its centre.
 * **Not on the board, DNP, wrong layer, duplicate**: fix the board or the BOM. See the
   [verdict reference](../check-jlc-placement/verdicts.md).
 
@@ -94,8 +110,10 @@ preview. The exit code is still 2, and each such row must be on the user's previ
 ## What the CPL contains
 
 * JLC's header `Designator,Mid X,Mid Y,Layer,Rotation`, values in mm, Top or Bottom, CRLF line ends.
-* One row for every part JLC assembles that has an LCSC code: placed, not DNP, not excluded from the position files
-  or the BOM. With `--bom`, the BOM's code is used. Parts with no code get no row, so JLC does not place them.
+* One row for every part JLC places that has an LCSC code: placed, not DNP or board-only, and not excluded from the
+  position files or the BOM, or, with `--bom`, listed by the BOM whatever KiCad excludes it from (JLC never sees
+  KiCad's attributes; a part excluded from the position files is then yellow: untick that, or drop its BOM line).
+  With `--bom`, the BOM's code is used. Parts with no code get no row, so JLC does not place them.
 * Coordinates in mm, Y up, from the Gerbers' own (0, 0) with `--gerbers` (the first line says `origin 100, 100
   from the Gerbers (aux)`): JLC lays the CPL over the Gerbers from there. Gerbers that are not this board's as it is
   (mirrored, another board's, an older plot) are a red `gerbers` line, and nothing is written. Without `--gerbers`,
@@ -116,6 +134,6 @@ stale, and the part is refitted.
 
 ## Then
 
-Upload this CPL together with the BOM it was written with. Walk the checklist in JLC's preview with
-[review-jlc-preview](../review-jlc-preview/SKILL.md). For the whole order (Gerbers, drill, BOM), see
-[prepare-jlc-order](../prepare-jlc-order/SKILL.md).
+Upload this CPL together with the BOM it was written with, and the Gerbers it was written from. Walk the checklist
+in JLC's preview with [review-jlc-preview](../review-jlc-preview/SKILL.md). For the whole order (Gerbers, drill,
+BOM), see [prepare-jlc-order](../prepare-jlc-order/SKILL.md).
