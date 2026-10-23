@@ -748,12 +748,12 @@ def origin_lines(run) -> list[(verdict, text)]
   (JLC reads them in mm; built after the common offset: when the rows sit on their parts read in mm, it says the file is
   in mm already and --units misread it, not that it is in inches). `check --fixed-cpl CSV`: when the run's common offset
   is an `origin_error`, the CPL's own rows through `Offset.fix` (rows in place kept; written with `cpl.write_cpl`, from
-  the run's CPL origin) and the counts of their check, as a note (ending, when the rows moved onto the board's CPL
-  origin with neither --gerbers nor --origin, "right only if the Gerbers and drill files are plotted from the board's
-  aux origin (x, y), which was not checked: pass --gerbers"); else a note that nothing was written; the exit code stays
-  the given CPL's (a file it cannot write is bad input once the summary and the other outputs are written). Under -q the
-  findings are still printed ("jlcplace: red: origin mismatch: ..."). `cpl` with a red finding and no red row says "not
-  written: the origin is red". `--overlay DIR` (check, cpl): `report.write_overlays` with the Gerbers' outline (else the
+  the run's CPL origin) and the counts of their check (with `off_board`, as `check` of that file gives them), as a
+  note (ending, when the rows moved onto the board's CPL origin with neither --gerbers nor --origin, "right only if the
+  Gerbers and drill files are plotted from the board's aux origin (x, y), which was not checked: pass --gerbers"); else
+  a note that nothing was written; the exit code stays the given CPL's (a file it cannot write is bad input once the
+  summary and the other outputs are written). Under -q the findings are still printed ("jlcplace: red: origin
+  mismatch: ..."). `cpl` with a red finding and no red row says "not written: the origin is red". `--overlay DIR` (check, cpl): `report.write_overlays` with the Gerbers' outline (else the
   board's Edge.Cuts), the Gerbers' (0, 0), and the findings and offset hints as notes; PNGs when a renderer is at hand,
   else a note on stderr; a renderer that fails is a warning, a directory that cannot be written bad input (after the
   other outputs). `-v` is taken before or after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl`

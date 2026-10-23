@@ -368,7 +368,7 @@ def cmd_check(args) -> int:
     fixed, errors = [], []
     if args.fixed_cpl:
         try:
-            fixed = [_fixed_cpl(args, run, resolved, bom)]
+            fixed = [_fixed_cpl(args, run, resolved, bom, gerbers)]
         except BadInput as e:                  # the summary and the other outputs are written first, then exit 3
             errors.append(str(e))
     run.lead, missing = _misses_note(client, args, _codes(resolved))
@@ -380,10 +380,11 @@ def _codes(resolved) -> int:
     return len({r.part.lcsc for r in resolved.values() if r.part.lcsc})
 
 
-def _fixed_cpl(args, run, resolved, bom) -> str:
+def _fixed_cpl(args, run, resolved, bom, gerbers=None) -> str:
     """--fixed-cpl PATH: the CPL's own rows (their angles kept) with the common offset taken out (pipeline.Offset.fix:
-    in mm, y up, from the run's CPL origin: the Gerbers' with --gerbers), checked again; rows that sit on their parts
-    already are kept. Only for an offset that moves (nearly) every row: an origin, unit or y axis error."""
+    in mm, y up, from the run's CPL origin: the Gerbers' with --gerbers), checked again as `check` checks a CPL (the
+    board outline too); rows that sit on their parts already are kept. Only for an offset that moves (nearly) every
+    row: an origin, unit or y axis error."""
     off = run.offset
     if off is None or not off.origin_error:
         return f"jlcplace: --fixed-cpl: no common offset to take out: {args.fixed_cpl} not written"
@@ -395,7 +396,9 @@ def _fixed_cpl(args, run, resolved, bom) -> str:
         write_cpl(args.fixed_cpl, rows)
     except OSError as e:
         raise BadInput(f"--fixed-cpl {args.fixed_cpl}: cannot write: {_why(e)}") from None
-    again = check(run.board, rows, resolved, reading=run.reading, bom_rows=bom).counts()
+    again = check(run.board, rows, resolved, reading=run.reading, bom_rows=bom)
+    _off_board(args, again, gerbers)
+    again = again.counts()
     how = (f"moved by ({round(-off.dx, 3) + 0.0:+.3f}, {round(-off.dy, 3) + 0.0:+.3f}) mm"
            if off.scale == 1.0 and off.y_up else "in mm" if off.y_up else "with Mid Y negated")
     unsure = ""
