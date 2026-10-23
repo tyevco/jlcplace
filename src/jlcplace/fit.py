@@ -527,6 +527,13 @@ class _Fit:
                      ld.net) for j, ld in enumerate(self.lands)]
         return pin_diffs([(ee[i], kicad[j]) for i, j in enumerate(m.land) if j >= 0], ee, kicad)
 
+    def names_from(self) -> str:
+        """Where the KiCad names of pin_diffs come from, as pinout_text says it: the board's pin functions, or, on
+        lands named by KiCad's positive pad, its pad numbers (A / K) or its library convention."""
+        if not self.named_by:
+            return "on the board"
+        return "by its pad number" if self.named_by == "pad numbers" else f"by {self.named_by}"
+
     def uncovered(self, land) -> list[str]:
         """KiCad lands no EasyEDA pad lands on (each label once), unless parts.uncovered_exemption excuses them, as
         check does: thermal vias in or beside a covered pad, the stub of a pin whose tab is covered."""
@@ -848,11 +855,12 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         # some too): no rotation wires the part right, as check's _pinout judges it (a polar part's drawn + on its
         # positive pad vouches for the polarity against the names, as in JLC's preview)
         verdict = RED
-        reasons.insert(0, f"pinout differs from the symbol: {pinout_text(swapped)}: no placement that lands every "
-                          f"pad puts the pins on their own functions, so the part is wired wrong whatever the "
-                          f"rotation; check the LCSC part's pinout against the symbol")
+        reasons.insert(0, f"pinout differs from the symbol: {pinout_text(swapped, board=f.names_from())}: no "
+                          f"placement that lands every pad puts the pins on their own functions, so the part is wired "
+                          f"wrong whatever the rotation; check the LCSC part's pinout against the symbol")
     elif chosen.names_bad:
-        downgrade(f"{chosen.names_bad} pin name(s) differ ({chosen.names_ok} agree): {pinout_text(diffs)}"
+        downgrade(f"{chosen.names_bad} pin name(s) differ ({chosen.names_ok} agree): "
+                  f"{pinout_text(diffs, board=f.names_from())}"
                   + ("" if nonpolar else ": the polarity follows the drawn +" if plus_ok else
                      ": check the LCSC part's pinout against the symbol"))
     elif chosen.names_ok:

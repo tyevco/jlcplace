@@ -240,7 +240,7 @@ class Pin(NamedTuple): number, name, tokens, net=None   # name as written (messa
 class PinDiff: ee_number, ee_name, kicad_number, kicad_name, kind     # kind: swapped | same net | differs
 def pin(number, name, net=None) -> Pin
 def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]  # pairs [(EasyEDA Pin, KiCad Pin)] of the pads on copper
-def pinout_text(diffs, n=4) -> str   # "pad 2 is S on the LCSC part, D on the board; pad 2 (EasyEDA pad 4) is ..."
+def pinout_text(diffs, n=4, board="on the board") -> str   # "pad 2 is S on the LCSC part, D on the board; ..."
 ```
 * `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI)
   or a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
@@ -300,7 +300,9 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
    count only where they separate members of S. A polar two-terminal part whose lands have no name tokens gets ANODE
    / CATHODE on them from `parts.kicad_positive_pad` (its library convention, or pads numbered A / K), so that
    EasyEDA's + / -, A / K / C count as names against it; never a part with more terminals (an op-amp's + / -, a
-   transistor's C), and the lands only (`kicad_hash` and the check's pinout read the pads' own pin functions).
+   transistor's C), and the lands only (`kicad_hash` and the check's pinout read the pads' own pin functions); a
+   reason naming such a land's name says where it comes from ("+ by KiCad's library convention (pad 1 = cathode)",
+   "- by its pad number"), not "on the board".
 4. **Equivalence**: same nets on every pad, or a terminal swap of a non-polar two-terminal part (`parts.nonpolar`,
    the rule check uses too; unknown parts are polar).
 5. **+ mark** (polar two-terminal parts): `parts.ee_positive_pad` against `parts.kicad_positive_pad`. Pad numbers,

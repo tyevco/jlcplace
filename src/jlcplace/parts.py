@@ -221,12 +221,14 @@ def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]:
     return out
 
 
-def pinout_text(diffs: list[PinDiff], n: int = 4) -> str:
-    """'pad 2 is S on the LCSC part, D on the board; pad 3 (EasyEDA pad 2) is ...' for the first n."""
+def pinout_text(diffs: list[PinDiff], n: int = 4, board: str = "on the board") -> str:
+    """'pad 2 is S on the LCSC part, D on the board; pad 3 (EasyEDA pad 2) is ...' for the first n. `board` says
+    where the KiCad side's names come from when the board's pads have no pin functions ("by KiCad's library
+    convention (pad 1 = cathode)")."""
     def one(d):
         where = f"pad {d.kicad_number}" + (f" (EasyEDA pad {d.ee_number})"
                                            if norm_number(d.ee_number) != norm_number(d.kicad_number) else "")
-        return f"{where} is {d.ee_name} on the LCSC part, {d.kicad_name} on the board"
+        return f"{where} is {d.ee_name} on the LCSC part, {d.kicad_name} {board}"
     return "; ".join(one(d) for d in diffs[:n]) + (f"; {len(diffs) - n} more" if len(diffs) > n else "")
 
 

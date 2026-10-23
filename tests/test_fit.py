@@ -282,6 +282,25 @@ def test_led_pin_names_and_drawn_plus_outvote_the_pad_numbers(names):
     assert has(c, "KiCad's positive pad 2 by KiCad's library convention (pad 1 = cathode)"), c.reasons
 
 
+def test_pin_names_compared_with_kicads_library_convention_say_so():
+    """On pads without pin functions the EasyEDA names are compared with KiCad's library convention, not with the
+    board: the names that the pad numbers and the drawn + outvote were said to be "+ on the board", which no pad of
+    the board says (its owner would look for pin functions that are not there)."""
+    part = kpart(led0805(), *LED)
+    ee = ee_led0805({"1": "+", "2": "-"}, plus=False)
+    ee.plus = [(-1.041, 0.0404, 1.1)]                       # beside EasyEDA pad 2: the + sides with the pad numbers
+    c = fit.fit_part(part, ee)
+    assert (c.verdict, c.rot) == (YELLOW, 180.0) and has(c, "following the pad numbers and the drawn +"), c.reasons
+    assert has(c, "2 pin name(s) differ (0 agree): pad 2 is - on the LCSC part, + by KiCad's library convention (pad "
+                  "1 = cathode); pad 1 is + on the LCSC part, - by KiCad's library convention (pad 1 = cathode): the "
+                  "polarity follows the drawn +") and not has(c, "on the board"), c.reasons
+    # with K / A pin functions on the board's pads, the names are the board's
+    part.pads[0].pin_name, part.pads[1].pin_name = "K", "A"
+    c = fit.fit_part(part, ee)
+    assert has(c, "pad 2 is - on the LCSC part, A on the board; pad 1 is + on the LCSC part, K on the board"), \
+        c.reasons
+
+
 def test_a_drawn_plus_against_the_pad_numbers_alone_is_followed():
     """No pin names: the pad numbers say rot 180, the drawn + rot 0. The + was right in every such case of JLC's
     preview data: the fit follows it, yellow, and says the evidence conflicts (it was red, following the numbers)."""
