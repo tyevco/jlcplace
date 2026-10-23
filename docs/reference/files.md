@@ -118,7 +118,7 @@ jlcplace check example.json example-CPL-semicolons.csv --cache cache
 Designator;Mid X;Mid Y;Layer;Rotation
 C1;8,0000mm;3,8000mm;Top;0
 C2;4,8000mm;7,5000mm;Top;90
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-semicolons.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-semicolons.csv (7 rows), bottom reading jlc-2022
 7 results: 0 red, 0 yellow, 7 green, 0 verified
 Preview checklist (1 item): look at these in JLC's placement preview
   bottom reading  Q1
@@ -133,7 +133,7 @@ jlcplace check example.json example-CPL-unicode.txt --cache cache
 
 ```text
 example-CPL-unicode.txt: Unicode text, UTF-16, little-endian text, with CRLF line terminators
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-unicode.txt (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-unicode.txt (7 rows), bottom reading jlc-2022
 7 results: 0 red, 0 yellow, 7 green, 0 verified
 ...
 ```
@@ -164,7 +164,7 @@ Wrote position data to 'main.pos'.
 # Ref     Val                Package                                                  PosX       PosY       Rot  Side
 BZ1       PKMCS0909E4000-R1  Buzzer_Murata_PKMCS0909E4000-R1                       20.3980     8.2413   22.0000  bottom
 C1        22u                C_0805_2012Metric                                     16.9889   -18.7280    0.0000  bottom
-jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs main.pos (187 rows), bottom reading jlc-2022
+jlcplace 0.2.1: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs main.pos (187 rows), bottom reading jlc-2022
 RED     BZ1  C910763    bottom  2 of 2 EasyEDA pads land off copper: 1, 2 (nearest KiCad pad centre up to 3.14 mm away)
 RED     C43  C1525      top     not-placed: the board part is DNP: JLC must not place it
 ...
@@ -211,7 +211,7 @@ cat -A example-CPL.csv
 ```
 
 ```text
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL.csv (7 rows), bottom reading jlc-2022
 7 results: 0 red, 0 yellow, 7 green, 0 verified
 Preview checklist (1 item): look at these in JLC's placement preview
   bottom reading  Q1
@@ -295,7 +295,7 @@ NMOS,Q1,SOT-23,C1005,1
 100k,R1,R_0603,C1002,1
 10u,C1,C_0402,C1003,1
 100n,C2,C_0402,C1003,1
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-good.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-good.csv (7 rows), bottom reading jlc-2022
 BOM     R2: a CPL row but no BOM line (JLC will not place it)
 BOM     R2 (C1002): JLC should assemble it but the BOM does not list it
 7 results: 0 red, 0 yellow, 7 green, 0 verified; 2 BOM issues
@@ -489,7 +489,7 @@ YELLOW  BZ1  C910763    bottom  rot 0, dx -0.0001, dy -0.0001 (number, rms 0.350
     "rms 0.350 mm: the land patterns differ (every pad lands)"
    ],
    "status": "auto",
-   "tool": "jlcplace 0.2.0",
+   "tool": "jlcplace 0.2.1",
    "verdict": "yellow",
    "verifications": []
   }
@@ -508,7 +508,7 @@ A `confirm` adds to `verifications`. After `jlcplace confirm dial-me-spinner-bas
     "accepted manually (you): pins 1-2, 3-4 joined"
    ],
    "status": "manual",
-   "tool": "jlcplace 0.2.0",
+   "tool": "jlcplace 0.2.1",
    "verdict": "yellow",
    "verifications": [
     {
@@ -609,7 +609,7 @@ The top of `report.json`:
 
 ```json
 {
- "tool": "jlcplace 0.2.0",
+ "tool": "jlcplace 0.2.1",
  "board": {
   "path": "example.json",
   "source": "json",
@@ -768,7 +768,7 @@ cat checklist.md
 ```text
 # JLC preview checklist: example.json
 
-CPL example-CPL-bad.csv, bottom reading `jlc-2022`, jlcplace 0.2.0; 1 item.
+CPL example-CPL-bad.csv, bottom reading `jlc-2022`, jlcplace 0.2.1; 1 item.
 
 Open the order's placement preview at JLC and look at each part below. Tick it when the part sits on its pads with pin 1 / polarity where the board wants it. An item for several parts names the one to look at.
 

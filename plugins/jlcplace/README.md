@@ -31,7 +31,7 @@ Code. Or turn on auto-update for the marketplace under `/plugin` (Marketplaces).
 
 The plugin does not install the jlcplace CLI. The first time a skill needs it, Claude looks for it and, if you agree,
 installs it from GitHub with `uv tool install`, `pipx install`, or a virtual environment of its own. The skills
-need jlcplace 0.2.0 or later, and Claude offers to update an older one. It needs Python 3.10 or later, and git (or
+need jlcplace 0.2.1 or later, and Claude offers to update an older one. It needs Python 3.10 or later, and git (or
 GitHub's zip download of the repository). It does not need KiCad: a built-in reader handles `.kicad_pcb` files from
 KiCad 5 to 10.
 KiCad's `kicad-cli` is used only to export Gerbers, drill files and the BOM, and the order skill falls back to

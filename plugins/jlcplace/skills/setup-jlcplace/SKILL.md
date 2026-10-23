@@ -14,7 +14,8 @@ The other jlcplace skills link here. Do the steps below once per session, before
 jlcplace --version
 ```
 
-It prints `jlcplace 0.2.0` or later: the skills need 0.2.0 (`--gerbers`, `--fixed-cpl`, `--overlay`, `fetch --bom`).
+It prints `jlcplace 0.2.1` or later: the skills need 0.2.1 (`--gerbers`, also on `confirm` and `show`, `--fixed-cpl`,
+`--overlay`, `fetch --bom`, and `confirm`'s refusal of a row read from another origin or bottom reading).
 If it prints an older version, offer to update it (end of step 2) before going on. If the command is not found, look
 in these places before installing anything:
 
@@ -94,7 +95,7 @@ plugin's skills, the user runs `claude plugin marketplace update jlcplace`, then
 
 Flags change between versions. Before the first use of a command, read its help: `jlcplace check --help`,
 `jlcplace cpl --help`, `jlcplace confirm --help`. An option a skill gives that the help does not list means a
-jlcplace older than 0.2.0: update it (step 2) rather than leave the option out.
+jlcplace older than 0.2.1: update it (step 2) rather than leave the option out.
 
 Exit codes for every command: 0 clean, 1 yellow with `--fail-on yellow`, 2 red (for `fetch`: records that could not
 be fetched), 3 bad input (the message says which file or option), 4 internal error (a bug: report it with the

@@ -520,7 +520,7 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
 ## db.py — the shared correction database (one JSON file per code, safe to keep in git)
 
 ```python
-TOOL = f"jlcplace {__version__}"           # the "tool" an entry records ("jlcplace 0.2.0"), as report.TOOL
+TOOL = f"jlcplace {__version__}"           # the "tool" an entry records ("jlcplace 0.2.1"), as report.TOOL
 class CorrectionDB:
     def __init__(self, path)
     def file(self, code) -> Path; def entries(self, code) -> list[dict]

@@ -1,6 +1,6 @@
 {
   "name": "jlcplace",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Check and correct KiCad pick-and-place (CPL) files and prepare JLCPCB assembly orders with the jlcplace CLI",
   "author": {
     "name": "tyevco",

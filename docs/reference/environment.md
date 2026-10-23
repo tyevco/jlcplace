@@ -175,7 +175,7 @@ jlcplace uses the network for one thing: downloading EasyEDA records that the ca
 * `snapshot` never uses it.
 
 Each record is one HTTPS request to `https://easyeda.com/api/products/CODE/components?version=6.4.19.5`, sent with
-the User-Agent `jlcplace/0.2.0 (+https://github.com/tyevco/jlcplace)` and a 30 s timeout. This API is not a
+the User-Agent `jlcplace/0.2.1 (+https://github.com/tyevco/jlcplace)` and a 30 s timeout. This API is not a
 documented, stable interface (see [Limits](../about/limits)), so jlcplace treats it gently:
 
 * **Rate.** At least 0.7 s between requests. `fetch --min-interval S` sets another interval.
