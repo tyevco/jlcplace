@@ -105,9 +105,9 @@ jlcplace show board.kicad_pcb --ref U3
 ```
 
 Its `x:` and `y:` are KiCad's board coordinates (from the page origin, Y down). Its `rows:`, like a CPL and the
-check's `row` and `expected`, are CPL coordinates (from the drill/place origin, Y up): KiCad's (x, y) is
-(x - aux_x, aux_y - y) there, with the origin from the check's first line (`origin aux 100, 100`, or
-`origin 100, 100 from the Gerbers (aux)`).
+check's `row` and `expected`, are CPL coordinates (Y up, from the CPL origin the check's first line names:
+`origin aux 100, 100`, or `origin 100, 100 from the Gerbers (aux)`; `show` uses the aux origin): KiCad's (x, y) is
+(x - ox, oy - y) there.
 
 ## The bottom side is never proven offline
 
