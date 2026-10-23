@@ -1424,9 +1424,9 @@ def test_records_are_downloaded_only_when_asked(env, capsys, monkeypatch):
         code, out, err = run(capsys, *cmd, "--cache", cache)
         assert code != 4 and net.codes == [], (cmd, out, err)
     code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache)
-    assert code == 2 and "no EasyEDA record in the cache" in out, out
+    assert code == 2 and "has an EasyEDA record in the cache" in out, out
     note = next(ln for ln in out.splitlines() if ln.startswith("jlcplace: "))
-    assert "2 codes (C1001, C1002)" in note and "jlcplace fetch" in note and "--online" in note, note
+    assert "2 codes JLC places (C1001, C1002)" in note and "jlcplace fetch" in note and "--online" in note, note
     assert run(capsys, "check", env.board, env.out, "--cache", cache, "--online", "--offline")[0] == 3
     code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache, "--online")
     assert code == 0 and sorted(net.codes) == ["C1001", "C1002"] and "4 green" in out, out
@@ -1435,6 +1435,37 @@ def test_records_are_downloaded_only_when_asked(env, capsys, monkeypatch):
     assert code == 0 and len(net.codes) == 2 and "jlcplace fetch" not in out, out
     code, out, err = run(capsys, "fetch", "C1003", "--cache", cache)
     assert code == 0 and net.codes[2:] == ["C1003"], out
+
+
+def test_an_empty_record_cache_is_said_before_the_rows(env, capsys):
+    """An offline check with no cached records printed every row "not simulated" (red for the parts that need a
+    footprint) before the one line that says why, at the end. That line now comes right after the header, with the
+    `fetch` that downloads them; the rows and the exit code stay as they were."""
+    env.make()
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nX,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2\",0402,C1002\n",
+                   encoding="utf-8")
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    full = run(capsys, "check", env.board, env.out, *offline(env, env.empty))
+    for args in ((), ("--bom", bom)):
+        code, out, _ = run(capsys, "check", env.board, env.out, *args, *offline(env, env.empty))
+        lines = out.splitlines()
+        assert code == full[0] == 2 and lines[0].startswith("jlcplace 0.1.0: board.kicad_pcb"), out
+        want = (f"jlcplace: none of the 2 codes JLC places (C1001, C1002) has an EasyEDA record in the cache "
+                f"{env.empty}, so the rows below are checked without JLC's footprints (red where a part needs one): "
+                f"`jlcplace fetch {env.board}{' --bom ' + str(bom) if args else ''} --cache {env.empty}` downloads "
+                f"them (rate-limited), or pass --online")
+        assert lines[1] == want and out.count("has an EasyEDA record") == 1, out
+        assert [ln for ln in lines if ln.startswith(("RED", "YELLOW"))] == \
+            [ln for ln in full[1].splitlines() if ln.startswith(("RED", "YELLOW"))]
+    code, out, _ = run(capsys, "check", env.board, env.out, "-q", *offline(env, env.empty))
+    assert code == 2 and out.count("has an EasyEDA record") == 1 and out.startswith("jlcplace: none of"), out
+    # most records at hand: the note names what is missing where it always was, after the summary
+    shutil.copy(Path(env.cache) / "C1001.json", Path(env.empty) / "C1001.json")
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env, env.empty))
+    assert out.splitlines()[-1] == (f"jlcplace: no EasyEDA record in the cache {env.empty} for 1 code (C1002): "
+                                    f"`jlcplace fetch {env.board} --cache {env.empty}` downloads them (rate-limited), "
+                                    f"or pass --online"), out
 
 
 def test_html_report_declares_the_source_of_the_easyeda_outlines_where_they_are_drawn(env):
