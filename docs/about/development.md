@@ -20,7 +20,7 @@ pip install -e ".[test]"
 ```text
 Cloning into 'jlcplace'...
 ...
-Successfully installed hypothesis-6.170.5 iniconfig-2.3.1 jlcplace-0.1.0 numpy-2.5.4 packaging-26.3 pluggy-1.7.0 pygments-2.21.0 pytest-9.1.1 pyyaml-6.0.3 sortedcontainers-2.4.0
+Successfully installed hypothesis-6.170.5 iniconfig-2.3.1 jlcplace-0.2.0 numpy-2.5.4 packaging-26.3 pluggy-1.7.0 pygments-2.21.0 pytest-9.1.1 pyyaml-6.0.3 sortedcontainers-2.4.0
 ```
 
 At run time jlcplace needs Python 3.10 or newer and numpy, nothing else. To run the tests that use KiCad's `pcbnew`
@@ -152,7 +152,7 @@ bash ../.github/dogfood.sh "$JLCPLACE_DIAL_ME_SPINNER/hardware" "$JLCPLACE_TEST_
 
 ```text
 SW1 C318884: manual, yellow: rot 0, dx 0.0000, dy 0.0000; row X 0.0000 Y 0.0000 rot 0 (/tmp/tmp.z4eGSUuAha/C318884.json)
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 ...
 old CPLs red on exactly {'main': ['J1', 'J20', 'J40'], 'base': ['J1', 'J2', 'J3', 'SW1']}
 ```

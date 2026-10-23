@@ -93,7 +93,7 @@ jlcplace check dial-me-spinner-main.json released-main-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs released-main-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs released-main-CPL.csv (184 rows), bottom reading jlc-2022
 ...
 184 results: 0 red, 2 yellow, 182 green, 0 verified
 ...
@@ -149,7 +149,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-pos.csv --bom
 
 ```text
 Wrote position data to 'dial-me-spinner-main-pos.csv'.
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-pos.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-pos.csv (184 rows), bottom reading jlc-2022
 RED     BZ1  C910763    bottom  2 of 2 EasyEDA pads land off copper: 1, 2 (nearest KiCad pad centre up to 3.14 mm away)
 ...
 RED     J20  C262671    top     32 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 1.34 mm away)
@@ -199,7 +199,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb old-base-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs old-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs old-base-CPL.csv (17 rows), bottom reading jlc-2022
 RED     J1   C165948    top     15 of 16 EasyEDA pads land off copper: 2, 3, 4, A1B12, A4B9, A5, A6, A7 ... (nearest KiCad pad centre up to 2.40 mm away)
 RED     J2   C160404    top     6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
 RED     J3   C160411    top     14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
@@ -289,7 +289,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb dial-me-spinner-base-CPL-JLCPCB.cs
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs dial-me-spinner-base-CPL-JLCPCB.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs dial-me-spinner-base-CPL-JLCPCB.csv (17 rows), bottom reading jlc-2022
 RED     U2   C2681320   top     6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.21 mm away)
 YELLOW  SW1  C318884    top     renumbered: numbering accepted by the correction (manual): 2->1
              correction (db, manual, yellow): accepted manually (you): TS-1187A datasheet: EasyEDA pins 1-2 and 3-4 are each one terminal
@@ -319,7 +319,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv --db jlcplac
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
 YELLOW  SW1  C318884    top     renumbered: numbering accepted by the correction (manual): 2->1
              correction (db, manual, yellow): accepted manually (you): TS-1187A datasheet: EasyEDA pins 1-2 and 3-4 are each one terminal
 17 results: 0 red, 1 yellow, 16 green, 0 verified
@@ -347,7 +347,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb released-main-CPL.csv --reading jl
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs released-main-CPL.csv (184 rows), bottom reading jlc-2022+180
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs released-main-CPL.csv (184 rows), bottom reading jlc-2022+180
 ...
 RED     U12  C7519      bottom  wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other nets: 1->4 (USB_DM, not USB_DP), 2->5 (/MCU, flash & debug/VBUS_NRF, not GND), 3->6 (USB_DP, not USB_DM), 4->1 (USB_DP, not USB_DM), 5->2 (GND, not /MCU, flash & debug/VBUS_NRF), 6->3 (USB_DM, not USB_DP)
 ...
@@ -477,7 +477,7 @@ before the row is fixed.
 ```text [checklist.md]
 # JLC preview checklist: dial-me-spinner-base.kicad\_pcb
 
-CPL old-base-CPL.csv, bottom reading `jlc-2022`, jlcplace 0.1.0; 3 items.
+CPL old-base-CPL.csv, bottom reading `jlc-2022`, jlcplace 0.2.0; 3 items.
 
 Open the order's placement preview at JLC and look at each part below. Tick it when the part sits on its pads with pin 1 / polarity where the board wants it. An item for several parts names the one to look at.
 

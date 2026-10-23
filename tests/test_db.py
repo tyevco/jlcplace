@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import jlcplace
 from jlcplace import convention as cv
 from jlcplace import db as dbmod
 from jlcplace.board import load_board
@@ -50,7 +51,7 @@ def test_file_layout(db):
         "correction": {"rot": 90.0, "dx": 0.1, "dy": -0.2, "mirror": False},
         "fit": {"method": "number", "rms": 0.0123, "matched": 6, "score": 90, "alternatives": []},
         "verdict": GREEN, "reasons": ["fit by number"], "status": "auto", "verifications": [],
-        "tool": "jlcplace 0.1.0", "fitted": "2026-10-22"}]}
+        "tool": f"jlcplace {jlcplace.__version__}", "fitted": "2026-10-22"}]}
     assert os.listdir(db.path) == ["C2681320.json"]
     got = db.lookup("C2681320", ee_key="uuid1:100", kicad_hash="sha1:aaaa")
     assert (got.rot, got.dx, got.dy, got.mirror, got.verdict, got.status) == (90.0, 0.1, -0.2, False, GREEN, "auto")

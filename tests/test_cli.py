@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import jlcplace
 from jlcplace import convention as cv
 from jlcplace import geom, report
 from jlcplace.board import save_snapshot
@@ -1640,7 +1641,7 @@ def test_an_empty_record_cache_is_said_before_the_rows(env, capsys):
     for args in ((), ("--bom", bom)):
         code, out, _ = run(capsys, "check", env.board, env.out, *args, *offline(env, env.empty))
         lines = out.splitlines()
-        assert code == full[0] == 2 and lines[0].startswith("jlcplace 0.1.0: board.kicad_pcb"), out
+        assert code == full[0] == 2 and lines[0].startswith(f"jlcplace {jlcplace.__version__}: board.kicad_pcb"), out
         want = (f"jlcplace: no EasyEDA record in the cache {env.empty} for 2 of the 2 codes JLC places (C1001, "
                 f"C1002), so the rows below are checked without JLC's footprints (red where a part needs one): "
                 f"`jlcplace fetch {env.board}{' --bom ' + str(bom) if args else ''} --cache {env.empty}` downloads "

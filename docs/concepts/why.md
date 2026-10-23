@@ -55,7 +55,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-pos.csv --bom
 
 ```text
 Wrote position data to 'dial-me-spinner-main-pos.csv'.
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-pos.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-pos.csv (184 rows), bottom reading jlc-2022
 RED     BZ1  C910763    bottom  2 of 2 EasyEDA pads land off copper: 1, 2 (nearest KiCad pad centre up to 3.14 mm away)
 RED     D20  C2500      top     3 of 3 EasyEDA pads land off copper: 1, 2, 3 (nearest KiCad pad centre up to 1.00 mm away)
 ...
@@ -269,7 +269,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb reversed-CPL.csv --json reversed.j
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs reversed-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs reversed-CPL.csv (184 rows), bottom reading jlc-2022
 RED     C32  C7189      top     wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other nets: 1->2 (GND, not /OLED display & 13 V boost/OLED_VCOMH), 2->1 (/OLED display & 13 V boost/OLED_VCOMH, not GND)
 RED     D21  C8598      top     wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other nets: 1->2 (/OLED display & 13 V boost/OLED_BST_SW, not +13V_OLED), 2->1 (+13V_OLED, not /OLED display & 13 V boost/OLED_BST_SW)
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only (rot 180 also lands both pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's preview
@@ -357,7 +357,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb page-origin-pos.csv
 
 ```text
 Wrote position data to 'page-origin-pos.csv'.
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs page-origin-pos.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs page-origin-pos.csv (184 rows), bottom reading jlc-2022
 RED     BZ1   C910763    bottom  2 of 2 EasyEDA pads land off copper: 1, 2 (nearest KiCad pad centre up to 143.42 mm away)
 ...
 184 results: 184 red, 0 yellow, 0 green, 0 verified
@@ -440,7 +440,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb padbox-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs padbox-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs padbox-CPL.csv (184 rows), bottom reading jlc-2022
 RED     J1   C160411    bottom  12 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 0.83 mm away)
 RED     J40  C160404    bottom  4 of 6 EasyEDA pads land off copper: 1, 2, 3, 4 (nearest KiCad pad centre up to 0.83 mm away)
 ...
@@ -464,7 +464,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb old-main-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
 RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
 RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
 RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
@@ -478,7 +478,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb old-base-CPL.csv
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs old-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs old-base-CPL.csv (17 rows), bottom reading jlc-2022
 RED     J1   C165948    top     15 of 16 EasyEDA pads land off copper: 2, 3, 4, A1B12, A4B9, A5, A6, A7 ... (nearest KiCad pad centre up to 2.40 mm away)
 RED     J2   C160404    top     6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
 RED     J3   C160411    top     14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)

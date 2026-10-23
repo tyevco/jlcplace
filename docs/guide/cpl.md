@@ -15,7 +15,7 @@ jlcplace cpl dial-me-spinner-main.kicad_pcb -o dial-me-spinner-main-CPL-JLCPCB.c
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only (rot 180 also lands both pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's preview
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 0 red, 2 yellow, 182 green, 0 verified
@@ -129,7 +129,7 @@ jlcplace cpl dial-me-spinner-base.kicad_pcb -o dial-me-spinner-base-CPL-JLCPCB.c
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs the rows jlcplace would write (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs the rows jlcplace would write (17 rows), bottom reading jlc-2022
 RED     SW1  C318884    top     renumbered: the pads land as the correction (auto) puts them, but it is red, so nothing vouches for this numbering: 2->1
              correction (fit, auto, red): numbering conflict: EE 2 -> KiCad 1 (pads on another terminal's net) and no pin names confirm it; check the pinout, or confirm the placement in JLC's preview
 17 results: 1 red, 0 yellow, 16 green, 0 verified
@@ -272,7 +272,7 @@ jlcplace cpl dial-me-spinner-base.kicad_pcb -o dial-me-spinner-base-CPL-JLCPCB.c
 ```
 
 ```text
-jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs dial-me-spinner-base-CPL-JLCPCB.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs dial-me-spinner-base-CPL-JLCPCB.csv (17 rows), bottom reading jlc-2022
 YELLOW  SW1  C318884    top     renumbered: numbering accepted by the correction (manual): 2->1
              correction (db, manual, yellow): accepted manually (you): TS-1187A datasheet: EasyEDA pins 1-2 and 3-4 are each one terminal
 17 results: 0 red, 1 yellow, 16 green, 0 verified

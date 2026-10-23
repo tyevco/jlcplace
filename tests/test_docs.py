@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from jlcplace import __version__
+
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 PAGES = sorted(p for p in DOCS.rglob("*.md") if "node_modules" not in p.parts)
@@ -68,6 +70,7 @@ def test_the_missing_records_note_the_docs_show_is_the_one_jlcplace_prints():
                 where = f"{page.relative_to(DOCS)}: {line[:80]}"
                 assert line.startswith("jlcplace: no EasyEDA record in the cache "), where
                 assert "`jlcplace fetch BOARD" not in line, where + ": the note types the board's fetch"
+                header = f"jlcplace {__version__}: "
                 if "so the rows below are checked without JLC's footprints" in line and any(
-                        ln.startswith("jlcplace 0.1.0: ") for ln in lines[:i]):          # not under -q
-                    assert lines[i - 1].startswith("jlcplace 0.1.0: "), where + ": right under the header"
+                        ln.startswith(header) for ln in lines[:i]):                     # not under -q
+                    assert lines[i - 1].startswith(header), where + ": right under the header"
