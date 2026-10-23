@@ -190,7 +190,7 @@ def load_board_pcbnew(path, *, origin="aux", lcsc_fields=()) -> Board:
     if not Path(p).is_file():
         raise FileNotFoundError(p)
     kb = pcbnew.LoadBoard(p)
-    if kb is None:                                 # e.g. a file from a newer KiCad: LoadBoard returns None, saying nothing
+    if kb is None:                         # e.g. a file from a newer KiCad: LoadBoard returns None, saying nothing
         v, reads = file_version(p), getattr(pcbnew, "SEXPR_BOARD_FILE_VERSION", None)
         if v is not None and isinstance(reads, int) and v > reads:
             raise NewerFormat(v, pcbnew.Version(), reads)
