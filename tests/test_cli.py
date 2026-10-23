@@ -869,6 +869,43 @@ def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_b
     assert "the BOM lists it: JLC will place it" in d["messages"][-1]
 
 
+def test_a_part_excluded_from_the_position_files_is_fetched_written_and_checked(env, capsys):
+    """KiCad's Jack_3.5mm_CUI_SJ1-3523N_Horizontal ships with exclude_from_pos_files, which JLC never sees: it places
+    what its BOM and CPL list. `fetch BOARD` skipped the jack's code, `cpl --bom` wrote no row for it, and `check`
+    called its row red ("JLC must not place it") without simulating it."""
+    write_records(env, C1006=RECORDS["C1001"])
+    u3 = sot("U3", TOP, 125.0, 70.0, 90.0)
+    u3.lcsc, u3.exclude_pos = "C1006", True
+    env.make(u3)
+    code, out, _ = run(capsys, "fetch", env.board, "--cache", env.cache)
+    assert code == 0 and "C1006: TEST-sot, 6 pads (cached)" in out.splitlines() and "3 codes" in out, out
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nX,\"U1,U2\",SOT-23-6,C1001\nJ,U3,SOT-23-6,C1006\n"
+                   "R,\"R1,R2\",0402,C1002\n", encoding="utf-8")
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--bom", bom, *offline(env))
+    rows = {r.ref: r for r in read_cpl(env.out)}
+    assert code == 0 and list(rows) == ["R1", "R2", "U1", "U2", "U3"], out
+    assert (rows["U3"].x, rows["U3"].y, rows["U3"].rotation) == pytest.approx(
+        cv.cpl_row_for(u3, Correction(180.0), ORIGIN), abs=2e-4)
+    assert "YELLOW  U3" in out and "the BOM and the CPL list it: JLC places it" in out, out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.tmp / "nobom.csv", *offline(env))
+    assert code == 0 and "U3" not in {r.ref for r in read_cpl(env.tmp / "nobom.csv")}      # KiCad's attribute rules
+    turned = [r if r.ref != "U3" else CplRow("U3", r.x, r.y, TOP, r.rotation + 180.0) for r in rows.values()]
+    write_cpl(env.out, turned)
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
+    line = next(ln for ln in out.splitlines() if " U3 " in ln)
+    assert code == 2 and line.startswith("RED     U3") and "wrong-pad" in line, out      # simulated, and caught
+    # offline from the database alone (`fit BOARD` stores the jack's correction too): the same
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
+    assert code == 0 and "U3" in out and (db / "C1006.json").exists(), out
+    write_cpl(env.out, list(rows.values()))
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env, env.empty), "--json",
+                       env.tmp / "p.json")
+    d = {r["ref"]: r for r in json.loads((env.tmp / "p.json").read_text(encoding="utf-8"))["results"]}["U3"]
+    assert (d["status"], d["verdict"]) == ("ok", YELLOW) and "the CPL lists it: JLC places it" in d["messages"][0], d
+
+
 def test_checklist_puts_the_placements_in_doubt_first(env, capsys):
     """truth-5: 'uncertain correction' items in plain ref order hid the one wrong fit among the right ones; the ones
     whose choice of placement is in doubt (a polarity, an orientation) now come first. cli-6: a green row whose

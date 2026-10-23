@@ -781,6 +781,47 @@ def test_a_row_the_bom_lists_is_simulated_though_the_board_excludes_it_from_its_
     assert "the BOM lists it: JLC will place it" in res.messages[-1]
 
 
+def test_a_part_excluded_from_the_position_files_is_placed_when_the_bom_or_cpl_lists_it():
+    """KiCad's audio jack footprints ship with exclude_from_pos_files, which JLC never sees: it places what its BOM and
+    CPL list. The jack's row was red "not-placed: JLC must not place it" and never simulated. It is simulated now, and
+    the exclusion is a yellow inconsistency; DNP still keeps a part off, and a part the BOM lists needs its row."""
+    jack = sot23_6("J1", lcsc="C145819")
+    jack.footprint, jack.exclude_pos = "Connector_Audio:Jack_3.5mm_CUI_SJ1-3523N_Horizontal", True
+    corr = Correction(270.0, verdict=GREEN)
+    ee = ee_for(jack, corr)
+    board = Board("b", ORIGIN, [jack, sot23_6("U1", x=140.0)])
+    good, bad = row_for(jack, corr), turned(row_for(jack, corr), 180)
+    other = row_for(board.parts[1], corr)
+
+    def one(rows, bom_refs=None, ref="J1"):
+        res = check_cpl(board, rows, lambda code: ee, corrections={"C7519": corr, "J1": corr}, bom_refs=bom_refs)
+        return next(r for r in res if r.ref == ref)
+
+    for bom_refs, lists in ((None, "the CPL lists it"), ({"J1", "U1"}, "the BOM and the CPL list it")):
+        res = one([good, other], bom_refs)
+        assert (res.status, res.verdict) == ("ok", YELLOW) and len(res.landings) == 6, res
+        assert res.messages[0].startswith(f"the board excludes it from the position files, but {lists}: JLC "
+                                          "places it (it never sees KiCad's attributes)"), res.messages
+        res = one([bad, other], bom_refs)                  # simulated: a turned jack is caught
+        assert (res.status, res.verdict) == ("wrong-pad", RED) and "position files" in res.messages[-1], res
+    # a BOM that does not list it: JLC does not place it, and a stray row is no reason to stop the order
+    res = one([good, other], {"U1"})
+    assert (res.status, res.verdict, res.landings) == ("not-placed", YELLOW, []), res
+    assert res.messages == ["the board part is excluded from position files and the BOM does not list it: JLC "
+                            "does not place it"]
+    # the BOM lists it and the CPL (KiCad's position file) left it out: JLC cannot place it
+    res = one([other], {"J1", "U1"})
+    assert (res.status, res.verdict) == ("no-row", RED)
+    assert res.messages == ["JLC assembles it (the BOM lists it) but the CPL has no row (the board excludes it from "
+                            "the position files, so KiCad's position file leaves it out)"]
+    assert [r.ref for r in check_cpl(board, [other], lambda code: ee, corrections={"C7519": corr})] == ["U1"]
+    # DNP (or board-only) still means JLC must not place it, whatever lists it
+    jack.dnp = True
+    res = one([good, other], {"J1", "U1"})
+    assert (res.status, res.verdict) == ("not-placed", RED)
+    assert res.messages == ["the board part is DNP, excluded from position files: JLC must not place it"]
+
+
 def test_a_reference_two_placed_parts_share_is_red():
     """cli-9 / logic-7: two assembled footprints called R7 (a copied block, an unannotated board). Board.part gave
     the first, so the one row was checked against it (green, or off-copper when it was the other one's) and the

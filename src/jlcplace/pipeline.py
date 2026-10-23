@@ -30,9 +30,9 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from . import geom
-from .check import check_cpl, check_row, jlc_part, nonpolar
+from .check import check_cpl, check_row, jlc_part, listed_note, nonpolar
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, rot
-from .cpl import UNITS, assembled, natural_key, read_text
+from .cpl import UNITS, assembled, jlc_places, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
@@ -233,24 +233,30 @@ def fallback(part: Part, ee) -> Correction:
                       reasons=[f"no EasyEDA footprint ({why}): the row is KiCad's own position and angle"])
 
 
+def bom_refs(bom_rows) -> set[str] | None:
+    """The designators a JLC BOM lists (None: no BOM)."""
+    return None if bom_rows is None else {d for b in bom_rows for d in b.get("designators") or []}
+
+
 def bom_listed(part: Part, bom_rows) -> bool:
-    """JLC places the part although the board excludes it from its BOM: the JLC BOM lists it (and nothing else keeps
-    it off the board: not DNP, not excluded from the position files, not board-only)."""
-    return (bom_rows is not None and part.placed and part.exclude_bom
-            and any(part.ref in (b.get("designators") or []) for b in bom_rows))
+    """JLC places the part although the board excludes it from its position files or its BOM: the JLC BOM lists it,
+    and it is neither DNP nor board-only (cpl.jlc_places: JLC never sees KiCad's attributes)."""
+    return bom_rows is not None and not assembled(part) and jlc_places(part, bom_refs(bom_rows))
 
 
 def resolve(board: Board, client, db=None, *, refs=None, snap: float = 0.5, use_fallback: bool = False,
-            bom_rows=None) -> dict[str, Resolved]:
-    """A Resolved for every part JLC assembles that has an LCSC code (or for `refs`, any part with a code), each
-    EasyEDA record looked up once per code. With `bom_rows`, also the parts the board only excludes from its BOM but
-    the JLC BOM lists (JLC places what its BOM lists)."""
+            bom_rows=None, cpl_refs=None) -> dict[str, Resolved]:
+    """A Resolved for every part JLC places that has an LCSC code (or for `refs`, any part with a code), each EasyEDA
+    record looked up once per code: the parts JLC assembles, and the ones the board excludes from its position files
+    or its BOM that the JLC BOM (`bom_rows`) lists or, with no BOM, the CPL's rows (`cpl_refs`) list where only the
+    position files exclude them (cpl.jlc_places: JLC places what its BOM and CPL list)."""
     want = set(refs) if refs else None
+    listed = bom_refs(bom_rows)
     ees: dict[str, EEFootprint | NotFound] = {}
     out: dict[str, Resolved] = {}
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
         if not part.lcsc or (want is not None and part.ref not in want) or (
-                want is None and not assembled(part) and not bom_listed(part, bom_rows)):
+                want is None and not jlc_places(part, listed, cpl_refs)):
             continue
         if part.ref in out:
             # a second part with this reference (check reports it, "duplicate-ref"): it must not replace the first
@@ -296,9 +302,9 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
     a part without a code that the BOM does not list is yellow (JLC does not place it)."""
     ees = {r.part.lcsc: r.ee for r in resolved.values() if r.part.lcsc}
     corrections = {ref: r.corr for ref, r in resolved.items() if r.corr is not None}
-    bom_refs = {d for b in bom_rows or [] for d in b.get("designators") or []}
+    listed = bom_refs(bom_rows) or set()
     results = check_cpl(board, rows, lambda code: ees.get(code), corrections=corrections, reading=reading,
-                        bom_refs=bom_refs if bom_rows is not None else None)
+                        bom_refs=bom_refs(bom_rows))
     for i, res in enumerate(results):
         info = resolved.get(res.ref)
         if res.status == "not-simulated" and info is not None and info.source == "db" and res.row is not None:
@@ -313,10 +319,12 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
                                        + (f": {key_reasons(info.corr, 1)[0]}" if info.corr.reasons else ""))
             new.messages.append(f"simulated with the KiCad pads through the stored {info.corr.status} correction: "
                                 f"{why}")
+            if not assembled(info.part):       # JLC places it all the same: its BOM or CPL lists it (check_cpl)
+                listed_note(new, info.part, bom_refs(bom_rows))
             results[i] = res = new
             info.proxy = True
         part = jlc_part(board, res.ref)
-        if (bom_rows is not None and part is not None and not part.lcsc and res.ref not in bom_refs
+        if (bom_rows is not None and part is not None and not part.lcsc and res.ref not in listed
                 and res.status == "not-simulated"):
             res.verdict = YELLOW
             res.messages.append("not in the BOM: JLC does not place it")

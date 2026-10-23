@@ -249,6 +249,9 @@ def test_rows_for_board_selection_order_and_keys():
     assert rows[2].rotation == 180.0                   # the reference key wins over the code
     alt, _ = rows_for_board(board, corrs, reading="ccw-from-top")
     assert alt[0].rotation == cv.jlc_angle(30, 90, BOTTOM, "ccw-from-top") != r2.rotation
+    # JLC places what its BOM lists, whatever the board excludes it from (KiCad's attributes), never a DNP part
+    listed, _ = rows_for_board(board, {"C1": Correction(0), **corrs}, bom_refs={"R3", "R4", "R5", "R6", "R10"})
+    assert [r.ref for r in listed] == ["R2", "R4", "R6", "R10", "U10"]
 
 
 def test_rows_for_board_places_ee_footprint_on_kicad_footprint():
