@@ -1241,10 +1241,32 @@ def test_a_verified_bottom_part_settles_the_bottom_reading(env, capsys):
     assert "ccw-from-top+180 and jlc-2022+180 are ruled out by U4, verified on the assembled board" in what
     assert "as jlc-2022+180" not in what
     # U2, shown right in JLC's preview, moves under every other reading: none is left, for any bottom part; and it was
-    # seen at its odd angle, U3 (folded into U2's item before) was not
+    # seen at its odd angle, which is the one look the odd angle of U3 (folded into U2's item before) asks for
     assert run(capsys, *confirm, "--ref", "U2", "--source", "preview")[0] == 0
-    items = checklist()
-    assert set(items) == {("odd angle", "U3")} and items["odd angle", "U3"]["refs"] == ["U3"]
+    assert checklist() == {}
+
+
+def test_one_part_shown_right_at_an_odd_angle_settles_its_code_and_side(env, capsys):
+    """field: the odd-angle item of a code and side names one part, 'the others are the same part on the same side',
+    yet once that part was recorded right the next checklist named another one of them, once per part: 44 rounds
+    for an LED ring. A verified row of the entry on that side has had its look; a part shown right at a multiple of
+    90 is no look at an odd angle, and the other side is another look."""
+    env.make(*[two(f"R{k}", TOP, 100.0 + 3 * k, 60.0, a, "C1002") for k, a in ((3, 10.0), (4, 20.0), (5, 30.0))],
+             two("R6", BOTTOM, 100.0, 50.0, 40.0, "C1002"))
+    db = env.tmp / "db"
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+
+    def odd():
+        code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+        return {(i["ref"], tuple(i["refs"])) for i in json.loads(out)["checklist"]
+                if "odd angle" in [i["category"]] + i["also"]}
+
+    confirm = ["confirm", env.board, "--db", db, "--by", "ann", "--cpl", env.out, "--source", "preview", *offline(env)]
+    assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
+    assert run(capsys, *confirm, "--ref", "R1")[0] == 0              # the same entry, at 90: no look at an odd angle
+    assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
+    assert run(capsys, *confirm, "--ref", "R5")[0] == 0
+    assert odd() == {("R6", ("R6",)), ("U2", ("U2",))}
 
 
 def test_a_preview_or_board_confirmation_needs_the_uploaded_cpl(env, capsys):
