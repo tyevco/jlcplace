@@ -11,7 +11,8 @@ JLC needs three files that agree with each other: a Gerber zip with the drill fi
 three ways orders go wrong:
 
 * **Two origins.** JLC lines the CPL up with the Gerbers. Gerbers from the page origin with a CPL from the drill/place
-  origin shift every part by the same vector. Export all of them from the drill/place (aux) origin.
+  origin shift every part by the same vector. Export all of them from the drill/place (aux) origin; step 6 checks the
+  CPL against the Gerbers' own origin.
 * **The Y axis.** KiCad's board coordinates, in the file and in the editor's status bar, have Y pointing down. JLC's
   CPL, like the Gerbers, has Y pointing up. A row typed or scripted from KiCad's coordinates has its Y sign wrong.
   kicad-cli's position file and `jlcplace cpl` already flip Y. Never mirror Y in the drill export, and never negate X
