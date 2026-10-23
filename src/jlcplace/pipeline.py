@@ -476,18 +476,27 @@ def _seen(run: Run, res: RowResult) -> str:
     return "board" if "board" in srcs else "preview" if "preview" in srcs else ""
 
 
+def _rotation(v: dict) -> float | None:
+    """The CPL rotation a verification records seeing its row at; None when it records none (older), or a hand-edited
+    one that is no number."""
+    try:
+        a = float(v["rotation"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return a if math.isfinite(a) else None
+
+
 def _seen_at(run: Run, res: RowResult, odd: bool = False) -> bool:
     """`_seen` at the row's angle: a verification that records the rotation of the row it saw ("rotation") counts
     when that is within ANGLE_TOL of the row's (a part turned since was not seen so); one that records none (older)
     counts too. `odd`: as a look at an odd angle for the part's entry (odd_seen): only one that records an odd
     rotation."""
     for v in _looks(run, res):
-        a = v.get("rotation")
+        a = _rotation(v)
         if a is None:
             if not odd:
                 return True
-        elif abs((float(a) - res.row.rotation + 180.0) % 360.0 - 180.0) <= ANGLE_TOL and (
-                not odd or _off90(float(a)) > 1e-6):
+        elif abs((a - res.row.rotation + 180.0) % 360.0 - 180.0) <= ANGLE_TOL and (not odd or _off90(a) > 1e-6):
             return True
     return False
 
