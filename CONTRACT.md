@@ -404,6 +404,7 @@ def jlc_part(board, ref) -> Part | None   # the part JLC places for a ref: first
 def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so;
                                                    # without the record, one it judged non-polar is judged with its
                                                    # entry's EasyEDA title (corr.ee_title: BI, a crystal's)
+def unsimulated_off(part, row, origin, *, outside=False, corr=None) -> tuple[float, str] | None
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
   `convention.ee_to_board`, then to the library frame, then onto the copper pad containing it (`LAND_TOL` 1e-3
@@ -432,7 +433,11 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   pads) and, for such a red one, where its row point lies: "; the row point is the centre of its courtyard" (within
   BODY_TOL), "; the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of its courtyard: JLC places a part
   by its centre" (with no body drawn, a pin only when `parts.off_centre_pin` names it), or "...is D mm from the centre
-  of its courtyard" ("fabrication-layer drawing" for a fab body).
+  of its courtyard" ("fabrication-layer drawing" for a fab body). `unsimulated_off` (for `confirm`): such a row's
+  point so far off the part that JLC cannot have put a part that came out right there, as (mm, what it is off):
+  off its pads' box (+0.1 mm) where the check calls the row red for that ("the part's pads"), off that box and its
+  body's both ("the part's pads and its courtyard"), or off its pads and `outside` the board outline; else None (a
+  part's centre may lie off its pads, a right-angle connector's, but not off its body).
   Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
@@ -736,9 +741,15 @@ def origin_lines(run) -> list[(verdict, text)]
   --source manual|preview|board [--cpl UPLOADED [--units] [--gerbers G]] [--failed] [--note] [--space/--right/--up N]
   [--rot --dx --dy]` (preview and board need --cpl or --rot, presses need --cpl; each ref's row, moved by the presses,
   read from --origin, or with --gerbers from the Gerbers' (0, 0) as `jlc_origin` gives it (none, or --origin given too:
-  bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper is bad input (read
-  from another origin than the CPL's: --gerbers or --origin); refs of one entry must agree on it, a reference two
-  placed parts carry is refused, the part's
+  bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper, or for a part
+  without EasyEDA pads its point off the part (`check.unsimulated_off`: off its pads where check calls the row red for
+  that, off its pads and its body, or off its pads and outside Edge.Cuts), is bad input: usually read from another
+  origin than the CPL's (the message names --gerbers when not given, --origin when neither is), or, within
+  `cli.NEAR_MM` (5 mm) of the part or read from the Gerbers' (0, 0), a row JLC moved (nothing to record; with presses,
+  check their signs); for a bottom part it names another reading that lands most of its EasyEDA pads (pass the same
+  --reading), else says one may; a --failed row is not tested so, but its refusal as not the stored correction's adds,
+  for a row read from --origin that is off so, more than NEAR_MM away, that the rows may be read from another origin;
+  refs of one entry must agree on it, a reference two placed parts carry is refused, the part's
   EasyEDA record must be at hand (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they
   were verified with; EasyEDA's own not-found answer gives an entry with no EasyEDA key), and everything is checked
   before anything is written; a part whose entry is then verified wrong gets a line saying that `check --db` holds its

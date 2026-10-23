@@ -34,8 +34,8 @@ from pathlib import Path
 
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
-from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row, failure_text
-from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
+from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row, failure_text, unsimulated_off
+from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, cpl_to_board, norm_angle, row_correction
 from .cpl import atomic_write, jlc_places, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
@@ -674,6 +674,55 @@ def _uploaded_row(rows, part, path: str):
     return mine[0]
 
 
+NEAR_MM = 5.0             # a row seen right this close to its part was moved by JLC; one further off is usually
+                          # read from another origin than the CPL's (a wrong origin puts it tens of mm off)
+
+
+def _seen_off(part, ee, seen: CplRow, uploaded: Correction, board, rings) -> tuple[str, float] | None:
+    """Why a row cannot be where a part that came out right was, and how far off it is: every EasyEDA pad off copper
+    (the nearest one's distance from a KiCad pad centre), or, without EasyEDA pads, its point off the part
+    (check.unsimulated_off: the board outline's `rings` say whether it is outside it); None when it can be."""
+    if isinstance(ee, EEFootprint) and ee.pads:
+        lands = ee_landings(part, ee, uploaded)
+        if all(lnd.kicad_number is None for lnd in lands):
+            d = min(lnd.dist for lnd in lands)
+            return f"puts every EasyEDA pad off copper (the nearest {d:.2f} mm from a KiCad pad centre)", d
+        return None
+    q = cpl_to_board((seen.x, seen.y), board.origin)
+    off = unsimulated_off(part, seen, board.origin,
+                          outside=bool(rings) and not sum(geom.point_in_polygon(q, r) for r in rings) % 2)
+    return None if off is None else (f"puts the row point {off[0]:.2f} mm off {off[1]}", off[0])
+
+
+def _not_seen_right(args, ref, part, ee, seen: CplRow, board, why: tuple[str, float], pressed: bool) -> str:
+    """confirm's refusal of a row seen right that `_seen_off` rules out, with what applies: a row near its part (or
+    read from the Gerbers' (0, 0), JLC's own origin) is off as `check` reports it, and JLC moved the part; one far off
+    is usually read from another origin. A bottom part's row may be of another --reading: named when one of them
+    lands most of its EasyEDA pads on copper."""
+    moved = " and moved by the presses" if pressed else ""
+    head = f"{ref}: read from {_origin_words(board)}{moved}, the row in {Path(args.cpl).name} {why[0]}, so it is not " \
+           f"what was seen right: "
+    if board.origin_kind == "gerber" or why[1] <= NEAR_MM:
+        out = ("the row itself is off (`jlcplace check` reports it so): if the part came out right, JLC moved it and "
+               "there is nothing to record" + ("; check the presses' signs" if pressed else ""))
+    else:
+        out = ("the rows are usually read from another origin than the CPL's: give the Gerbers it was ordered with "
+               "(--gerbers)" + ("" if args.origin else ", or the origin `jlcplace check` names on its first line "
+                                                       "(--origin)"))
+    if part.layer == BOTTOM and isinstance(ee, EEFootprint) and ee.pads:
+        on = {n: sum(lnd.kicad_number is not None for lnd in ee_landings(
+            part, ee, row_correction(part, seen, board.origin, n))) for n in BOTTOM_READINGS if n != args.reading}
+        best = max(on, key=on.get)
+        n = len(ee.pads)
+        if 2 * on[best] > n:                       # most of them: not a turn that puts a pad or two on copper by chance
+            lands = "every EasyEDA pad" if on[best] == n else f"{on[best]} of its {n} EasyEDA pads"
+            out = (f"the CPL may have been written with --reading {best}, under which the row lands {lands} on "
+                   f"copper: pass the same --reading; otherwise {out}")
+        else:
+            out += "; a bottom part's row may also be of another --reading: pass the one the CPL was written with"
+    return head + out + "; nothing recorded"
+
+
 def _close(a: Correction, b: Correction) -> bool:
     """The same placement as far as a row shows it: within check's ROW_TOL and ANGLE_TOL (a correction's row moves by
     exactly as much as the correction does)."""
@@ -690,7 +739,8 @@ def cmd_confirm(args) -> int:
     _confirm_options(args, pressed)
     rows = _rows(args.cpl, args.units) if args.cpl else None
     cpl_name = Path(args.cpl).name if args.cpl else ""
-    plans = []
+    rings = geom.rings(report.board_outline(args.board) or []) if rows is not None else []
+    plans, off = [], {}
     for ref in dict.fromkeys(args.ref):
         part = _part(board, ref)
         if not part.lcsc:
@@ -713,17 +763,13 @@ def cmd_confirm(args) -> int:
             uploaded = replace(row_correction(part, seen, board.origin, args.reading), method="manual",
                                status="manual", verdict=YELLOW, ee_key=key, kicad_hash=h,
                                reasons=[f"{ROW_REASON} of {ref} in {cpl_name} ({args.source}, {args.by}{how})"])
-            lands = ee_landings(part, ee, uploaded) if isinstance(ee, EEFootprint) and not args.failed else []
-            if lands and all(lnd.kicad_number is None for lnd in lands):
-                # nothing that was seen right puts every pad off copper: the rows are read from another origin than
-                # the CPL's (the Gerbers' (0, 0), when jlcplace cpl --gerbers wrote it), and the correction stored
-                # from them would be that far off
-                moved = " and moved by the presses" if pressed else ""
-                raise BadInput(f"{ref}: read from {_origin_words(board)}{moved}, the row in {cpl_name} puts every "
-                               f"EasyEDA pad off copper (the nearest {min(lnd.dist for lnd in lands):.2f} mm from a "
-                               f"KiCad pad centre), so it is not what was seen right: give the Gerbers it was ordered "
-                               f"with (--gerbers), or the origin `jlcplace check` names on its first line (--origin); "
-                               f"nothing recorded")
+            why = _seen_off(part, ee, seen, uploaded, board, rings)
+            if why is not None and not args.failed:
+                # nothing that was seen right puts every pad off copper, or its point off the part: read from another
+                # origin than the CPL's (the Gerbers' (0, 0), when jlcplace cpl --gerbers wrote it), the correction
+                # stored from it would be that far off; or JLC moved the part
+                raise BadInput(_not_seen_right(args, ref, part, ee, seen, board, why, pressed))
+            off[ref] = why
         stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
         fitted = None
         if (stored is None or stored.status == "stale") and isinstance(ee, EEFootprint):
@@ -746,8 +792,14 @@ def cmd_confirm(args) -> int:
         if _close(base, uploaded):
             continue
         if args.failed:
+            # a row seen wrong may well be off the part; one read from another origin than the CPL's is far off it
+            far = off.get(ref) and off[ref][1] > NEAR_MM and board.origin_kind != "gerber"
+            hint = (f"; read from {_origin_words(board)}, it {off[ref][0]}: the rows may be read from another origin "
+                    f"than the CPL's (give the Gerbers it was ordered with, --gerbers"
+                    + ("" if args.origin else ", or the origin `jlcplace check` names on its first line, --origin")
+                    + ")" if far else "")
             raise BadInput(f"{ref}: the row in {cpl_name} is not the stored correction's ({describe(base)}): its "
-                           f"failure says nothing about that correction; nothing recorded")
+                           f"failure says nothing about that correction{hint}; nothing recorded")
         rank = STATUS_RANK.get(base.status, 0)
         if rank >= STATUS_RANK["preview-verified"] and rank >= STATUS_RANK[SOURCES[args.source]]:
             raise BadInput(f"{ref}: the stored correction is {base.status} with other numbers ({describe(base)}; "
