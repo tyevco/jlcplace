@@ -334,8 +334,16 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
      (the correction follows the names; with KiCad's side named by its library convention the reason says so,
      "KiCad's positive pad 2 by KiCad's library convention (pad 1 = cathode)"), or whose + mark contradicts the names
      where the pad numbers say nothing; the mirror wins (only
-     a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
-     far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA names
+     a mirror lands -> `mirror=True`, never placed; or it is better supported, by numbers that match more pads than
+     they conflict on, and no normal placement gives the same nets, or as well supported and far more exact, while a
+     normal member lands every pad -> that member, refitted over every pad, is the correction, so `cpl --force` and
+     `confirm` can write its row: "numbering mirrored between the libraries (symmetric land pattern): rot R lands every
+     pad on the lands the mirror image of the EasyEDA footprint lands them on by number (N matched, no conflict), but
+     renumbered: EE 1 -> KiCad 3, ...; which numbering is the part's is in its datasheet" when it lands the pads on
+     the lands the mirror image does, within TWIN_RMS of its residual, else "the mirrored fit beats every normal one:
+     mirrored footprint or wrong footprint; the correction is rot R"; a mirror image with numbering conflicts of its
+     own on those lands is no evidence, and the normal members are judged as usual); a pinout that differs: through
+     the chosen member the EasyEDA names
      are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S wires it better
      (permutes no names and agrees with more of them, as check's `_pinout` asks; not for a non-polar two-terminal part,
      nor a polar one whose drawn + the member puts on KiCad's positive pad): reason "pinout differs from the symbol: pad

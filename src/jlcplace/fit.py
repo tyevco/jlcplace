@@ -40,9 +40,15 @@ nets      Two members are equivalent when every EasyEDA pad lands on the same ne
 Decision (Correction.verdict)
 -----------------------------
 red      nothing lands every EasyEDA pad (the best partial transform at a multiple of 90 degrees is returned, so
-         `cpl --force` never writes a tilted compromise); only a mirror image lands, or the mirrored fit is better
-         supported by numbers and names than every normal one and no normal one lands on the same nets, or as well
-         supported and far more exact (mirror=True: never placed); numbering conflicts (a pad on another-numbered land
+         `cpl --force` never writes a tilted compromise); only a mirror image lands (mirror=True: never placed); the
+         mirrored fit is better supported than every normal one, by numbers that match more pads than they conflict
+         on, and no normal one lands on the same nets, or it is as well supported and far more exact, while a normal
+         member lands every pad: that member is the correction (a row `cpl --force` and `confirm` can write), with
+         "numbering mirrored between the libraries (symmetric land pattern)" when it lands the pads on the lands the
+         mirror image does, as exactly (the mirror only renumbers a symmetric pattern: which numbering is the part's
+         is in its datasheet), else "mirrored footprint or wrong footprint" (a mirror image with numbering conflicts
+         of its own on those lands is no evidence: the members are judged as if it did not land); numbering
+         conflicts (a pad on another-numbered land
          of another net, its own number existing in KiCad) that no pin names vouch for; several non-equivalent
          members that neither numbers nor names separate ("ambiguous"); a polar two-terminal part whose pin names
          and pad numbers disagree with no + mark to settle it (in JLC's preview data the names were right 5 times of
@@ -678,22 +684,56 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         corr.score = int(40 * (len(land) - len(off)) / len(land))
         return corr
 
-    # ---- mirror image: better supported (unless a normal placement gives every pad the same net), or as well
-    # supported and far more exact (a nearly collinear pattern lands both ways, but only one fits)
+    # ---- mirror image: better supported by its numbers (more pads on their own number than in conflict, and no
+    # normal placement gives every pad the same net), or as well supported and far more exact (a nearly collinear
+    # pattern lands both ways, but only one fits)
     best_m = min(mirrored, key=_rank) if mirrored else None
     best_n = min(normal, key=_rank) if normal else None
     if best_m is not None and (
             best_n is None
-            or (best_m.evidence > best_n.evidence and not any(f.same_nets(best_m, m) for m in normal))
+            or (best_m.agree > len(best_m.conflicts) and best_m.evidence > best_n.evidence
+                and not any(f.same_nets(best_m, m) for m in normal))
             or (best_m.evidence >= best_n.evidence and best_m.tf.rms + 0.05 < best_n.tf.rms
                 and best_m.tf.rms < 0.5 * best_n.tf.rms)):
-        take(best_m.tf, "number" if best_m.is_nf else "geometry")
-        reasons.append("the mirrored fit beats every normal one: mirrored footprint or wrong footprint" if normal else
-                       "only a mirror image of the EasyEDA footprint lands on the KiCad pads: mirrored footprint or "
-                       "wrong footprint")
-        corr.verdict, corr.matched, corr.score = RED, best_m.agree, 10
-        corr.alternatives = [describe(m, best_m) for m in sorted(normal, key=_rank)][:12]
-        return corr
+        if not normal:
+            take(best_m.tf, "number" if best_m.is_nf else "geometry")
+            reasons.append("only a mirror image of the EasyEDA footprint lands on the KiCad pads: mirrored footprint "
+                           "or wrong footprint")
+            corr.verdict, corr.matched, corr.score = RED, best_m.agree, 10
+            return corr
+        # a normal placement lands every pad too, so JLC can place the part: the correction is a normal one (a row
+        # `cpl --force` and `confirm` can write) and the verdict red. One on the same lands as the mirror image, as
+        # exactly, means a symmetric land pattern that the mirror only renumbers: which numbering is the part's is in
+        # its datasheet. A mirror image with numbering conflicts of its own there says nothing (the numbering
+        # differs): the normal placements are judged as usual, below
+        def snug(m: _Member) -> _Tf:
+            """m fitted over every pad it lands (a number fit's residual is over the numbered pads only)."""
+            return f.canonical(m.tf, m.land)
+
+        same = [m for m in normal if sorted(m.land) == sorted(best_m.land)
+                and snug(m).rms <= snug(best_m).rms + TWIN_RMS]
+        if not (same and best_m.conflicts):
+            chosen = min(same or normal, key=_rank)
+            tf = snug(chosen)
+            deg = f"{norm_angle(tf.a):g}"
+            moved = [f"EE {ee.pads[i].number} -> KiCad {f.label(j)}" for i, (j, k) in
+                     enumerate(zip(chosen.land, best_m.land)) if f.lands[j].numbers != f.lands[k].numbers]
+            if same and moved:
+                reasons.append(f"numbering mirrored between the libraries (symmetric land pattern): rot {deg} lands "
+                               f"every pad on the lands the mirror image of the EasyEDA footprint lands them on by "
+                               f"number ({best_m.agree} matched, no conflict), but renumbered: {', '.join(moved[:6])}"
+                               f"{' ...' if len(moved) > 6 else ''}; which numbering is the part's is in its "
+                               f"datasheet: check it, and record the row with `jlcplace confirm`")
+            else:
+                reasons.append(f"the mirrored fit beats every normal one: mirrored footprint or wrong footprint; the "
+                               f"correction is rot {deg}, which lands every pad too (rms {tf.rms:.3f} mm, the mirror "
+                               f"image {snug(best_m).rms:.3f} mm)")
+            take(tf, "number" if chosen.is_nf and tf is chosen.tf else "geometry")
+            corr.verdict, corr.matched, corr.score = RED, chosen.agree, 10
+            corr.polar = (not nonpolar) if len(f.terminals) == 2 else None
+            corr.alternatives = [describe(m, chosen) for m in sorted(members.values(), key=_rank)
+                                 if m is not chosen][:12]
+            return corr
 
     # ---- choose among the normal members: N is the placement the pad numbers support, if they do so without conflict
     pick = names_pick(normal)

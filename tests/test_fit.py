@@ -18,7 +18,7 @@ from hypothesis import strategies as st
 
 from jlcplace import convention as cv
 from jlcplace import fit, geom
-from jlcplace.model import BOTTOM, GREEN, RED, TOP, YELLOW, EEFootprint, EEPad, Pad, Part
+from jlcplace.model import BOTTOM, GREEN, RED, TOP, YELLOW, Correction, EEFootprint, EEPad, Pad, Part
 
 SCRATCH = Path(os.environ.get("JLCPLACE_TEST_EASYEDA", "/tmp/claude-0/-home-user-dial-me-spinner/"
                               "3708159a-bc3b-5167-8507-f5b08e1ce6c9/scratchpad/jlc"))
@@ -596,15 +596,111 @@ def test_no_pads():
 
 # ------------------------------------------------------------------------------------------------------- mirror, snap
 
-@pytest.mark.parametrize("make,alpha", [(soic8, 0), (soic8, 90), (sot23_6, 180), (qfn16_ep, 37)])
-def test_mirrored_footprint_is_red(make, alpha):
-    pads = make()
+def scalene():
+    """Three pads that no rotation puts on their own mirror image."""
+    return [P("1", 0.0, 0.0, 0.3, 0.3), P("2", 2.0, 0.0, 0.3, 0.3), P("3", 0.0, 1.2, 0.3, 0.3)]
+
+
+def assert_mirror_reported(c, alpha, d):
+    """A mirrored EasyEDA footprint is red. When no normal placement lands every pad the correction is the mirror
+    image (no row); otherwise it is a normal placement, a row `cpl --force` can write, and the mirror image its first
+    alternative."""
+    assert c.verdict == RED and has(c, "mirror"), c.reasons
+    if c.mirror:
+        assert_recovers(c, alpha, d, mirror=True)
+    else:
+        m = c.alternatives[0]
+        assert_recovers(Correction(m["rot"], m["dx"], m["dy"], m["mirror"]), alpha, d, mirror=True)
+
+
+@pytest.mark.parametrize("alpha", [0, 90, 37])
+def test_mirrored_footprint_is_red(alpha):
+    pads = scalene()
     d = (0.25, -0.5)
     c = fit.fit_part(kpart(pads), to_ee(pads, alpha, d, mirror=True))
-    assert c.verdict == RED and c.mirror and has(c, "mirror")
+    assert c.verdict == RED and c.mirror and has(c, "only a mirror image")
     assert_recovers(c, alpha, d, mirror=True)
     with pytest.raises(ValueError):
-        cv.cpl_row_for(kpart(make()), c, (0, 0))
+        cv.cpl_row_for(kpart(scalene()), c, (0, 0))
+
+
+@pytest.mark.parametrize("make,alpha", [(soic8, 0), (soic8, 90), (sot23_6, 180), (qfn16_ep, 37)])
+def test_a_symmetric_land_pattern_numbered_as_its_mirror_image_is_renumbered(make, alpha):
+    """A symmetric land pattern whose EasyEDA numbering is KiCad's mirrored: a normal placement lands every pad on the
+    same lands, so the mirror image only renumbers it. The fit said "mirrored footprint", kept the mirror and wrote
+    no row (`cpl --force` left the part out). Red still (which numbering is the part's is in its datasheet), but the
+    correction is the normal placement."""
+    pads = make()
+    d = (0.25, -0.5)
+    part = kpart(pads)
+    ee = to_ee(pads, alpha, d, mirror=True)
+    c = fit.fit_part(part, ee)
+    assert not c.mirror and has(c, "numbering mirrored between the libraries (symmetric land pattern)"), c.reasons
+    assert_mirror_reported(c, alpha, d)
+    assert all(x.kicad_number is not None for x in fit.ee_landings(part, ee, c))
+    cv.cpl_row_for(part, c, (0, 0))
+
+
+def test_a_potentiometer_numbered_from_the_other_side():
+    """A single-gang vertical trimmer: KiCad's footprint numbers its three pins down a column, the LCSC part's
+    EasyEDA footprint across a row the other way round, and the two mounting pads make the pattern symmetric. Only
+    one normal placement lands it (pins 1 and 3 swapped); the mirror image lands every pin on its own number. The
+    fit called it a mirrored footprint and `cpl --force` left out the row JLC needs."""
+    pads = [P("1", 0.0, 0.0, 1.8, 1.8, shape="circle", kind="tht"),
+            P("2", 0.0, -2.5, 1.8, 1.8, shape="circle", kind="tht"),
+            P("3", 0.0, -5.0, 1.8, 1.8, shape="circle", kind="tht"),
+            P("MP", 7.0, -6.9, 4.4, 4.4, shape="circle", kind="tht", net=""),
+            P("MP", 7.0, 1.9, 4.4, 4.4, shape="circle", kind="tht", net="")]
+    part = kpart(pads, "RV1", footprint="Potentiometer_THT:Potentiometer_Single_Vertical")
+    for p in part.pads:
+        p.net = "" if p.number == "MP" else p.net
+    ee = EEFootprint("C1", "SW-TH_TRIMMER", pads=[
+        EEPad("1", -2.5, 3.5, 1.9, 1.9, shape="ellipse", layer="multi", hole=1.3),
+        EEPad("2", 0.0, 3.5, 1.9, 1.9, shape="ellipse", layer="multi", hole=1.3),
+        EEPad("3", 2.5, 3.5, 1.9, 1.9, shape="ellipse", layer="multi", hole=1.3),
+        EEPad("4", -4.3, -3.5, 2.8, 3.0, shape="oval", layer="multi", hole=2.0),
+        EEPad("5", 4.3, -3.5, 2.8, 3.0, shape="oval", layer="multi", hole=2.0)])
+    c = fit.fit_part(part, ee)
+    assert c.verdict == RED and not c.mirror and has(c, "numbering mirrored"), c.reasons
+    assert (c.rot, c.dx, c.dy) == (270.0, 3.5, -2.5), c
+    assert has(c, "renumbered: EE 1 -> KiCad 3, EE 3 -> KiCad 1;"), c.reasons     # the mounting pads say nothing
+    assert [x.kicad_number for x in fit.ee_landings(part, ee, c)] == ["3", "2", "1", "MP", "MP"]
+    assert c.alternatives[0]["mirror"] and c.alternatives[0]["conflicts"] == 0
+    cv.cpl_row_for(part, c, (0, 0))
+
+
+def test_a_mirror_image_with_more_conflicts_than_matches_is_no_evidence():
+    """A rotary switch whose EasyEDA footprint carries the maker's terminal numbers (1-5 along the row), KiCad's
+    its pole and positions (5, 1, 2, 3, 4): the mirror image puts one pad on its own number and four in conflict,
+    the normal placement five in conflict. The mirror "won" and the part got no row; numbers that conflict more
+    than they match are no evidence, so the normal placement is judged by itself: a numbering conflict."""
+    xs = [0.0, 2.5, 5.0, 7.5, 10.0]
+    pads = ([P(n, x, 0.0, 1.6, 1.6, shape="circle", kind="tht") for n, x in zip("51234", xs)]
+            + [P("MP", -3.0, 4.0, 2.5, 2.5, shape="circle", kind="tht"),
+               P("MP", 13.0, 4.0, 2.5, 2.5, shape="circle", kind="tht")])
+    part = kpart(pads, "SW1", footprint="Rotary_Encoder:SW_Rotary_1x5")
+    ee = EEFootprint("C1", "SW-TH_ROTARY", pads=[EEPad(str(i + 1), x - 5.0, -2.0, 1.8, 1.8, shape="ellipse",
+                                                       layer="multi", hole=1.2) for i, x in enumerate(xs)]
+                     + [EEPad("6", -8.0, 2.0, 2.6, 2.6, shape="ellipse", layer="multi", hole=1.8),
+                        EEPad("7", 8.0, 2.0, 2.6, 2.6, shape="ellipse", layer="multi", hole=1.8)])
+    c = fit.fit_part(part, ee)
+    assert c.verdict == RED and not c.mirror and has(c, "numbering conflict"), c.reasons
+    assert not has(c, "mirror")
+    assert (c.rot, c.dx, c.dy) == (0.0, 5.0, 2.0), c
+    cv.cpl_row_for(part, c, (0, 0))
+
+
+def test_a_mirror_that_beats_a_normal_placement_on_other_lands_keeps_a_row():
+    """Only "mirrored footprint" with no normal placement that lands every pad leaves the part without a row: here
+    the mirror image lands three pads on their own numbers and a normal placement lands them on other lands."""
+    pads = scalene() + [P("4", 2.0, 1.2, 0.3, 0.3)]
+    part = kpart(pads)
+    ee = to_ee(scalene(), 90, (0.25, -0.5), mirror=True)
+    c = fit.fit_part(part, ee)
+    assert not c.mirror and has(c, "the mirrored fit beats every normal one"), c.reasons
+    assert_mirror_reported(c, 90, (0.25, -0.5))
+    assert all(x.kicad_number is not None for x in fit.ee_landings(part, ee, c))
+    cv.cpl_row_for(part, c, (0, 0))
 
 
 def test_symmetric_pattern_is_not_a_mirror():
@@ -681,15 +777,21 @@ def test_property_recovers_any_transform(pads, alpha, dx, dy, mirror, seed):
     kp = list(pads)
     rnd.shuffle(kp)
     c = fit.fit_part(kpart(kp), ee)
+    verdict = c.verdict
+    if mirror:
+        # red; where a normal placement lands every pad too (a symmetric pattern) it is the correction, and the mirror
+        # image its first alternative
+        assert c.verdict == RED and has(c, "mirror"), c.reasons
+        if not c.mirror:
+            a = c.alternatives[0]
+            c = Correction(a["rot"], a["dx"], a["dy"], a["mirror"])
     if snapped % 90 == 0 and adiff(snapped, alpha) > 1e-9:
         alpha = snapped                       # within snap of a multiple of 90: snapped (translation refitted)
         assert c.mirror == mirror and adiff(c.rot, alpha) < 1e-6
     else:
         assert_recovers(c, alpha, (dx, dy), mirror)
-    if mirror:
-        assert c.verdict == RED
-    else:
-        assert c.verdict == (GREEN if c.rot % 90 == 0 else YELLOW), c.reasons
+    if not mirror:
+        assert verdict == (GREEN if c.rot % 90 == 0 else YELLOW), c.reasons
 
 
 # ------------------------------------------------------------------------------------------------------- KiCad library
@@ -797,8 +899,7 @@ def test_library_footprints_mirrored(lib, name, ref, polar):
     part = library_part(lib, name, ref)
     for alpha in (0, 90, 37):
         c = fit.fit_part(part, to_ee(part.pads, alpha, (0.2, -0.4), mirror=True))
-        assert c.verdict == RED and has(c, "mirror"), c.reasons
-        assert_recovers(c, alpha, (0.2, -0.4), mirror=True)
+        assert_mirror_reported(c, alpha, (0.2, -0.4))
 
 
 @pytest.mark.pcbnew

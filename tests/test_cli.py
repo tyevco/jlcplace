@@ -610,6 +610,34 @@ def test_cpl_refuses_rows_nothing_vouches_for(env, capsys):
     assert not Path(env.out).exists()
 
 
+def test_a_symmetric_land_pattern_numbered_as_its_mirror_image_gets_a_row(env, capsys):
+    """field: a trimmer whose EasyEDA footprint numbers its pins the other way round than KiCad's, on a land pattern
+    the mounting pads make symmetric. The fit kept the mirror image ("mirrored footprint"), so `cpl --force` wrote no
+    row for a part JLC assembles. The correction is now the normal placement, which lands every pad: red until
+    someone decides which numbering is the part's, then yellow."""
+    write_records(env, C3001=record([("1", -2.5, 3.5, 1.9, 1.9, 0), ("2", 0.0, 3.5, 1.9, 1.9, 0),
+                                     ("3", 2.5, 3.5, 1.9, 1.9, 0), ("4", -4.3, -3.5, 2.8, 3.0, 0),
+                                     ("5", 4.3, -3.5, 2.8, 3.0, 0)], uuid="trim"))
+    tht = {"shape": "circle", "kind": "tht"}
+    env.make(Part("RV1", TOP, 115.0, 70.0, 0.0, footprint="Potentiometer_THT:Potentiometer_Single_Vertical",
+                  lcsc="C3001", pads=[Pad("1", 0.0, 0.0, 1.8, 1.8, net="CW", **tht),
+                                      Pad("2", 0.0, -2.5, 1.8, 1.8, net="W", **tht),
+                                      Pad("3", 0.0, -5.0, 1.8, 1.8, net="CCW", **tht),
+                                      Pad("MP", 7.0, -6.9, 4.4, 4.4, **tht), Pad("MP", 7.0, 1.9, 4.4, 4.4, **tht)]))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 2 and "RED     RV1" in out and "numbering mirrored" in out and not Path(env.out).exists(), out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force")
+    assert code == 2 and "no row" not in out, out
+    rows = {r.ref: r for r in read_cpl(env.out)}
+    assert rows["RV1"].rotation == 270.0 and (rows["RV1"].x, rows["RV1"].y) == pytest.approx((18.5, 32.5)), rows
+    db = env.tmp / "db"
+    code, out, _ = run(capsys, "confirm", env.board, "--ref", "RV1", "--db", db, "--by", "me", "--source", "manual",
+                       "--note", "pin 1 as the datasheet numbers it", *offline(env))
+    assert code == 0 and "row X 18.5000 Y 32.5000 rot 270" in out, out
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env))
+    assert code == 0 and "YELLOW  RV1" in out and "numbering accepted by the correction (manual)" in out, out
+
+
 def test_rows_of_doubtful_corrections_are_yellow(env, capsys):
     """ee-2: an LED whose polarity only the pad numbers decide (no KiCad pin functions, no + drawn): the row
     jlcplace writes was green and `--fail-on yellow` passed it."""
