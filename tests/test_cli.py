@@ -1254,6 +1254,36 @@ def test_a_verified_bottom_part_settles_the_bottom_reading(env, capsys):
     assert checklist() == {}
 
 
+def test_a_bottom_part_seen_right_at_another_rotation_rules_out_no_reading(env, capsys):
+    """field: a bottom part shown right from a CPL written with --reading ccw-from-top rules out the readings under
+    which that row would have moved. The next CPL, written at jlc-2022 rows from the same database, turns it to
+    another rotation, and its check counted the look as ruling out ccw-from-top too: no bottom-reading item was left,
+    for the reading the preview had disproved. A verification rules out readings at the rotation it records; an older
+    one that records none counts as of the row checked."""
+    env.make(sot("U4", BOTTOM, 125.0, 60.0, 0.0))
+    db = env.tmp / "db"
+    ccw = env.tmp / "ccw.csv"
+    run(capsys, "cpl", env.board, "-o", ccw, "--reading", "ccw-from-top", *offline(env))
+
+    def checklist(cpl, *extra):
+        code, out, _ = run(capsys, "check", env.board, cpl, "--db", db, *offline(env), "--json", "-", *extra)
+        return {(i["category"], i["ref"]): i for i in json.loads(out)["checklist"]}
+
+    assert run(capsys, "confirm", env.board, "--db", db, "--by", "ann", "--cpl", ccw, "--source", "preview", "--ref",
+               "U2", "--reading", "ccw-from-top", *offline(env))[0] == 0
+    assert checklist(ccw, "--reading", "ccw-from-top") == {}        # seen at its row's 30: every other reading goes
+    assert run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))[0] == 0
+    assert {r.ref: r.rotation for r in read_cpl(env.out)}["U2"] == 330.0
+    items = checklist(env.out)
+    assert set(items) == {("bottom reading", "U2"), ("bottom reading", "U4")} and items["bottom reading", "U2"]["first"]
+    assert "as ccw-from-top or ccw-from-top+180, pin 1 would land off copper" in items["bottom reading", "U2"]["what"]
+    assert "ruled out" not in items["bottom reading", "U4"]["what"]
+    doc = json.loads((db / "C1001.json").read_text(encoding="utf-8"))
+    del doc["entries"][0]["verifications"][0]["rotation"]
+    (db / "C1001.json").write_text(json.dumps(doc), encoding="utf-8")
+    assert checklist(env.out) == {}
+
+
 def test_one_part_shown_right_at_an_odd_angle_settles_its_code_and_side(env, capsys):
     """field: the odd-angle item of a code and side names one part, 'the others are the same part on the same side',
     yet once that part was recorded right the next checklist named another one of them, once per part: 44 rounds
