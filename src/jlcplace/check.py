@@ -120,13 +120,16 @@ def _not_harmless(part: Part) -> str:
     return f"not a two-pad non-polar part ({len(pads)} copper pad{'' if len(pads) == 1 else 's'})"
 
 
-def _off_part(part: Part, row: CplRow, origin, body: bool = False) -> float | None:
+def _off_part(part: Part, row: CplRow, origin, body: bool = False, anchor: bool = False) -> float | None:
     """How far the row's point lies outside the part's copper (its pads' bounding box grown by UNSIM_MARGIN), in mm;
-    None when it is on the part. `body`: outside the box of its copper and its body (Part.body) both."""
+    None when it is on the part. `body`: outside the box of its copper and its body (Part.body) both; `anchor`: of
+    its copper and KiCad's anchor (the library origin) both."""
     l = board_to_library(part, cpl_to_board((row.x, row.y), origin))
     pts = [q for p in part.copper_pads() for q in geom.pad_outline(p)]
     if body and part.body:
         pts += [part.body[:2], part.body[2:]]
+    if anchor and pts:
+        pts.append((0.0, 0.0))
     if not pts:
         return None
     x0, y0 = min(q[0] for q in pts) - UNSIM_MARGIN, min(q[1] for q in pts) - UNSIM_MARGIN
@@ -140,9 +143,10 @@ def unsimulated_off(part: Part, row: CplRow, origin, *, outside: bool = False, n
     """For a part without EasyEDA pads, where its row point lies off the part so far that JLC cannot have put the
     part right there: (mm, what it is off) when check calls the row red for it (a two-pad non-polar part off its
     pads), when it is off its pads and its body both, or, for a part without a body, off its pads and `outside` the
-    board outline or further off them than `near` and the diagonal of their box both; else None. JLC places a part
-    by its centre, which may lie off its pads (a right-angle connector) but on its body, and beyond the board's edge
-    (an edge-mount connector, whose body overhangs it)."""
+    board outline or further off them and KiCad's anchor than `near` and the diagonal of their box both; else None.
+    JLC places a part by its centre, which may lie off its pads (a right-angle connector) but on its body, and beyond
+    the board's edge (an edge-mount connector, whose body overhangs it); without a body, cpl's row is the anchor,
+    which may lie off its pads too (a module's centre, its header along one edge)."""
     far = _off_part(part, row, origin)
     if far is None:
         return None
@@ -155,10 +159,12 @@ def unsimulated_off(part: Part, row: CplRow, origin, *, outside: bool = False, n
         return None
     if outside:
         return far, "the part's pads, outside the board outline"
-    # no outline to test against (a snapshot board), or one a wrong origin lands inside: off by more than the part
+    # no outline to test against (a snapshot board), or one a wrong origin lands inside: off by more than the part,
+    # and off its anchor too
     pts = [q for p in part.copper_pads() for q in geom.pad_outline(p)]
     span = math.hypot(max(q[0] for q in pts) - min(q[0] for q in pts), max(q[1] for q in pts) - min(q[1] for q in pts))
-    return (far, "the part's pads") if near is not None and far > max(near, span) else None
+    off = _off_part(part, row, origin, anchor=True) if near is not None else None
+    return (far, "the part's pads") if off is not None and off > max(near, span) else None
 
 
 def _row_point(part: Part, row: CplRow, origin) -> str:

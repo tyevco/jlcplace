@@ -438,8 +438,10 @@ def unsimulated_off(part, row, origin, *, outside=False, near=None, corr=None) -
   point so far off the part that JLC cannot have put a part that came out right there, as (mm, what it is off):
   off its pads' box (+0.1 mm) where the check calls the row red for that ("the part's pads"), off that box and its
   body's both ("the part's pads and its courtyard"), or, with no body, off its pads and `outside` the board outline
-  or further off them than `near` and the diagonal of their box both (no outline at hand, or one a wrong origin lands
-  inside); else None (a part's centre may lie off its pads, a right-angle connector's, but not off its body).
+  or further off them and KiCad's anchor than `near` and the diagonal of their box both (no outline at hand, or one a
+  wrong origin lands inside; without a body, cpl's row is the anchor, which may lie off the pads: a module's centre, its
+  header along one edge); else None (a part's centre may lie off its pads, a right-angle connector's, but not off its
+  body).
   Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
@@ -750,14 +752,14 @@ def origin_lines(run) -> list[(verdict, text)]
   read from --origin, or with --gerbers from the Gerbers' (0, 0) as `jlc_origin` gives it (none, or --origin given too:
   bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper, or for a part
   without EasyEDA pads its point off the part (`check.unsimulated_off`: off its pads where check calls the row red for
-  that, off its pads and its body, or, without a body, off its pads and outside Edge.Cuts, or further off them than
-  `cli.NEAR_MM` (5 mm) and their box's diagonal: a body may overhang the board's edge), is bad input: usually read
-  from another origin than the CPL's, or, for a bottom part, another bottom reading (the message names --gerbers when
-  not given, --origin when neither is), or, within NEAR_MM of the part or read from the Gerbers' (0, 0), a row JLC
-  moved (nothing to record), or one the
-  presses moved off (whether it is on the part without them is said: they are wrong, confirm again with those made);
-  for a bottom part it names another reading that lands most of its EasyEDA pads (the one landing the most on the KiCad
-  pads of their own numbers, then on copper; readings still tied are all named: pass the one the CPL was written with),
+  that, off its pads and its body, or, without a body, off its pads and outside Edge.Cuts, or further off them and its
+  anchor than `cli.NEAR_MM` (5 mm) and their box's diagonal: a body may overhang the board's edge), is bad input:
+  usually read from another origin than the CPL's, or, for a bottom part, another bottom reading (the message names
+  --gerbers when not given, --origin when neither is), or, within NEAR_MM of the part or read from the Gerbers' (0, 0),
+  a row JLC moved (nothing to record), or one the presses moved off (whether it is on the part without them is said:
+  they are wrong, confirm again with those made); for a bottom part it names another reading that lands most of its
+  EasyEDA pads (the one landing the most on the KiCad pads of their own numbers, then on copper; readings still tied are
+  all named: pass the one the CPL was written with),
   else says one may; a --failed row is not tested so, but for a row read from --origin that is off so, more than
   NEAR_MM away, its refusal as not the stored correction's adds that the rows may be read from another origin, and a
   part with no EasyEDA footprint and no stored correction (its failure would store that row as its correction) is
