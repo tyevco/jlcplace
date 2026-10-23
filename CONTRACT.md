@@ -533,8 +533,10 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
   one only while the entry still gives its "verification failed (...)" reason); `Correction.failure` = the latest of
   them when it failed (verified wrong), and then the verdict is red.
 * `upsert`: the same numbers keep the stored status, verifications and verified verdict, and a failure of those
-  numbers (verdict red, its "verification failed" reason): a refit does not make them right; different numbers never
-  replace a stronger status (ValueError).
+  numbers (verdict red, its "verification failed" reason): a refit does not make them right, nor does an "auto" one
+  within the check's offset limits of numbers verified wrong (check.OFFSET_FLOOR, OFFSET_ANGLE, same mirror: the same
+  placement, whose row the check holds red), which keeps them; different numbers never replace a stronger status
+  (ValueError).
 * `confirm`: ok=True raises the status to the source's; board/preview make the verdict VERIFIED; a red entry
   confirmed manually becomes yellow with the reason "accepted manually (by): note". ok=False: status auto, verdict
   red, verified wrong (`failure`) until other numbers replace the entry's or a later verification of them is ok;

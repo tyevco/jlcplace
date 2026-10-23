@@ -166,7 +166,8 @@ footprint makes it stale. A verification records the numbers it was of. After `-
 stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at the wrong corner)"),
 for every part that shares its entry, and `cpl --db` writes no CPL with it unless `--force`, until the correction is
 fixed (the presses that put the part right, or `--rot --dx --dy`) and confirmed again, or a later verification of the
-same row goes right; a refit of the same numbers does not clear it.
+same row goes right; a refit of the same numbers, or of numbers within 0.15 mm and 2 degrees of them, does not clear
+it.
 
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
