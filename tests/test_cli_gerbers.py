@@ -622,15 +622,16 @@ def test_confirm_takes_the_row_of_a_part_whose_body_overhangs_the_board_edge(env
 MODULE_PADS = [((i - 1.5) * 2.54, 12.0) for i in range(4)]
 MODULE = """  (footprint "Custom:Display_Module_Test" (layer "F.Cu") (at {x} {y} 0)
     (property "Reference" "{ref}") (property "LCSC" "C1003")
-""" + "\n".join(f'    (pad "{i + 1}" smd rect (at {x:g} {y:g}) (size 1.2 2) (layers "F.Cu" "F.Paste" "F.Mask") (net 0 ""))'
-                for i, (x, y) in enumerate(MODULE_PADS)) + ")"
+""" + "\n".join(f'    (pad "{i + 1}" smd rect (at {x:g} {y:g}) (size 1.2 2) (layers "F.Cu" "F.Paste" "F.Mask") '
+                '(net 0 ""))' for i, (x, y) in enumerate(MODULE_PADS)) + ")"
 
 
 def module(ref="M1", x=115.0, y=60.0) -> Part:
     """A made-up display module with no body drawn: KiCad's anchor is its centre, its header's four pads along one
     edge 12 mm away (MODULE, as a .kicad_pcb has it)."""
     return Part(ref, TOP, x, y, 0.0, footprint="Custom:Display_Module_Test", lcsc="C1003",
-                pads=[Pad(str(i + 1), px, py, 1.2, 2.0, net=f"{ref}_{i + 1}") for i, (px, py) in enumerate(MODULE_PADS)])
+                pads=[Pad(str(i + 1), px, py, 1.2, 2.0, net=f"{ref}_{i + 1}")
+                      for i, (px, py) in enumerate(MODULE_PADS)])
 
 
 def test_confirm_refuses_a_far_off_row_of_a_part_without_a_body_or_an_outline(env, capsys):  # noqa: F811
@@ -654,8 +655,8 @@ def test_confirm_refuses_a_far_off_row_of_a_part_without_a_body_or_an_outline(en
             f"its first line (--origin); nothing recorded"), err
     code, out, err = run(capsys, *confirm, "--ref", "J1", "--ref", "D9", "--ref", "M1", "--cpl", env.out)
     assert code == 0 and out.startswith("J1 C1003: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
-    for line, ref in zip(out.splitlines()[1:], ("D9", "M1")):
-        assert line.startswith(f"{ref} C1003: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
+    for i, ref in enumerate(("D9", "M1"), 1):
+        assert lines(out)[i].startswith(f"{ref} C1003: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
     from test_cli import OUTLINED
     path = env.tmp / "module.kicad_pcb"
     path.write_text(OUTLINED.format(parts=MODULE.format(ref="M1", x=110, y=86)), encoding="utf-8")
