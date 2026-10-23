@@ -245,6 +245,27 @@ def test_a_failed_verification_holds_until_the_numbers_are_fixed_or_found_right(
         assert (got.failure is not None, got.verdict) == (failed, RED if failed else GREEN)
 
 
+def test_a_refit_close_to_numbers_verified_wrong_keeps_them_red(db):
+    """confirm stored an uploaded row's numbers, 0.08 mm off the fit's; the assembled board showed them wrong, and `fit
+    --db` stored the fit's: other numbers, so the failure no longer counted and the row the board showed wrong was
+    green again. A refit within the check's offset limits of numbers verified wrong is the same placement."""
+    keys = {"ee_key": "uuid1:100", "kicad_hash": "sha1:aaaa"}
+    db.upsert("C1", corr(dy=-0.12, status="manual", verdict=YELLOW))     # an uploaded row, 0.08 mm from the fit's
+    db.confirm("C1", **keys, by="ann", source="board", ok=False, note="reversed")
+    for refit in (corr(), corr(rot=91.5, dx=0.0)):                       # the fit's dy -0.2, or 1.5 deg and 0.13 mm
+        db.upsert("C1", refit)
+        got = db.lookup("C1", **keys)
+        assert (got.rot, got.dx, got.dy, got.verdict) == (90.0, 0.1, -0.12, RED), got
+        assert got.failure is not None and got.reasons[-1] == "verification failed (board, ann): reversed"
+    db.upsert("C1", corr(rot=270.0))                                     # another placement replaces them
+    got = db.lookup("C1", **keys)
+    assert (got.rot, got.verdict, got.failure) == (270.0, GREEN, None)
+    db.confirm("C1", **keys, by="ann", source="board", ok=False)
+    db.upsert("C1", corr(rot=270.0, dy=-0.1, status="manual", verdict=YELLOW))   # typed in: it replaces them
+    got = db.lookup("C1", **keys)
+    assert (got.dy, got.verdict, got.failure) == (-0.1, YELLOW, None)
+
+
 def test_manual_confirmation_of_a_red_fit(db):
     """A fit that cannot decide (a switch's internal pairs) is red; a person's manual confirmation makes it yellow,
     not verified: only JLC's preview or the assembled board does that."""

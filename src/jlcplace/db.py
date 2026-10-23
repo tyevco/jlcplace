@@ -17,8 +17,8 @@ was right), manual (typed in), auto (fitted). A verification is of the row that 
 in JLC's preview to put the part right; they move the uploaded row (presses_to_row, Fabrication-Toolkit's convention,
 derived at presses_to_correction), and the correction is the moved row's. A verification records the numbers it
 was of: when the latest one of the entry's numbers failed (`confirm --failed`), they were verified wrong, and the
-entry stays red, through refits that give the same numbers, until other numbers replace them or a later verification
-finds them right (Correction.failure).
+entry stays red, through refits that give the same numbers or numbers within the check's offset limits of them (the
+same placement), until other numbers replace them or a later verification finds them right (Correction.failure).
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+from .check import OFFSET_ANGLE, OFFSET_FLOOR
 from .convention import norm_angle, rot
 from .cpl import atomic_write
 from .model import BOTTOM, RED, VERIFIED, YELLOW, Correction, CplRow, Part
@@ -81,6 +82,14 @@ def _scalars(d: dict) -> dict:
 def _same(a: dict, b: dict) -> bool:
     da = abs((a["rot"] - b["rot"] + 180.0) % 360.0 - 180.0)
     return (da <= _SAME_ROT and abs(a["dx"] - b["dx"]) <= _SAME_MM and abs(a["dy"] - b["dy"]) <= _SAME_MM
+            and bool(a.get("mirror")) == bool(b.get("mirror")))
+
+
+def _near(a: dict, b: dict) -> bool:
+    """Within the check's offset limits of each other (check.OFFSET_FLOOR, OFFSET_ANGLE): one placement, whose row the
+    check holds red when either was verified wrong."""
+    da = abs((a["rot"] - b["rot"] + 180.0) % 360.0 - 180.0)
+    return (da <= OFFSET_ANGLE and math.hypot(a["dx"] - b["dx"], a["dy"] - b["dy"]) <= OFFSET_FLOOR
             and bool(a.get("mirror")) == bool(b.get("mirror")))
 
 
@@ -213,8 +222,9 @@ class CorrectionDB:
                ) -> None:
         """Store a fitted or typed-in correction under (corr.ee_key, corr.kicad_hash). Re-storing the same numbers
         refreshes the fit and keeps the status and verifications (and a failed verification of those numbers, with
-        its red verdict and reason); different numbers replace the entry's correction, but never one with a stronger
-        status (ValueError: confirm or edit the file instead)."""
+        its red verdict and reason); so does a fit within the check's offset limits of numbers verified wrong (_near:
+        the same placement). Different numbers replace the entry's correction, but never one with a stronger status
+        (ValueError: confirm or edit the file instead)."""
         if corr.status not in STATUS_RANK:
             raise ValueError(f"{code}: cannot store a correction with status {corr.status!r}")
         doc = self._load(code)
@@ -227,6 +237,11 @@ class CorrectionDB:
             doc["entries"].append(new)
         else:
             rank_old, rank_new = STATUS_RANK.get(old.get("status", "auto"), 0), STATUS_RANK[corr.status]
+            if corr.status == "auto" and _to_correction(old).failure is not None \
+                    and _near(old["correction"], new["correction"]):
+                # a refit of practically the numbers verified wrong (an uploaded row's, a micron off): the check holds
+                # that placement red, and so does the entry; typed-in numbers or a confirm replace them
+                new["correction"] = dict(old["correction"])
             if _same(old["correction"], new["correction"]):
                 new["status"] = old["status"] if rank_old > rank_new else corr.status
                 if STATUS_RANK.get(new["status"], 0) >= STATUS_RANK["preview-verified"]:
