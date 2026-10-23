@@ -458,7 +458,9 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   position file leaves it out)"). JLC never sees KiCad's attributes and places what its BOM and CPL list:
   `cpl.jlc_places(part, bom_refs, cpl_refs)` = not DNP, not board-only, and `cpl.assembled(part)` (placed and not
   exclude_bom), or listed by `bom_refs` (the designators a JLC BOM lists; None: no BOM), or, with no BOM, only
-  exclude_pos and listed by the CPL's rows. A reference that more than one part
+  exclude_pos and listed by the CPL's rows; never a part that is not assembled whose reference an assembled part
+  carries (`taken` = `cpl.assembled_refs(board)`: an alternate footprint, as KiCad 6, which had no DNP attribute,
+  marked them; the BOM line and the row are the assembled part's). A reference that more than one part
   JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
   it, or one result when it has none, and never simulated against either part (a row of a reference whose other
   parts JLC does not place is checked against the placed one). Rows for refs not on the board
@@ -480,7 +482,8 @@ def read_cpl(path, *, units="mm") -> list[CplRow]
 def write_cpl(path, rows: list[CplRow])
 def read_bom(path) -> list[dict]       # designators, lcsc (normalised when valid, else raw), comment, footprint, qty
 def rows_for_board(board, corrections, reading="jlc-2022", *, bom_refs=None) -> tuple[list[CplRow], list[str]]
-def assembled(part) -> bool; def jlc_places(part, bom_refs=None, cpl_refs=None) -> bool
+def assembled(part) -> bool; def jlc_places(part, bom_refs=None, cpl_refs=None, taken=()) -> bool
+def assembled_refs(board) -> set[str]  # the references of its assembled parts: jlc_places' `taken`
 def correction_for(corrections, part) -> Correction | None; def natural_key(ref)
 def atomic_write(path, text)           # temp file + rename; keeps an existing file's mode, else 0666 less the umask
 ```
@@ -495,8 +498,9 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
 * `atomic_write` creates its temporary file with mode 0666 (the kernel applies the umask; the umask is never read,
   since reading it means setting it, process-wide) and gives it an existing file's mode before the rename.
 * `read_cpl` and `read_bom` raise ValueError (with the line) for a designator `model.ref_problem` refuses.
-* `rows_for_board`: rows for the parts JLC places (`jlc_places(part, bom_refs)`: assembled, or listed by the BOM)
-  with a code; refs without a correction or with a mirrored one are returned as missing. Both sorted naturally.
+* `rows_for_board`: rows for the parts JLC places (`jlc_places(part, bom_refs, taken=assembled_refs(board))`:
+  assembled, or listed by the BOM and no alternate footprint of an assembled part) with a code; refs without a
+  correction or with a mirrored one are returned as missing. Both sorted naturally.
 
 ## db.py — the shared correction database (one JSON file per code, safe to keep in git)
 
@@ -591,9 +595,10 @@ def origin_lines(run) -> list[(verdict, text)]
   its BOM line's code (JLC assembles from the BOM; every part with the reference, so a DNP alternate footprint
   listed first does not keep it from the placed one): `apply_bom_codes` returns the references whose board code it
   replaced (the code of the part JLC places, `check.jlc_part`), `bom_overrides` makes their BOM messages.
-  `resolve` resolves the parts `cpl.jlc_places` names: with `bom_rows`, also the parts the board excludes from its
-  BOM or its position files that the BOM lists (`bom_listed`; `bom_refs(bom_rows)` = the BOM's designators), with
-  `cpl_refs` (the CPL's references, `check`) the parts only excluded from the position files that the CPL lists;
+  `resolve` resolves the parts `cpl.jlc_places` names (with `taken`: of a reference, the assembled part): with
+  `bom_rows`, also the parts the board excludes from its BOM or its position files that the BOM lists (`bom_listed`;
+  `bom_refs(bom_rows)` = the BOM's designators), with `cpl_refs` (the CPL's references, `check`) the parts only
+  excluded from the position files that the CPL lists;
   `check` simulates their rows. `cpl --bom` resolves and writes (`cpl.rows_for_board(..., bom_refs=)`) the parts the
   BOM lists; `fetch BOARD` and `fit BOARD` take the parts a CPL can get placed (assembled, or only exclude_pos).
 * Common offset. Where a row belongs (cpl frame): `cpl_row_for(part, corr)` with a non-mirror correction, else the

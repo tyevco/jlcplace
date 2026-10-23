@@ -33,7 +33,7 @@ import numpy as np
 from . import geom
 from .check import check_cpl, check_row, jlc_part, listed_note, nonpolar
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, cpl_to_board, rot
-from .cpl import UNITS, assembled, jlc_places, natural_key, read_text
+from .cpl import UNITS, assembled, assembled_refs, jlc_places, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
@@ -266,12 +266,12 @@ def resolve(board: Board, client, db=None, *, refs=None, snap: float = 0.5, use_
     or its BOM that the JLC BOM (`bom_rows`) lists or, with no BOM, the CPL's rows (`cpl_refs`) list where only the
     position files exclude them (cpl.jlc_places: JLC places what its BOM and CPL list)."""
     want = set(refs) if refs else None
-    listed = bom_refs(bom_rows)
+    listed, taken = bom_refs(bom_rows), assembled_refs(board)
     ees: dict[str, EEFootprint | NotFound] = {}
     out: dict[str, Resolved] = {}
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
         if not part.lcsc or (want is not None and part.ref not in want) or (
-                want is None and not jlc_places(part, listed, cpl_refs)):
+                want is None and not jlc_places(part, listed, cpl_refs, taken)):
             continue
         if part.ref in out:
             # a second part with this reference (check reports it, "duplicate-ref"): it must not replace the first

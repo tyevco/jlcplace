@@ -58,7 +58,7 @@ from collections import Counter
 from . import geom
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_library, cpl_row_for, cpl_to_board, ee_to_board, \
     ee_to_library
-from .cpl import assembled, correction_for, jlc_places, natural_key
+from .cpl import assembled, assembled_refs, correction_for, jlc_places, natural_key
 from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
@@ -653,8 +653,9 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
     count = Counter(r.ref for r in rows)
     cache: dict[str, object] = {}
     placed: dict[str, list[Part]] = {}           # the parts JLC places, by reference
+    taken = assembled_refs(board)                # an excluded part with one of these is an alternate footprint
     for p in board.parts:
-        if jlc_places(p, bom_refs, count):
+        if jlc_places(p, bom_refs, count, taken):
             placed.setdefault(p.ref, []).append(p)
     shared = {ref: ps for ref, ps in placed.items() if len(ps) > 1}
 
@@ -682,7 +683,7 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
             out.append(RowResult(row.ref, status="not-on-board", verdict=RED, row=row,
                                  messages=[f"{row.ref} is not on the board"]))
             continue
-        listed = not assembled(part) and jlc_places(part, bom_refs, count)
+        listed = not assembled(part) and jlc_places(part, bom_refs, count, taken)
         if not assembled(part) and not listed:
             flags = [n for n, f in (("DNP", part.dnp), ("excluded from position files", part.exclude_pos),
                                     ("board-only", part.board_only), ("excluded from the BOM", part.exclude_bom)) if f]
@@ -708,7 +709,7 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
         out.append(res)
     reported = set()
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
-        if jlc_places(part, bom_refs) and part.lcsc and part.ref not in count:
+        if jlc_places(part, bom_refs, taken=taken) and part.lcsc and part.ref not in count:
             if part.ref in shared:
                 if part.ref not in reported:
                     reported.add(part.ref)
