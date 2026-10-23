@@ -21,9 +21,11 @@ functions, and the EasyEDA record's title, part categories and pin names.
 A known correction also overrules the numbers the other way: a row that lands every pad on its own number but on
 other nets than the correction does is red against a verified correction, red for a polar two-terminal part (its
 polarity the fit took from pin names or a drawn + against the numbers: the row reverses it) and yellow against a
-fitted one otherwise. The numbers decide a row only when most of the EasyEDA pads whose number KiCad has (EVIDENCE)
-land on it: when they do not (KiCad's K / A against EasyEDA's 1 / 2, BGA letters against digits), a row that differs
-from the correction is red, and so is any row when the correction is red, since nothing vouches for it.
+fitted one otherwise. A polar two-terminal part turned the other way round than a correction that is not red puts
+it, by its numbers or not, is "reversed" (red). The numbers decide a row only when most of the EasyEDA pads whose
+number KiCad has (EVIDENCE) land on it: when they do not (KiCad's K / A against EasyEDA's 1 / 2, BGA letters against
+digits), a row that differs from the correction is red, and so is any row when the correction is red, since nothing
+vouches for it.
 A row that lands the pads as a fitted correction does whose choice among several placements is in doubt
 (Correction.doubt: a polarity only the pad numbers decide, an orientation the pads do not fix) is yellow. A row that
 lands every pad on its own pad but sits off where a (not red) correction puts the part is yellow ("offset").
@@ -202,19 +204,21 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     bottom reading, False = none, or an iterable of reading names.
 
     Status / verdict: off-copper red; wrong-pad red (by number), or, when the pads land by number on other nets than
-    the correction gives them, red against a verified correction, for a polar two-terminal part, or when the
-    numbers do not decide the row, and yellow against a fitted one otherwise; renumbered
-    (harmless) green, or the correction's verdict when the correction is what accepts it. Against a red correction
-    the pad numbers must decide the row: red when fewer than EVIDENCE of the EasyEDA pads whose number KiCad has land
-    on it (nothing vouches for the placement), and red for a polar two-terminal part whose pads land otherwise than
-    the correction puts them (its polarity needs a decision). A row that lands the pads as a fitted correction does
-    whose choice of placement is uncertain (`corr.doubt`) is yellow. KiCad soldered pads no EasyEDA pad lands on:
-    yellow (`uncovered`; vias and stubs of a covered pin excepted). not-simulated (no EasyEDA footprint): yellow for a
-    non-polar two-pad part whose row point is on it, red otherwise. A row that matches the expected row of a verified
-    correction and has no issue is VERIFIED. A row more than ROW_TOL / ANGLE_TOL from the expected row gets a
-    message; more than OFFSET_FLOOR mm and OFFSET_PAD of the smallest pad it lands on, or OFFSET_ANGLE degrees, from
-    that of a correction that is not red, it is yellow ("offset"). With every pad on copper, pin names that the row
-    permutes beyond what any known placement fixes are red ("pinout"), and other name differences yellow (_pinout)."""
+    the correction gives them, red against a verified correction or when the numbers do not decide the row, and
+    yellow against a fitted one otherwise; reversed red: a polar two-terminal part the other way round than a
+    correction that is not red puts it (its two terminals exchanged, whether the row follows the numbers or not);
+    renumbered (harmless) green, or the correction's verdict when the correction is what accepts it. Against a red
+    correction the pad numbers must decide the row: red when fewer than EVIDENCE of the EasyEDA pads whose number
+    KiCad has land on it (nothing vouches for the placement), and red for a polar two-terminal part whose pads land
+    otherwise than the correction puts them (its polarity needs a decision). A row that lands the pads as a fitted
+    correction does whose choice of placement is uncertain (`corr.doubt`) is yellow. KiCad soldered pads no EasyEDA
+    pad lands on: yellow (`uncovered`; vias and stubs of a covered pin excepted). not-simulated (no EasyEDA
+    footprint): yellow for a non-polar two-pad part whose row point is on it, red otherwise. A row that matches the
+    expected row of a verified correction and has no issue is VERIFIED. A row more than ROW_TOL / ANGLE_TOL from the
+    expected row gets a message; more than OFFSET_FLOOR mm and OFFSET_PAD of the smallest pad it lands on, or
+    OFFSET_ANGLE degrees, from that of a correction that is not red, it is yellow ("offset"). With every pad on copper,
+    pin names that the row permutes beyond what any known placement fixes are red ("pinout"), and other name
+    differences yellow (_pinout)."""
     if reading not in BOTTOM_READINGS:
         raise ValueError(f"unknown reading {reading!r}: one of {', '.join(BOTTOM_READINGS)}")
     if alt_readings is not True and alt_readings:
@@ -264,6 +268,18 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     decided = bool(known) and own >= EVIDENCE * len(known) and own >= min(2, len(numbers))
 
     off = [i for i, lnd in enumerate(lands) if lnd.kicad_number is None]
+    # a polar two-terminal part turned the other way round than a correction that is not red puts it: its polarity
+    # reversed, whether the row follows the pad numbers or not
+    flipped = (polar2 and want is not None and None not in want and not off and not as_corr
+               and corr.verdict != RED and _swap_of(want, got))
+
+    def reversed_msg() -> str:
+        idx = sorted((i for i in range(len(lands)) if got[i] != want[i]), key=lambda i: natural_key(
+            lands[i].ee_number))
+        return (f"polarity reversed: the row puts the part the other way round than the "
+                f"{'verified ' if corr.verdict == VERIFIED else ''}correction does"
+                + (" (the pads land by number)" if decided else "") + ": "
+                + ", ".join(f"{lands[i].ee_number} on {got[i]}, not {want[i]}" for i in idx[:6]))
     if off:
         status = "off-copper"
         issues.append(RED)
@@ -299,6 +315,10 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
             else:
                 msgs.append(f"numbering accepted by the correction ({corr.status or corr.method or 'given'}): "
                             f"{_pairs(lands, conflicts)}")
+        elif flipped:
+            status = "reversed" if status == "ok" else status
+            issues.append(RED)
+            msgs.append(reversed_msg())
         else:
             status = "wrong-pad" if status == "ok" else status
             issues.append(RED)
@@ -328,6 +348,12 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     elif want is not None and not off:
         if None in want:
             msgs.append("the correction itself puts EasyEDA pads off copper")
+        elif flipped:
+            # the fit took this polarity from pin names or a drawn + against the numbers, or it was verified: the row
+            # that follows the numbers reverses it
+            status = "reversed" if status == "ok" else status
+            issues.append(RED)
+            msgs.append(reversed_msg())
         elif not as_corr:
             # against a fitted correction the numbers might be right after all (yellow), unless the correction was
             # verified, the part is polar with two terminals (the fit decided its polarity against the numbers, by

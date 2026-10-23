@@ -259,9 +259,10 @@ def pinout_text(diffs, n=4) -> str   # "pad 2 is S on the LCSC part, D on the bo
   regulator's input); names equal up to an index agree when only one side numbers it (DP1 / D+, 1IN+ / +) and are
   unknown when both do, differently (CC1 / CC2, 1IN+ / 2IN+); G against GND is unknown. `kicad_hash`
   keeps the tokens the database keys were made with (location names as GND, no joined parts), so they do not move.
-* `kicad_positive_pad`: from the pin functions or pad numbers (A, K, +, -), else KiCad's library convention for its
-  own diode / LED (pad 1 = cathode) and polarised capacitor (pad 1 = +) libraries. `ee_positive_pad`: the pad a
-  two-terminal footprint draws its one `plus` beside (not one near the middle, not marks on both sides).
+* `kicad_positive_pad`: from the pin functions ("pin names") or pad numbers (A, K, +, -: "pad numbers"), else
+  KiCad's library convention for its own diode / LED (pad 1 = cathode) and polarised capacitor (pad 1 = +)
+  libraries. `ee_positive_pad`: the pad a two-terminal footprint draws its one `plus` beside (not one near the
+  middle, not marks on both sides).
 * `uncovered_exemption`: KiCad copper no EasyEDA pad lands on that belongs to a covered pin (thermal vias inside a
   covered pad, a via-sized plated hole numbered like a covered SMD pad, a much smaller pad of a covered pad's number
   and net such as a DPAK's cut lead): fit and check both use it. Two equal pads of a number are never exempt.
@@ -295,18 +296,30 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
    translations voted by landed pads, refined 3x with assignment + Kabsch. Every transform landing all EasyEDA
    pads is a member of S; members landing every pad on the same lands are merged.
 3. **Names** (`parts.name_tokens`): split at '/', ',' and parentheses, upper case, synonyms (EP/PAD/TAB ~ GND, DP ~
-   D+, A ~ ANODE, K ~ CATHODE, VO ~ VOUT, ...); names equal up to a trailing index (CC1/CC2) compare as unknown. Names count only where they
-   separate members of S.
+   D+, A ~ ANODE, K ~ CATHODE, VO ~ VOUT, ...); names equal up to a trailing index (CC1/CC2) compare as unknown. Names
+   count only where they separate members of S. A polar two-terminal part whose lands have no name tokens gets ANODE
+   / CATHODE on them from `parts.kicad_positive_pad` (its library convention, or pads numbered A / K), so that
+   EasyEDA's + / -, A / K / C count as names against it; never a part with more terminals (an op-amp's + / -, a
+   transistor's C), and the lands only (`kicad_hash` and the check's pinout read the pads' own pin functions).
 4. **Equivalence**: same nets on every pad, or a terminal swap of a non-polar two-terminal part (`parts.nonpolar`,
    the rule check uses too; unknown parts are polar).
-5. **+ mark** (polar two-terminal parts): `parts.ee_positive_pad` against `parts.kicad_positive_pad`.
+5. **+ mark** (polar two-terminal parts): `parts.ee_positive_pad` against `parts.kicad_positive_pad`. Pad numbers,
+   names and the + mark are the polarity's evidence: the correction never takes the side most of it rejects.
 6. **Verdict**:
    * green = the number fit lands every pad with no numbering conflict, names agree or are uninformative, and every
      other member of S is equivalent or ruled out by the pad numbers (for a polar two-terminal part, by the names
-     or the + mark as well; otherwise yellow "polarity decided by pad numbers only");
+     or the + mark as well, neither against them; otherwise yellow "polarity decided by pad numbers only"); the
+     first reason "fits by pad numbers: N/M matched" ("fits by pad numbers and pin names" when names agree, none
+     differ);
    * yellow = pin names that differ otherwise (the reason names the pads: "N pin name(s) differ (M agree): ...");
      names pick a member the numbers do not (the names win; for a polar two-terminal part only when the +
-     mark sides with them, and the numbers win when it sides with them); numbering differs but the members are
+     mark sides with them, "following the pin names and the drawn +", and the numbers win when it sides with them,
+     "following the pad numbers and the drawn +"); a polar two-terminal part whose + mark is against the pad numbers
+     alone (the + is followed) or against pad numbers and names that agree (they are followed): doubt "polarity",
+     reason "polarity evidence conflicts: the pad numbers [and the pin names] put + on pad X (KiCad's positive pad,
+     by ...), the drawn + on pad Y of the EasyEDA footprint; following ... (rot A, not rot B): ..."; where the
+     polarity evidence takes the placement the numbers do not, no "matched by number" reason repeats it; numbering
+     differs but the members are
      equivalent or the names (or the + mark) pick one; rms above max(0.1 mm, a quarter of the smallest KiCad pad
      the pads land on); < 80 % of the EasyEDA pads *whose number KiCad has* matched; a non-90 angle (kept
      unsnapped); KiCad lands no EasyEDA pad lands on (`parts.uncovered_exemption` exempt; each label named once);
@@ -315,8 +328,10 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
    * red = nothing lands every pad (the best partial placement at a multiple of 90 is reported, the tilted best in
      the reason only); a numbering conflict (an EasyEDA pad on a land of another number and another net while its
      own number exists in KiCad) that pin names do not vouch for; several non-equivalent members that nothing
-     separates ("ambiguous"); a polar two-terminal part whose names and numbers disagree and no + mark settles it,
-     or whose + mark contradicts the numbers (or the names) that are its only other evidence; the mirror wins (only
+     separates ("ambiguous"); a polar two-terminal part whose names and numbers disagree and no + mark settles it
+     (the correction follows the names; with KiCad's side named by its library convention the reason says so,
+     "KiCad's positive pad 2 by KiCad's library convention (pad 1 = cathode)"), or whose + mark contradicts the names
+     where the pad numbers say nothing; the mirror wins (only
      a mirror lands, or it is better supported and no normal placement gives the same nets, or as well supported and
      far more exact) -> `mirror=True`, never placed; a pinout that differs: through the chosen member the EasyEDA names
      are a permutation of the KiCad pin functions (`parts.pin_diffs` "swapped") and no member of S wires it better
@@ -352,7 +367,10 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   (MP, S1, A1B12; message), when the pad has the net its own number has, or when a non-polar two-terminal part
   has its terminals swapped (status "renumbered", green). Otherwise, when `corr` gives every EasyEDA pad the net the
   row gives it, status "renumbered" with the correction's verdict (red if the correction is red: nothing vouches
-  for the numbering); else "wrong-pad", red. The numbers *decide* a row when at least EVIDENCE (80 %, and 2) of
+  for the numbering); else "wrong-pad", red. A polar two-terminal part whose row exchanges its two terminals
+  against a correction that is not red, by its numbers or not: "reversed", red ("polarity reversed: the row puts the
+  part the other way round than the [verified] correction does (the pads land by number): 1 on X, not Y, ..."; the
+  summary adds the correction's key reason). The numbers *decide* a row when at least EVIDENCE (80 %, and 2) of
   the EasyEDA pads whose number KiCad has land on that number or its net. Pads landing by number (or where the
   numbers decide nothing) on other nets than `corr` gives them: red against a verified correction, for a polar
   two-terminal part, or when the numbers do not decide the row; yellow against a fitted one otherwise. Against a
@@ -394,8 +412,8 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   designators a JLC BOM lists) lists it: then it is simulated like any other row, with a message. A row for a part
   with no code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
-* Statuses: ok | offset | off-copper | wrong-pad | renumbered | pinout | not-simulated | no-row | not-on-board |
-  layer-mismatch | not-placed | duplicate | duplicate-ref.
+* Statuses: ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout | not-simulated | no-row |
+  not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref.
 
 ## cpl.py — read and write CPL / BOM files
 
@@ -661,7 +679,13 @@ its steps with a local runner.
   flags correct SOT-23 (0.28 mm on 0.6 mm pads) and SOT-23-6 (0.21) fits whose land patterns differ. A per-pad,
   per-axis criterion would cut that too.
 * The "+" mark reader is a heuristic on EasyEDA's drawings (two crossing strokes beside a pad). It settled all 6
-  name-against-number cases in JLC's preview data; where it reads nothing, such a part is red until confirmed.
+  name-against-number cases in JLC's preview data; where it reads nothing, such a part is red until confirmed. Against
+  the pad numbers alone it is followed (yellow, "polarity evidence conflicts"): it disagreed with them 5 times in that
+  data and was right each time; a + the reader puts beside the wrong pad would be followed the wrong way, so the part
+  is on the preview checklist. KiCad's library convention stands in for missing pin functions: a symbol on a KiCad
+  library footprint that breaks it (its anode on pad 1, no pin functions) misleads the names and the + alike. An entry
+  stored before the names counted against the convention keeps its verdict and numbers until `jlcplace fit --db`
+  refits it.
 * `EEPad` has no plated flag (unplated holed pads are dropped); slot geometry is parsed but not exposed.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.
 * Gerbers: Excellon drill files are skipped, not read (a set whose copper carries no pads, or a check against the

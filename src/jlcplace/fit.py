@@ -25,7 +25,10 @@ geometry  Numbers ignored: rotations 0/90/180/270 and those aligning the farthes
           that land each pad on the same land: the members of S (`Correction.alternatives` lists the others).
 names     EasyEDA symbol pin names vs KiCad pin functions of the lands each pad lands on (normalised, synonyms;
           parts.name_tokens). Names count only where they separate members of S: libraries that name pins
-          differently under every placement say nothing about the placement.
+          differently under every placement say nothing about the placement. A polar two-terminal part whose KiCad
+          pads have no pin names gets ANODE / CATHODE on its lands from KiCad's positive pad (its library
+          convention, or pads numbered A / K), so that EasyEDA's + / -, A / K / C count against it; no other part
+          does (an op-amp's + and -, a transistor's C are not a polarity).
 + mark    For a polar two-terminal part, the "+" its EasyEDA footprint draws beside its positive pad
           (parts.ee_positive_pad) against KiCad's positive pad (parts.kicad_positive_pad: pin functions or pad
           numbers A / K / + / -, else KiCad's library convention, diode pad 1 = cathode, polarised capacitor pad
@@ -43,13 +46,18 @@ red      nothing lands every EasyEDA pad (the best partial transform at a multip
          of another net, its own number existing in KiCad) that no pin names vouch for; several non-equivalent
          members that neither numbers nor names separate ("ambiguous"); a polar two-terminal part whose pin names
          and pad numbers disagree with no + mark to settle it (in JLC's preview data the names were right 5 times of
-         6), or whose + mark contradicts the only other evidence: its polarity needs a person (`jlcplace confirm`);
+         6; the correction follows the names), or whose + mark contradicts the pin names where the pad numbers say
+         nothing: its polarity needs a person (`jlcplace confirm`);
          a pinout that differs: through the chosen member the EasyEDA names are a permutation of the KiCad pin
          functions (parts.pin_diffs "swapped": a pin on the net of another pin's function) and no member of S does
          better by the names, so no rotation wires the part right (not for a non-polar two-terminal part, nor for a
          polar one whose drawn + the member puts on KiCad's positive pad).
 yellow   names pick a member the numbers do not (the names win, or, for a polar two-terminal part, the + mark
-         decides); numbering differs or does not overlap but the members of S are equivalent, or the names pick one;
+         decides: "following the pin names and the drawn +", or the pad numbers and the drawn +); the + mark against
+         the pad numbers alone (it is followed: "polarity evidence conflicts"), or against pad numbers and pin names
+         that agree (they are followed, with the same reason): a polar part never takes the side most of its evidence
+         (numbers, names, +) rejects; numbering differs or does not overlap but the members of S are equivalent, or
+         the names pick one;
          the number fit missing or leaving pads off copper while a fit consistent with the numbering lands them; a
          polar two-terminal part whose polarity only the pad numbers decide (no names, no + mark); pin names that
          differ otherwise (the reason names the pads); an rms above 0.1 mm and a quarter of the smallest KiCad pad
@@ -61,7 +69,7 @@ yellow   names pick a member the numbers do not (the names win, or, for a polar 
          Correction.doubt says when the yellow is about which placement was chosen (check makes such rows yellow).
 green    the number fit lands every pad without numbering conflicts, names agree or are uninformative, and every
          other member of S is equivalent or ruled out by the numbers (for a polar two-terminal part, by the names
-         as well).
+         or the + mark as well, and neither contradicts them).
 
 Angles within `snap` degrees of a multiple of 90 are snapped and the translation refitted for the snapped angle.
 """
@@ -78,8 +86,8 @@ import numpy as np
 from . import geom
 from .convention import ee_to_library, norm_angle, rot
 from .model import BOTTOM, GREEN, RED, YELLOW, Correction, EEFootprint, Pad, PadLanding, Part
-from .parts import Pin, PinDiff, compare_names, ee_key, ee_positive_pad, kicad_hash, kicad_positive_pad, name_tokens, \
-    norm_number, pad_size, pin_diffs, pinout_text, uncovered_exemption
+from .parts import POLARITY_NAMES, Pin, PinDiff, compare_names, ee_key, ee_positive_pad, kicad_hash, \
+    kicad_positive_pad, name_tokens, norm_number, pad_size, pin_diffs, pinout_text, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 __all__ = ["compare_names", "ee_landings", "fit_part", "name_tokens", "net_map"]
@@ -243,6 +251,20 @@ class _Fit:
             if len(hit) == 1:
                 self.by_num[n] = hit
         self.terminals = sorted({n for ld in self.lands for n in ld.numbers})
+        # a polar two-terminal part whose pads have no pin names (a board never updated from its schematic): KiCad's
+        # positive pad (its library convention: an LED's pad 1 is its cathode) names its lands ANODE and CATHODE, so
+        # that EasyEDA's + / -, A / K / C count as names against it (other EasyEDA names, LED+ or VCC, are compared
+        # with nothing, as before). Only here: an op-amp's + and -, a transistor's C, a part with more terminals keep
+        # the names their pads have
+        self.positive, self.named_by = "", ""
+        if len(self.terminals) == 2 and not any(ld.names for ld in self.lands) and not _nonpolar(part, ee) \
+                and any(t & POLARITY_NAMES for t in self.etok):
+            pos = kicad_positive_pad(part)
+            if pos is not None and pos[0] in self.terminals:
+                self.positive, self.named_by = pos
+                for ld in self.lands:
+                    if len(ld.numbers) == 1:
+                        ld.names = frozenset({"ANODE" if self.positive in ld.numbers else "CATHODE"})
         self._cache: dict[tuple, tuple[int, ...]] = {}
         self._anchor_list: list[int] | None = None
 
@@ -500,7 +522,8 @@ class _Fit:
         land on (a land's several functions joined with '/', its nets as one key)."""
         names = {norm_number(k): v for k, v in (self.ee.pin_names or {}).items()}
         ee = [Pin(p.number, names.get(n, ""), t) for p, n, t in zip(self.ee.pads, self.enum, self.etok)]
-        kicad = [Pin(self.label(j), "/".join(dict.fromkeys(p.pin_name for p in ld.pads if p.pin_name)), ld.names,
+        kicad = [Pin(self.label(j), "/".join(dict.fromkeys(p.pin_name for p in ld.pads if p.pin_name))
+                     or (("+" if "ANODE" in ld.names else "-") if self.named_by and ld.names else ""), ld.names,
                      ld.net) for j, ld in enumerate(self.lands)]
         return pin_diffs([(ee[i], kicad[j]) for i, j in enumerate(m.land) if j >= 0], ee, kicad)
 
@@ -684,6 +707,15 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         return (f"the EasyEDA footprint draws its + beside pad {mark[0]}, and KiCad's positive pad is {mark[1]} "
                 f"(by {mark[2]})")
 
+    def conflict(numbers: str, by: str, m: _Member, other: _Member) -> str:
+        """The drawn + against the pad numbers (and the pin names that agree with them), following `by` to m."""
+        return (f"polarity evidence conflicts: the {numbers} put + on pad {mark[1]} (KiCad's positive pad, by "
+                f"{mark[2]}), the drawn + on pad {mark[0]} of the EasyEDA footprint; following {by} (rot {_deg(m)}, "
+                f"not rot {_deg(other)}): check the polarity in JLC's preview and record it with `jlcplace confirm`")
+
+    # set where a two-terminal part's polarity evidence takes the placement the pad numbers do not: its reason says
+    # so, and "only 0 of 2 matched by number" would only say it again
+    against_numbers = False
     if N is not None and pick is not None and not harmless(pick, N):
         names_vs = (f"pin names pick rot {_deg(pick)} ({pick.names_ok} agree, {pick.names_bad} differ), pad numbers "
                     f"pick rot {_deg(N)}")
@@ -692,12 +724,16 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
             # of 6), the drawn + did every time; without one the polarity needs a person
             m, doubt = by_mark([pick, N]), "polarity"
             if m is not None:
-                chosen, verdict = m, YELLOW
-                reasons.append(f"{names_vs}; {mark_says()}: following the {'names' if m is pick else 'pad numbers'}")
+                chosen, verdict, against_numbers = m, YELLOW, m is pick
+                reasons.append(f"{names_vs}; {mark_says()}: following the "
+                               f"{'pin names' if m is pick else 'pad numbers'} and the drawn +")
             else:
                 chosen, verdict = pick, RED
-                reasons.append(f"polarity undecided: {names_vs}, and no + drawn on the EasyEDA footprint settles it: "
-                               f"check the polarity in JLC's preview and record it with `jlcplace confirm`")
+                kicad = f"; KiCad's positive pad {f.positive} by {f.named_by}" if f.named_by else ""
+                reasons.append(f"polarity undecided: pin names pick rot {_deg(pick)} ({pick.names_ok} agree, "
+                               f"{pick.names_bad} differ{kicad}), pad numbers pick rot {_deg(N)}, and no + drawn on "
+                               f"the EasyEDA footprint settles it: check the polarity in JLC's preview and record it "
+                               f"with `jlcplace confirm`")
         else:
             chosen, verdict, doubt = pick, YELLOW, "names"
             reasons.append(f"{names_vs}: following the names")
@@ -729,19 +765,27 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
                 reasons.append(f"rot {others} also {_lands_word(alts)} both pads; ruled out by the pad numbers and "
                                f"the drawn polarity: {mark_says()}")
             elif m is not None:
-                verdict, doubt = RED, "polarity"
-                reasons.append(f"polarity: the pad numbers pick rot {_deg(N)}, but {mark_says()}, which takes rot "
-                               f"{_deg(m)}: check the polarity in JLC's preview and record it with `jlcplace confirm`")
+                # the drawn + against the pad numbers alone: it was right in every such case of JLC's preview data
+                # (the numbers follow each library's own convention), so it is followed, and the preview settles it
+                chosen, verdict, doubt, against_numbers = m, YELLOW, "polarity", True
+                reasons.append(conflict("pad numbers", "the drawn +", m, N))
             else:
                 verdict, doubt = YELLOW, "polarity"
                 reasons.append(f"polarity decided by pad numbers only (rot {others} also {_lands_word(alts)} both "
                                f"pads, and no pin names or drawn + confirm it): check the polarity mark in JLC's "
                                f"preview")
+        elif alts and polar2 and by_mark([N] + alts) not in (None, N):
+            # the pad numbers and the pin names outvote the drawn +, but it is evidence all the same
+            verdict, doubt = YELLOW, "polarity"
+            reasons.append(conflict("pad numbers and the pin names", "the pad numbers and the pin names", N,
+                                    by_mark([N] + alts)))
         elif alts:
+            marked = polar2 and by_mark([N] + alts) is N
             reasons.append(f"rot {others} also {_lands_word(alts)} every pad, on other nets; ruled out by "
-                           + ("pad numbers and pin names" if by_names else "pad numbers"))
-        twins = [m for m in normal if m is not N and m.land != N.land and f.same_nets(m, N) and m.agree >= N.agree
-                 and m.tf.rms <= N.tf.rms + TWIN_RMS]
+                           + (f"pad numbers, pin names and the drawn polarity: {mark_says()}" if by_names and marked
+                              else "pad numbers and pin names" if by_names else "pad numbers"))
+        twins = [m for m in normal if m is not chosen and m.land != chosen.land and f.same_nets(m, chosen)
+                 and m.agree >= chosen.agree and m.tf.rms <= chosen.tf.rms + TWIN_RMS]
         if twins:
             verdict = YELLOW if verdict == GREEN else verdict
             doubt = doubt or "orientation"
@@ -816,7 +860,7 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
     # EasyEDA numbers KiCad does not have (a tab 4 against KiCad's 2, shield pads 1-4 against S1) cannot match, and
     # check calls them harmless: they do not count against the fit
     known = sum(1 for n in f.enum if n and n in f.by_num)
-    if known and chosen.agree < MATCHED_YELLOW * known:
+    if known and chosen.agree < MATCHED_YELLOW * known and not against_numbers:
         downgrade(f"only {chosen.agree} of {known} EasyEDA pads with a number KiCad has matched by number")
     # a residual is a land pattern that differs; it matters relative to the pads it has to stay on
     rms_limit = max(RMS_YELLOW, RMS_PAD * min((pad_size(p) for j in set(chosen.land) if j >= 0
@@ -830,7 +874,8 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         downgrade(f"KiCad pads that no EasyEDA pad lands on: {', '.join(uncovered[:16])}")
     if verdict == GREEN:
         only_ee = numbered - known if known else 0
-        reasons.insert(0, f"fits by pad numbers: {chosen.agree}/{known or numbered} matched"
+        reasons.insert(0, f"fits by pad numbers{' and pin names' if chosen.names_ok and not chosen.names_bad else ''}"
+                          f": {chosen.agree}/{known or numbered} matched"
                           + (f" ({only_ee} more with numbers KiCad does not have)" if only_ee else "")
                           + f", rms {chosen.tf.rms:.3f} mm")
 

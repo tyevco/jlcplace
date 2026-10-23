@@ -215,11 +215,163 @@ def test_diode_polarity_needs_a_second_source():
 
     c = fit.fit_part(part, dataclasses.replace(ee, plus=plus_at(e1, e2)))
     assert_recovers(c, 90, (0.2, 0.1))
-    assert c.verdict == YELLOW and has(c, "following the names") and c.doubt == "polarity"
+    assert c.verdict == YELLOW and has(c, "following the pin names and the drawn +") and c.doubt == "polarity"
     # ... and beside pad 2 for the numbers
     c = fit.fit_part(part, dataclasses.replace(ee, plus=plus_at(e2, e1)))
     assert_recovers(c, 270, (-0.2, -0.1))                # turned about the pads' middle, the origin's mirror image
-    assert c.verdict == YELLOW and has(c, "following the pad numbers")
+    assert c.verdict == YELLOW and has(c, "following the pad numbers and the drawn +")
+
+
+# Two-terminal polar parts on KiCad's own footprints, whose pads carry no pin functions (a board never updated from its
+# schematic, or a symbol without them): KiCad's library convention names the pads. The EasyEDA records of a field
+# report, reduced to the pads, pin names and "+" the fit reads: an 0805 LED (C2296 names its pads + / -, C2297 A / K;
+# EasyEDA pad 1 is the anode, the + drawn beside it) on LED_0805_2012Metric (pad 1 = cathode), and two SOD-323 diodes
+# on D_SOD-323: C20617918 (pad 1 = C, 2 = A, no +) and C42413887 (names 1 / 2, a + beside pad 2).
+
+def led0805():
+    return [P(n, x, 0, 0.975, 1.4, shape="roundrect", rr=0.25) for n, x in (("1", -0.9375), ("2", 0.9375))]
+
+
+def sod323():
+    return [P(n, x, 0, 0.6, 0.45, shape="roundrect", rr=0.25) for n, x in (("1", -1.05), ("2", 1.05))]
+
+
+def ee_led0805(names=None, plus=True):
+    """C2296 / C2297: EasyEDA's pad 1 (the anode) at +x, its + beside it."""
+    return EEFootprint("C2296", "LED0805-R-RD", pads=[EEPad("2", -1.0503, 0.0, 1.0, 1.3995, 180.0),
+                                                      EEPad("1", 1.0503, 0.0, 1.0, 1.3995, 180.0)],
+                       pin_names=dict(names or {"1": "1", "2": "2"}), tags=["Light Emitting Diodes (LED)"],
+                       tokens=["RD"], plus=[(1.041, 0.0404, 1.1)] if plus else [])
+
+
+def ee_sod323(names=None, plus_beside=None, half=1.14, size=(0.63, 0.83, 90.0)):
+    """C20617918 (half 1.14, its pads turned 90) and C42413887 (half 1.1999, 0.8 square): pad 1 at -x."""
+    w, h, a = size
+    plus = {None: [], "1": [(-half, 0.0, 0.6)], "2": [(half, 0.0, 0.6)]}[plus_beside]
+    return EEFootprint("C20617918", "SOD-323_L1.7-W1.3-LS2.6-RD-1",
+                       pads=[EEPad("1", -half, 0.0, w, h, a), EEPad("2", half, 0.0, w, h, a)],
+                       pin_names=dict(names or {"1": "1", "2": "2"}), tokens=["RD"], plus=plus)
+
+
+C42413887 = {"half": 1.1999, "size": (0.8, 0.8, 0.0)}
+LED = ("D2", "LED_SMD:LED_0805_2012Metric")
+SOD = ("D6", "Diode_SMD:D_SOD-323")
+
+
+@pytest.mark.parametrize("names", [{"1": "+", "2": "-"}, {"1": "A", "2": "K"}])
+def test_led_pin_names_and_drawn_plus_outvote_the_pad_numbers(names):
+    """C2296 / C2297 on LED_0805: the pad numbers put EasyEDA's anode (pad 1) on KiCad's cathode (pad 1, rot 180);
+    EasyEDA's pin names, read against KiCad's library convention, and its drawn + both say rot 0. They were left out
+    (KiCad's pads have no names) and the fit was red, `cpl --force` writing rot 180: the LED reversed."""
+    part = kpart(led0805(), *LED)
+    c = fit.fit_part(part, ee_led0805(names))
+    assert (c.verdict, c.rot, c.doubt, c.polar) == (YELLOW, 0.0, "polarity", True), c.reasons
+    assert has(c, "pin names pick rot 0 (2 agree, 0 differ), pad numbers pick rot 180") \
+        and has(c, "following the pin names and the drawn +"), c.reasons
+    assert not has(c, "matched by number"), c.reasons          # said already: the numbers pick the other way
+    # the same with K / A pin functions on KiCad's pads
+    named = kpart(led0805(), *LED)
+    named.pads[0].pin_name, named.pads[1].pin_name = "K", "A"
+    k = fit.fit_part(named, ee_led0805(names))
+    assert (k.verdict, k.rot, k.doubt) == (c.verdict, c.rot, c.doubt) and has(k, "following the pin names and the "
+                                                                                 "drawn +"), k.reasons
+    # names against numbers and no + to settle it: red (in JLC's preview data the names were wrong once in 6); the
+    # correction follows the names
+    c = fit.fit_part(part, ee_led0805(names, plus=False))
+    assert (c.verdict, c.rot, c.doubt) == (RED, 0.0, "polarity") and has(c, "polarity undecided"), c.reasons
+    assert has(c, "KiCad's positive pad 2 by KiCad's library convention (pad 1 = cathode)"), c.reasons
+
+
+def test_a_drawn_plus_against_the_pad_numbers_alone_is_followed():
+    """No pin names: the pad numbers say rot 180, the drawn + rot 0. The + was right in every such case of JLC's
+    preview data: the fit follows it, yellow, and says the evidence conflicts (it was red, following the numbers)."""
+    part = kpart(led0805(), *LED)
+    c = fit.fit_part(part, ee_led0805())
+    assert (c.verdict, c.rot, c.doubt) == (YELLOW, 0.0, "polarity"), c.reasons
+    assert has(c, "polarity evidence conflicts: the pad numbers put + on pad 2 (KiCad's positive pad, by KiCad's "
+                  "library convention (pad 1 = cathode)), the drawn + on pad 1 of the EasyEDA footprint; following "
+                  "the drawn + (rot 0, not rot 180)"), c.reasons
+    assert not has(c, "matched by number"), c.reasons
+    # C42413887 (+ beside pad 2, KiCad's positive pad): numbers and + agree; drawn beside pad 1 it is followed
+    sod = kpart(sod323(), *SOD)
+    c = fit.fit_part(sod, ee_sod323(plus_beside="2", **C42413887))
+    assert (c.rot, c.doubt) == (0.0, "") and has(c, "ruled out by the pad numbers and the drawn polarity"), c.reasons
+    assert c.verdict == YELLOW and has(c, "rms 0.150 mm: the land patterns differ"), c.reasons
+    c = fit.fit_part(sod, ee_sod323(plus_beside="1", **C42413887))
+    assert (c.verdict, c.rot, c.doubt) == (YELLOW, 180.0, "polarity") and has(c, "following the drawn + (rot 180, "
+                                                                                 "not rot 0)"), c.reasons
+    # nothing but the numbers: yellow, as before
+    for c in (fit.fit_part(part, ee_led0805(plus=False)), fit.fit_part(sod, ee_sod323(**C42413887))):
+        assert c.verdict == YELLOW and c.doubt == "polarity" and has(c, "polarity decided by pad numbers only")
+
+
+def test_diode_pin_names_that_agree_with_the_numbers_make_it_green():
+    """C20617918 (pins 1 = C, 2 = A) on D_SOD-323: its names, against KiCad's library convention, confirm the pad
+    numbers (it was yellow, "decided by pad numbers only"). A + beside the anode agrees too; one beside the cathode
+    is outvoted, but the fit says the evidence conflicts."""
+    sod = kpart(sod323(), *SOD)
+    names = {"1": "C", "2": "A"}
+    c = fit.fit_part(sod, ee_sod323(names))
+    assert (c.verdict, c.rot, c.doubt) == (GREEN, 0.0, ""), c.reasons
+    assert c.reasons[0].startswith("fits by pad numbers and pin names: 2/2 matched") \
+        and has(c, "ruled out by pad numbers and pin names") and has(c, "2 pin names agree"), c.reasons
+    c = fit.fit_part(sod, ee_sod323(names, plus_beside="2"))
+    assert (c.verdict, c.rot) == (GREEN, 0.0) and has(c, "pin names and the drawn polarity"), c.reasons
+    c = fit.fit_part(sod, ee_sod323(names, plus_beside="1"))
+    assert (c.verdict, c.rot, c.doubt) == (YELLOW, 0.0, "polarity"), c.reasons
+    assert has(c, "polarity evidence conflicts: the pad numbers and the pin names put + on pad 2") \
+        and has(c, "following the pad numbers and the pin names (rot 0, not rot 180)"), c.reasons
+    assert fit.fit_part(sod, ee_sod323()).verdict == YELLOW                      # no names, no +
+
+
+# every combination of the records' evidence: the side the correction writes is never one most of it rejects
+@pytest.mark.parametrize("record", ["C2296", "C2297", "C20617918", "C42413887"])
+@pytest.mark.parametrize("names", [True, False])
+@pytest.mark.parametrize("plus", [None, "1", "2"])
+def test_the_correction_never_takes_the_side_most_evidence_rejects(record, names, plus):
+    if record.startswith("C229"):
+        part = kpart(led0805(), *LED)
+        ee = ee_led0805({"C2296": {"1": "+", "2": "-"}, "C2297": {"1": "A", "2": "K"}}[record] if names else None,
+                        plus=False)
+        if plus:
+            ee.plus = [(1.041 if plus == "1" else -1.041, 0.0404, 1.1)]
+        anode_rot = {"numbers": 180.0, "names": 0.0, "1": 0.0, "2": 180.0}    # rot that puts EasyEDA's anode on 2
+    else:
+        part = kpart(sod323(), *SOD)
+        ee = ee_sod323({"1": "C", "2": "A"} if names and record == "C20617918" else None, plus_beside=plus,
+                       **(C42413887 if record == "C42413887" else {}))
+        anode_rot = {"numbers": 0.0, "names": 0.0, "1": 180.0, "2": 0.0}
+    votes = [anode_rot["numbers"]] + ([anode_rot["names"]] if names and record != "C42413887" else []) \
+        + ([anode_rot[plus]] if plus else [])
+    c = fit.fit_part(part, ee)
+    against, behind = sum(v != c.rot for v in votes), sum(v == c.rot for v in votes)
+    assert against <= behind, (votes, c.rot, c.verdict, c.reasons)
+    # and evidence against the side taken is never green: the polarity is the doubt the preview settles
+    assert not against or (c.verdict != GREEN and c.doubt == "polarity"), (votes, c.rot, c.verdict, c.reasons)
+
+
+def test_polarity_names_are_given_only_to_two_terminal_parts():
+    """KiCad's positive pad names the lands of a polar two-terminal part only: an SOT-23 transistor whose EasyEDA
+    pins are B, E, C (C is no cathode there) and pads without pin functions is fitted by its numbers alone (an
+    op-amp's + and - alike); a tantalum on KiCad's CP footprint (pad 1 = +) reads EasyEDA's + / - against it."""
+    pads = [P("1", -0.9375, -0.95, 1.475, 0.6), P("2", -0.9375, 0.95, 1.475, 0.6), P("3", 0.9375, 0.0, 1.475, 0.6)]
+    q = kpart(pads, "Q1", "Package_TO_SOT_SMD:SOT-23")
+    c = fit.fit_part(q, to_ee(pads, 180, names={"1": "B", "2": "E", "3": "C"}))
+    assert c.verdict == GREEN and not has(c, "pin name"), c.reasons
+    u = kpart(soic8(), "U1", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm")
+    c = fit.fit_part(u, to_ee(u.pads, 0, names=dict(zip("12345678", ("OUT", "-", "+", "V-", "+", "-", "OUT", "V+")))))
+    assert c.verdict == GREEN and not has(c, "pin name"), c.reasons
+    cp =[P("1", -1.4, 0, 1.35, 1.35), P("2", 1.4, 0, 1.35, 1.35)]
+    tant = kpart(cp, "C7", "Capacitor_Tantalum_SMD:CP_EIA-3216-18_Kemet-A")
+    c = fit.fit_part(tant, to_ee(cp, 0, names={"1": "+", "2": "-"}, title="CASE-A_3216"))
+    assert c.verdict == GREEN and has(c, "2 pin names agree"), c.reasons
+    c = fit.fit_part(tant, to_ee(cp, 180, numbers=["2", "1"], names={"2": "+", "1": "-"}, title="CASE-A_3216"))
+    assert (c.verdict, c.rot) == (RED, 180.0) and has(c, "polarity undecided"), c.reasons
+    # EasyEDA names that say nothing of a polarity (LED+ / LED-) are compared with nothing, as before: no pin name
+    # "differs" from a function the board never had
+    c = fit.fit_part(kpart(led0805(), *LED), ee_led0805({"1": "LED+", "2": "LED-"}, plus=False))
+    assert (c.verdict, c.rot) == (YELLOW, 180.0) and has(c, "polarity decided by pad numbers only") \
+        and not has(c, "pin name(s) differ") and not has(c, "pin names pick"), c.reasons
 
 
 def test_two_pads_without_common_numbers():
@@ -880,6 +1032,44 @@ def test_jlc_preview_truth_is_never_contradicted_by_green():
     # D12: EasyEDA's symbol names the cathode pad A, against its pad numbers; the + drawn on the footprint sides with
     # the numbers, as JLC's preview does (it was the one wrong row while the names won)
     assert wrong == [] and len(right) >= 47, (wrong, len(right))
+
+
+@pytest.mark.pcbnew
+@pytest.mark.cache
+@pytest.mark.skipif(not (Z_FIX / "truth.csv").is_file(), reason=f"z2amiller ground truth not in {Z_FIX}")
+def test_jlc_preview_truth_without_pin_functions():
+    """The same ground truth on a board whose pads carry no pin functions (never updated from its schematic): KiCad's
+    library convention names the diodes' pads, so EasyEDA's pin names count against it. Four LEDs and diodes (C2286,
+    C50494, C553979, C1856655), named and marked against their pad numbers, were red with the numbers' placement,
+    the one `cpl --force` wrote; every part whose symbol follows the convention (not D5, whose pin functions put its
+    anode on pad 1) now agrees with the preview."""
+    pytest.importorskip("pcbnew")
+    from jlcplace.parts import kicad_positive_pad
+    parse = parse_record()
+    wrong, right = [], []
+    truth = {r["reference"]: r for r in csv.DictReader(open(Z_FIX / "truth.csv", encoding="utf-8"))}
+    for r in csv.DictReader(open(Z_FIX / "boards" / "corner_case" / "cases.csv", encoding="utf-8")):
+        raw = Z_FIX / "easyeda" / f"{r['lcsc']}.json"
+        if not raw.is_file() or r["expect"] == "red":
+            continue
+        part = library_part(r["lib"], r["footprint"], r["reference"])
+        pf = dict(x.split("=") for x in r["pinfunctions"].split(";")) if r["pinfunctions"] else {}
+        for p in part.pads:
+            p.pin_name = pf.get(p.number, "")
+        named = kicad_positive_pad(part)
+        for p in part.pads:
+            p.pin_name = ""
+        if named is not None and named[0] != (kicad_positive_pad(part) or named)[0]:
+            continue                                          # the symbol's pin functions break the convention
+        c = fit.fit_part(part, parse(r["lcsc"], raw))
+        t = truth[r["reference"]]
+        alpha = float(t["observed_rotation"]) - float(r["rotation"]) if r["layer"] == "F" else \
+            float(t["observed_rotation"]) - 180.0 + float(r["rotation"])
+        ok = (adiff(c.rot, alpha) < 0.01 and abs(c.dx - float(t["origin_dx_mm"])) <= 0.011
+              and abs(c.dy - float(t["origin_dy_mm"])) <= 0.011)
+        (right if ok else wrong).append((r["reference"], r["lcsc"], c.verdict, c.rot, alpha))
+    assert wrong == [] and len(right) >= 40, (wrong, len(right))
+    assert {ref for ref, *_ in right} >= {"LED1", "LED2", "D9", "D11"}
 
 
 OLD_CPL = SCRATCH / "fab-before"

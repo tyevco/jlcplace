@@ -737,7 +737,7 @@ def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_b
         == "not-placed"
     code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "b.json")
     d = {r["ref"]: r for r in json.loads((env.tmp / "b.json").read_text(encoding="utf-8"))["results"]}["D1"]
-    assert code == 2 and (d["status"], d["verdict"]) == ("wrong-pad", RED), d
+    assert code == 2 and (d["status"], d["verdict"]) == ("reversed", RED), d
     assert "the BOM lists it: JLC will place it" in d["messages"][-1]
 
 

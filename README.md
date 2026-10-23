@@ -133,8 +133,10 @@ results).
 **When the records cannot decide.** Some parts need a person to decide. For example, the TS-1187A switch is numbered
 1-4 in EasyEDA and 1,1,2,2 in KiCad, and which EasyEDA pins the switch joins inside is in its datasheet, not in the
 records. Such a part stays red until someone records the decision. So does a polar two-terminal part whose EasyEDA pin
-names and pad numbers disagree when no "+" on its EasyEDA footprint settles it (or whose "+" contradicts its only
-other evidence): its polarity needs a look in JLC's preview.
+names and pad numbers disagree when no "+" on its EasyEDA footprint settles it (or whose "+" contradicts its pin
+names where the pad numbers say nothing): its polarity needs a look in JLC's preview. A "+" that disagrees with the
+pad numbers alone is followed, yellow ("polarity evidence conflicts"): in JLC's preview data the "+" disagreed with
+the pad numbers 5 times and was right every time.
 
 ```
 jlcplace confirm board.kicad_pcb --ref SW1 --db jlcplace-db --by you --source manual --note "pins 1-2, 3-4 joined"
@@ -241,8 +243,8 @@ Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it, or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it (status `reversed`), or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP, excluded from the position files or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); an assembled part with no row. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part; a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board only excludes from its BOM (with `--bom`, it is checked when the BOM lists it); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -330,11 +332,12 @@ part is the rigid map between the two footprints:
     library = R(rot) · ee + (dx, dy)
 
 It is fitted from pad numbers and pad geometry, with symbol pin names, nets and, for a polar two-terminal part, the
-"+" its EasyEDA footprint draws beside its positive pad as further evidence. Each fit gets a verdict with reasons,
-for example "polarity decided by pad numbers only" or "ambiguous". A mirrored match is never used. Whether a
-two-terminal part may be turned round (a resistor) or not (a diode, a tantalum) is decided once, for the fit and the
-check alike: from its reference prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title,
-part categories (tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the correction:
+"+" its EasyEDA footprint draws beside its positive pad as further evidence; a polar part never takes the side that
+most of its evidence (pad numbers, pin names, the "+") rejects. Each fit gets a verdict with reasons, for example
+"polarity decided by pad numbers only" or "ambiguous". A mirrored match is never used. Whether a two-terminal part
+may be turned round (a resistor) or not (a diode, a tantalum) is decided once, for the fit and the check alike: from
+its reference prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title, part categories
+(tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the correction:
 
 * Mid X, Mid Y = where the EasyEDA origin lies on the board, in the cpl frame.
 * Rotation = theta + rot on the top, and 180 - theta + rot on the bottom.
@@ -473,8 +476,11 @@ checklist files hold derived data only.
 * Polarity: where EasyEDA's pin names and pad numbers disagree, the "+" drawn on its footprint decides (it was right
   in all 6 such cases of JLC's preview data; the names alone were wrong once, D12 C2836396). The "+" is read from
   two crossing strokes on the silkscreen or document layer; KiCad's positive pad from the pin functions, else KiCad's
-  library convention (diode pad 1 = cathode, polarised capacitor pad 1 = +). Footprints outside KiCad's libraries
-  may follow another convention: give their pins functions.
+  library convention (diode pad 1 = cathode, polarised capacitor pad 1 = +), which also names a two-terminal part's
+  pads when they have no pin functions, so that EasyEDA's pin names (+ / -, A / K / C) count against it (on that
+  part only: an op-amp's + and -, a transistor's C are no polarity). Where only the "+" disagrees with the pad
+  numbers, the "+" is followed and the part is yellow. Footprints outside KiCad's libraries may follow another
+  convention: give their pins functions.
 * The bottom-side reading is a well-supported hypothesis, not a documented fact; see the caveat above.
 * EasyEDA's rotation sense is proven from the records' corner order at multiples of 90 degrees. At other angles,
   RECT and OVAL pads are checked against their own outlines.
