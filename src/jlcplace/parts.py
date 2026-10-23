@@ -265,7 +265,7 @@ def _bidirectional(names: dict[str, frozenset[str]]) -> bool:
 
 # ------------------------------------------------------------------------------------------------------- polarity
 
-def nonpolar(part, ee=None) -> bool:
+def nonpolar(part, ee=None, *, title: str = "") -> bool:
     """Two numbered terminals that may be swapped. True for a two-terminal part whose two terminals are alike (KiCad
     pin functions equal up to an index, A1 / A2, or an EasyEDA title marked BI: a bidirectional TVS); otherwise it
     takes a non-polar reference prefix (X only for a crystal) and nothing that says polar: the KiCad footprint name
@@ -273,15 +273,18 @@ def nonpolar(part, ee=None) -> bool:
     functions, and with the EasyEDA footprint `ee` its title (a polarised capacitor's CAP-SMD_ / CASE-x_ unless its
     categories name a non-polar class), its part categories (tantalum, electrolytic, diode, LED, TVS, ...) and its
     symbol's pin names. Unknown parts count as polar. fit and check both use this, so they cannot judge a part
-    differently."""
+    differently. `title`: without the record, the EasyEDA title of a stored correction the fit judged non-polar
+    (check): only what in it says non-polar counts (BI; a crystal's title for an X reference), as the fit found
+    nothing in the record that says polar."""
     kicad = _terminal_names(part)
     if len(kicad) != 2:
         return False
-    if _bidirectional(kicad) or (ee is not None and "BI" in (ee.tokens or [])):
+    if _bidirectional(kicad) or (ee is not None and "BI" in (ee.tokens or [])) \
+            or "BI" in re.split(r"[-_\s]+", title.upper()):
         return True
     prefix = ref_prefix(part.ref)
     if prefix not in NONPOLAR_REFS and not (prefix == "X" and (CRYSTAL.search(part.footprint or "") or (
-            ee is not None and CRYSTAL.search(ee.title or "")))):
+            ee is not None and CRYSTAL.search(ee.title or "")) or CRYSTAL.search(title))):
         return False
     if POLAR_FOOTPRINT.search(part.footprint or "") or ORIENTED_FOOTPRINT.search(part.footprint or "") \
             or trimmer(part, ee) or any(t & POLARITY_NAMES for t in kicad.values()):

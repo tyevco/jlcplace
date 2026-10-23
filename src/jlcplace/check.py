@@ -93,11 +93,15 @@ def _lkey(landing: PadLanding) -> str | None:
 def nonpolar(part: Part, ee=None, corr: Correction | None = None) -> bool:
     """Two numbered terminals that may be swapped (parts.nonpolar, the rule fit uses: the reference prefix, the KiCad
     footprint name and pin functions, and with `ee` the EasyEDA title, part categories and pin names). A correction
-    whose fit judged the part polar (`corr.polar`) keeps it polar, so the check of a row simulated without the
-    EasyEDA record (pipeline's proxy) judges the part as the fit did."""
+    whose fit judged the part polar (`corr.polar`) keeps it polar, and without the EasyEDA record one it judged
+    non-polar keeps what its entry's EasyEDA title says for that (BI, a crystal's title: `corr.ee_title`), so the
+    check of a row simulated without the record (pipeline's proxy) judges the part as the fit did; the reference
+    prefix, footprint name and pin functions are the part's own."""
     if corr is not None and corr.polar:
         return False
-    return _nonpolar(part, ee if isinstance(ee, EEFootprint) and ee.source != "kicad-proxy" else None)
+    if isinstance(ee, EEFootprint) and ee.source != "kicad-proxy":
+        return _nonpolar(part, ee)
+    return _nonpolar(part, None, title=corr.ee_title if corr is not None and corr.polar is False else "")
 
 
 def _harmless_unsimulated(part: Part, corr: Correction | None = None) -> bool:

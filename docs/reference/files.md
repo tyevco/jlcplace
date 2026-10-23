@@ -535,7 +535,7 @@ footprints:
 | field | what it is |
 |---|---|
 | `ee.key` | `ee-sha1:` and 16 hex digits: a hash of the EasyEDA footprint's pads (numbers, positions, sizes, angles). It changes when EasyEDA moves, resizes or renumbers a pad, and not when EasyEDA edits only the record's other data |
-| `ee.title` | the EasyEDA footprint's title, its package name, for people reading the file |
+| `ee.title` | the EasyEDA footprint's title, its package name, for people reading the file; without the record, the check reads in it what made the fit judge a two-terminal part non-polar (BI, a bidirectional TVS; a crystal's title) |
 | `kicad.fpid` | the KiCad footprint (`Library:Name`) the entry was made on, for people reading the file |
 | `kicad.pad_hash` | `sha1:` and 16 hex digits: a hash of the KiCad footprint's soldered copper pads, combined with the pins' functions when they say something (a diode with pad 1 the cathode and one with pad 1 the anode get different keys) |
 | `correction.rot` | degrees, 0 to 360: how the EasyEDA footprint is turned relative to the KiCad footprint as drawn in its library |
