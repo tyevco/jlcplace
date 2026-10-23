@@ -682,7 +682,7 @@ def _seen_off(part, ee, seen: CplRow, uploaded: Correction, board, rings) -> tup
     """Why a row cannot be where a part that came out right was, and how far off it is: every EasyEDA pad off copper
     (the nearest one's distance from a KiCad pad centre), or, without EasyEDA pads, its point off the part
     (check.unsimulated_off: the board outline's `rings` say whether it is outside it, and a part without a body is off
-    further than NEAR_MM and its pads' size); None when it can be."""
+    its pads and its anchor further than NEAR_MM and its pads' size); None when it can be."""
     if isinstance(ee, EEFootprint) and ee.pads:
         lands = ee_landings(part, ee, uploaded)
         if all(lnd.kicad_number is None for lnd in lands):
