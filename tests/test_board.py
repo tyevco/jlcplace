@@ -987,13 +987,13 @@ def test_the_body_is_the_box_of_the_courtyard_else_of_the_fab_drawing(tmp_path):
     courtyard drawing on its own side, arcs by their ends and axis extremes, in the library frame; without a courtyard
     the fabrication layer's drawing (text left out); with neither, none."""
     text = """(kicad_pcb (version 20241229)
-  (footprint "Connector_Coaxial:BNC" (layer "F.Cu") (at 10 20 270) (property "Reference" "J1")
+  (footprint "Connector_Coaxial:Coax_Horizontal" (layer "F.Cu") (at 10 20 270) (property "Reference" "J1")
     (pad "1" thru_hole circle (at 0 0 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
-    (pad "2" thru_hole circle (at -5.08 -5.08 270) (size 3 3) (drill 2) (layers "*.Cu" "*.Mask"))
-    (fp_line (start -7.85 2.7) (end 7.85 2.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
-    (fp_line (start 7.85 2.7) (end 7.85 -33.8) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
-    (fp_arc (start 7.85 -33.8) (mid 0 -41.65) (end -7.85 -33.8) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
-    (fp_line (start -7.85 -33.8) (end -7.85 2.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (pad "2" thru_hole circle (at -5 -5 270) (size 3 3) (drill 2) (layers "*.Cu" "*.Mask"))
+    (fp_line (start -8 3) (end 8 3) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_line (start 8 3) (end 8 -30) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_arc (start 8 -30) (mid 0 -38) (end -8 -30) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_line (start -8 -30) (end -8 3) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
     (fp_rect (start -50 -50) (end 50 50) (stroke (width 0.1) (type solid)) (fill no) (layer "B.CrtYd"))
     (fp_rect (start -7 -30) (end 7 2) (stroke (width 0.1) (type solid)) (fill no) (layer "F.Fab")))
   (footprint "L:Bottom" (layer "B.Cu") (at 30 40 90) (property "Reference" "U1")
@@ -1006,7 +1006,7 @@ def test_the_body_is_the_box_of_the_courtyard_else_of_the_fab_drawing(tmp_path):
     (fp_line (start -2 -1) (end 2 -1) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))))
 """
     j1, u1, r1 = jb.load_board_sexpr(write_board(tmp_path, text)).parts
-    assert (j1.body, j1.body_layer) == ((-7.85, -41.65, 7.85, 2.7), "courtyard")
+    assert (j1.body, j1.body_layer) == ((-8.0, -38.0, 8.0, 3.0), "courtyard")
     # flipped: stored as placed, library = (x, -y); the other side's courtyard is not this part's
     assert (u1.body, u1.body_layer) == ((-1.0, 1.0, 3.0, 5.0), "fab")
     assert (r1.body, r1.body_layer) == (None, "")

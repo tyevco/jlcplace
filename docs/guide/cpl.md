@@ -59,7 +59,7 @@ has to be turned and shifted to sit on the KiCad footprint. It takes the first o
    (EasyEDA does not know the code, like R26's C4167968) or its record is not in the cache. JLC places a part by its
    centre, so the row point is the centre of the footprint's courtyard (else of its fabrication-layer drawing). For a
    centred part such as a resistor that is KiCad's own position; KiCad's anchor of a through-hole connector is usually
-   pin 1, and a right-angle BNC's courtyard centre is 15.55 mm from it. Without either drawing, the row is KiCad's own
+   pin 1, and on a right-angle coaxial connector the courtyard's centre can be over 10 mm from it. Without either drawing, the row is KiCad's own
    position, and the correction's reason says when that anchor is a pin. The check says "not simulated": yellow for a
    two-pad non-polar part whose row point is on its pads, red otherwise, with where the row point lies ("the row point
    is the centre of its courtyard"). Look at such a part in JLC's preview.

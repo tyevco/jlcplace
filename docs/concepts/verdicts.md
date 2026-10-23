@@ -196,7 +196,7 @@ A resistor or capacitor whose row point lies on its pads is yellow: turned eithe
 should be. If its row point is more than 0.1 mm outside its pads (`the row point is ... mm off the part's pads`), it
 is red. A polar
 two-pad part, a one-pad part, or anything with more pads is red, and the message ends with where the row point lies:
-`the row point is the centre of its courtyard`, `the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of
+`the row point is the centre of its courtyard`, `the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of
 its courtyard: JLC places a part by its centre` (KiCad's anchor of a through-hole connector is usually pin 1), or how
 far it is from that centre (J1's EasyEDA origin, which the released CPL uses, is 1.01 mm from it). `jlcplace cpl`
 writes such a part at its courtyard's centre. Inside the parentheses, `no EasyEDA record in the
