@@ -222,6 +222,62 @@ def test_diode_polarity_needs_a_second_source():
     assert c.verdict == YELLOW and has(c, "following the pad numbers and the drawn +")
 
 
+def npth(x, y, d=3.0):
+    return P("", x, y, d, d, shape="circle", kind="npth", copper=False)
+
+
+def with_holes(ee, holes, alpha, d, size=3.0):
+    """ee with unplated holes at the library points `holes`, moved as to_ee moves the pads (no mirror)."""
+    return dataclasses.replace(ee, holes=[(*cv.rot((x - d[0], y - d[1]), -alpha), size) for x, y in holes])
+
+
+def test_a_peg_hole_decides_a_polarity_the_pad_numbers_alone_would():
+    """A right-angle two-pin header (EasyEDA's land pattern of a 3 mm pitch one: a 3 mm peg 4.32 mm off the pins'
+    line): turned half a turn both pins land too, so its polarity was "decided by pad numbers only" (yellow), and
+    EasyEDA's HOLE was not read. The peg goes into KiCad's unplated hole one way only: green. Where it fits only the
+    other way round than the pad numbers place the part, a person decides: red."""
+    pads = [P("1", 0.0, 0.0, 1.5, 2.02, shape="roundrect", kind="tht"),
+            P("2", 3.0, 0.0, 1.5, 2.02, shape="oval", kind="tht"), npth(1.5, -4.32)]
+    part = kpart(pads, "J1", "Connector:Header_1x02_P3.00mm_Horizontal")
+    d = (1.5, 0.0)
+    plain = to_ee(pads, 180, d)
+    c = fit.fit_part(part, plain)
+    assert c.verdict == YELLOW and has(c, "polarity decided by pad numbers only"), c.reasons
+    c = fit.fit_part(part, with_holes(plain, [(1.5, -4.32)], 180, d))
+    assert_recovers(c, 180, d)
+    assert c.verdict == GREEN and c.doubt == "" and has(c, "ruled out by the pad numbers and the holes"), c.reasons
+    # a KiCad footprint without the hole, or an EasyEDA one without it, says nothing
+    c = fit.fit_part(kpart(pads[:2], "J1", part.footprint), with_holes(plain, [(1.5, -4.32)], 180, d))
+    assert c.verdict == YELLOW and has(c, "pad numbers only"), c.reasons
+    # the peg on the other side of the pins: it goes in only with the pins the other way round
+    c = fit.fit_part(part, with_holes(plain, [(1.5, 4.32)], 180, d))
+    assert c.verdict == RED and c.doubt == "polarity" and has(c, "polarity undecided") and c.rot == 0.0, c.reasons
+    assert has(c, "hole lands in KiCad's unplated holes only at rot 0")
+
+
+def test_peg_holes_fix_an_orientation_the_pads_do_not():
+    """A holder numbered 1, 2, 2 is symmetric: the pads cannot orient the body (yellow). A peg off its axis can."""
+    sym = [P("1", 0, 0, 3.0, 3.0), P("2", -6.0, 0, 2.0, 3.0), P("2", 6.0, 0, 2.0, 3.0)]
+    ee = to_ee(sym, 90, (0.5, 0.25))
+    c = fit.fit_part(kpart(sym + [npth(0.0, 4.0, 2.0)], "BT1"), ee)
+    assert c.verdict == YELLOW and has(c, "do not fix the body's orientation")
+    c = fit.fit_part(kpart(sym + [npth(0.0, 4.0, 2.0)], "BT1"), with_holes(ee, [(0.0, 4.0)], 90, (0.5, 0.25), 2.0))
+    assert_recovers(c, 90, (0.5, 0.25))
+    assert not has(c, "do not fix") and has(c, "the holes fix the body's orientation"), c.reasons
+    assert c.doubt == "", c
+
+
+def test_a_peg_hole_against_the_pad_numbers_is_a_doubt():
+    """Three pins in a row numbered alike on both sides, the EasyEDA peg on the side opposite KiCad's hole: the pad
+    numbers place the part, but its peg would not go in there. Green before (the holes were not read); yellow."""
+    pads = [P(n, x, 0.0, 1.5, 1.5, shape="circle", kind="tht") for n, x in (("1", -2.54), ("2", 0.0), ("3", 2.54))]
+    part = kpart(pads + [npth(0.0, 3.0, 2.0)], "Q1", "Package_TO_SOT_THT:TO-92_Inline")
+    ee = with_holes(to_ee(pads, 90, (0.0, 0.5)), [(0.0, -3.0)], 90, (0.0, 0.5), 2.0)
+    c = fit.fit_part(part, ee)
+    assert_recovers(c, 90, (0.0, 0.5))
+    assert c.verdict == YELLOW and c.doubt == "orientation" and has(c, "check the part's pegs"), c.reasons
+
+
 # Two-terminal polar parts on KiCad's own footprints, whose pads carry no pin functions (a board never updated from its
 # schematic, or a symbol without them): KiCad's library convention names the pads. The EasyEDA records of a field
 # report, reduced to the pads, pin names and "+" the fit reads: an 0805 LED (C2296 names its pads + / -, C2297 A / K;

@@ -18,7 +18,8 @@ Pads
 `PAD~shape~x~y~w~h~layer~net~number~hole_r~points~rotation~id~hole_len~hole_points~plated~...`, layers 1 top,
 2 bottom, 11 multi (through-hole). w and h are along the pad's own axes; `points` is EasyEDA's own outline of the
 pad in canvas units with the rotation already applied (RECT: the four corners, POLYGON: the outline, OVAL: the end
-points of its centre line).
+points of its centre line). A pad whose drill is unplated (`plated` N) has no copper to solder: it is a hole, as is
+`HOLE~x~y~radius~id~locked` (a connector's peg, a mounting hole), and both go to `EEFootprint.holes`.
 
 The rotation field r turns the pad's axes in the same sense as model's R(a), counter-clockwise on screen (y down), so
 `EEPad.angle = r`. Outlines cannot show the sense at multiples of 90 (a centred rectangle is symmetric), and every
@@ -181,6 +182,24 @@ def _pad(fields: list[str], ox: float, oy: float, code: str) -> EEPad | None:
                  poly=poly)
 
 
+def _hole(fields: list[str], ox: float, oy: float, code: str) -> tuple[float, float, float] | None:
+    """An unplated hole as (x, y, diameter), ee frame: `HOLE~x~y~radius~id~locked`, or a PAD whose drill is unplated
+    (`plated` N). None for anything else, and for a malformed one: holes are only evidence (fit.py), a record without
+    them is still placed."""
+    f = fields + [""] * (16 - len(fields))
+    if f[0] == "HOLE" and len(fields) >= 4:
+        x, y, r = f[1], f[2], f[3]
+    elif f[0] == "PAD" and f[9].strip() and f[15].strip().upper() == "N":
+        x, y, r = f[2], f[3], f[9]
+    else:
+        return None
+    try:
+        d = round(2.0 * _mm(_num(r, code)), 6)
+        return (_mm(_num(x, code) - ox), _mm(_num(y, code) - oy), d) if d > 0 else None
+    except EEError:
+        return None
+
+
 def _units(symbol, what: str) -> list[dict]:
     """The symbol's dataStr plus every unit of a multi-part symbol. Units are found under `result.subparts` (as
     easyeda2kicad reads them) or `dataStr.subparts`, each either a dataStr or a record holding one."""
@@ -258,14 +277,17 @@ def parse_record(code: str, result: dict) -> EEFootprint:
     if "x" not in head or "y" not in head:
         raise EEError(f"{code}: footprint has no origin (head.x / head.y)")
     ox, oy = _num(head["x"], f"{code}: head.x"), _num(head["y"], f"{code}: head.y")
-    pads, marks = [], []
+    pads, marks, holes = [], [], []
     shapes = [s for s in ds.get("shape") or [] if isinstance(s, str)]
     for s in shapes:
         f = s.split("~")
-        if f[0] == "PAD":
-            p = _pad(f, ox, oy, code)
+        if f[0] in ("PAD", "HOLE"):
+            p = _pad(f, ox, oy, code) if f[0] == "PAD" else None
+            h = _hole(f, ox, oy, code) if p is None else None
             if p is not None:
                 pads.append(p)
+            elif h is not None:
+                holes.append(h)              # an unplated pad or hole: what a peg goes into
         elif f[0] == "CIRCLE" and len(f) > 5 and f[5].strip() == MARK_LAYER:
             what = f"{code}: CIRCLE"
             marks.append((_mm(_num(f[1], what) - ox), _mm(_num(f[2], what) - oy)))
@@ -282,7 +304,7 @@ def parse_record(code: str, result: dict) -> EEFootprint:
     tags = [str(t) for t in tags if isinstance(t, (str, int, float))] if isinstance(tags, list) else []
     return EEFootprint(lcsc=code, title=title, uuid=str(pk.get("uuid") or head.get("uuid") or ""), utime=utime,
                        pads=pads, marks=marks, pin_names=pin_names(result), package=package or title,
-                       tokens=title_tokens(title), tags=tags, plus=plus_marks(shapes, ox, oy))
+                       tokens=title_tokens(title), tags=tags, plus=plus_marks(shapes, ox, oy), holes=holes)
 
 
 # ------------------------------------------------------------------------------------------------------- "+" marks

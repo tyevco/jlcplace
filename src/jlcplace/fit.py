@@ -33,6 +33,10 @@ names     EasyEDA symbol pin names vs KiCad pin functions of the lands each pad 
           (parts.ee_positive_pad) against KiCad's positive pad (parts.kicad_positive_pad: pin functions or pad
           numbers A / K / + / -, else KiCad's library convention, diode pad 1 = cathode, polarised capacitor pad
           1 = +). In JLC's preview data it settled all 6 cases where names and numbers disagreed.
+holes     EasyEDA's unplated holes (EEFootprint.holes: HOLE elements, pads with an unplated drill; a connector's peg)
+          against KiCad's NPTH pads: a member under which every EasyEDA hole lands in an NPTH, alone of the members
+          the pads, numbers and names leave in question, is the one the part can be inserted at. Nothing when either
+          side has no holes, or when they land under several members alike.
 nets      Two members are equivalent when every EasyEDA pad lands on the same nets (a land without a net is its
           own net). Swapping the two terminals of a non-polar two-terminal part (parts.nonpolar: R, C, L, a switch
           numbered 1,1,2,2, ...) is harmless too. Anything else that changes a pad's net is a different placement.
@@ -57,7 +61,9 @@ red      nothing lands every EasyEDA pad (the best partial transform at a multip
          a pinout that differs: through the chosen member the EasyEDA names are a permutation of the KiCad pin
          functions (parts.pin_diffs "swapped": a pin on the net of another pin's function) and no member of S does
          better by the names, so no rotation wires the part right (not for a non-polar two-terminal part, nor for a
-         polar one whose drawn + the member puts on KiCad's positive pad).
+         polar one whose drawn + the member puts on KiCad's positive pad); a polar two-terminal part whose holes
+         land only the other way round than its pad numbers place it ("polarity undecided": the correction follows the
+         holes).
 yellow   names pick a member the numbers do not (the names win, or, for a polar two-terminal part, the + mark
          decides: "following the pin names and the drawn +", or the pad numbers and the drawn +); the + mark against
          the pad numbers alone (it is followed: "polarity evidence conflicts"), or against pad numbers and pin names
@@ -71,11 +77,14 @@ yellow   names pick a member the numbers do not (the names win, or, for a polar 
          has, a tab 4 or shield pads, cannot match); an angle that is not a multiple of 90 (kept unsnapped); KiCad
          lands that no EasyEDA pad lands on (parts.uncovered_exemption: vias and stubs of a covered pin excepted);
          another placement that fits as well on the same numbers and nets (the pads cannot orient the body); all pads
-         on one land (only the pads' shape can tell 0 from 90 degrees).
+         on one land (only the pads' shape can tell 0 from 90 degrees); members that land every pad on other nets and
+         that only the holes separate ("placed by the holes"); holes that land under another member than the chosen
+         one, not under it ("check the part's pegs").
          Correction.doubt says when the yellow is about which placement was chosen (check makes such rows yellow).
 green    the number fit lands every pad without numbering conflicts, names agree or are uninformative, and every
-         other member of S is equivalent or ruled out by the numbers (for a polar two-terminal part, by the names
-         or the + mark as well, and neither contradicts them).
+         other member of S is equivalent or ruled out by the numbers (for a polar two-terminal part, by the names,
+         the + mark or the holes as well, and none contradicts them); members on the same numbers and nets that the
+         holes rule out leave it green.
 
 Angles within `snap` degrees of a multiple of 90 are snapped and the translation refitted for the snapped angle.
 """
@@ -271,6 +280,10 @@ class _Fit:
                 for ld in self.lands:
                     if len(ld.numbers) == 1:
                         ld.names = frozenset({"ANODE" if self.positive in ld.numbers else "CATHODE"})
+        # unplated holes, EasyEDA's and KiCad's (NPTH pads): a connector's peg fits one way only, which tells apart
+        # placements that the pads, their numbers and names leave equal
+        self.H = np.array([(h[0], h[1]) for h in ee.holes], float).reshape(-1, 2)
+        self.npth = [p for p in part.pads if p.kind == "npth" and p.w > 0 and p.h > 0]
         self._cache: dict[tuple, tuple[int, ...]] = {}
         self._anchor_list: list[int] | None = None
 
@@ -518,6 +531,12 @@ class _Fit:
         idx = [i for i, n in enumerate(self.enum) if n == mark[0]]
         return bool(idx) and all(m.land[i] >= 0 and mark[1] in self.lands[m.land[i]].numbers for i in idx)
 
+    def holes_fit(self, tf: _Tf) -> bool | None:
+        """Does every EasyEDA hole land in a KiCad NPTH under tf? None when either side has no holes."""
+        if not len(self.H) or not self.npth:
+            return None
+        return all(any(geom.pad_contains(p, (q[0], q[1])) for p in self.npth) for q in self.map(tf, self.H))
+
     def fixes_rotation(self, land) -> bool:
         """Do the lands the pads are on pin the rotation down (two distinct lands, apart)?"""
         js = sorted({j for j in land if j >= 0})
@@ -760,6 +779,17 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
                 f"{mark[2]}), the drawn + on pad {mark[0]} of the EasyEDA footprint; following {by} (rot {_deg(m)}, "
                 f"not rot {_deg(other)}): check the polarity in JLC's preview and record it with `jlcplace confirm`")
 
+    def by_holes(pool: list[_Member]) -> _Member | None:
+        """The one member of pool under which every EasyEDA hole lands in a KiCad NPTH (None: either side has no
+        holes, or they do not single one out)."""
+        ok = [m for m in pool if f.holes_fit(m.tf)]
+        return ok[0] if len(ok) == 1 else None
+
+    def holes_say(*ms: _Member) -> str:
+        n = len(f.H)
+        return (f"the EasyEDA footprint's {'hole lands' if n == 1 else f'{n} holes land'} in KiCad's unplated holes "
+                f"only at rot {', '.join(_deg(m) for m in ms)}")
+
     # set where a two-terminal part's polarity evidence takes the placement the pad numbers do not: its reason says
     # so, and "only 0 of 2 matched by number" would only say it again
     against_numbers = False
@@ -802,20 +832,40 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
         loose = [m for m in alts if m.agree >= N.agree and not m.conflicts and m.name_score >= N.name_score]
         by_names = all(N.name_score > m.name_score for m in alts)
         others = ", ".join(_deg(m) for m in alts)
-        if loose:
+        h = by_holes([N] + loose) if loose else None
+        if loose and h is not None:
+            # the numbers and names leave the placements equal, the pegs do not: a placement by the holes alone
+            chosen, verdict, doubt = h, YELLOW, "orientation"
+            reasons.append(f"rot {', '.join(_deg(m) for m in [N] + loose if m is not h)} also land every pad, on other "
+                           f"nets, and neither pad numbers nor pin names rule them out; {holes_say(h)}: placed by "
+                           f"the holes")
+        elif loose:
             verdict = RED
             reasons.append("ambiguous: " + "; ".join(f"rot {_deg(m)} lands every pad, on other nets, and neither pad "
                                                      f"numbers nor pin names rule it out" for m in loose))
         elif alts and len(f.terminals) == 2 and not by_names:
-            m = by_mark([N] + alts)
+            m, h = by_mark([N] + alts), by_holes([N] + alts)
             if m is N:
                 reasons.append(f"rot {others} also {_lands_word(alts)} both pads; ruled out by the pad numbers and "
                                f"the drawn polarity: {mark_says()}")
+            elif m is not None and h is N:
+                # the drawn + against the pad numbers and the holes: they outvote it, but it is evidence all the same
+                verdict, doubt = YELLOW, "polarity"
+                reasons.append(conflict("pad numbers and the holes", "the pad numbers and the holes", N, m))
             elif m is not None:
                 # the drawn + against the pad numbers alone: it was right in every such case of JLC's preview data
                 # (the numbers follow each library's own convention), so it is followed, and the preview settles it
                 chosen, verdict, doubt, against_numbers = m, YELLOW, "polarity", True
-                reasons.append(conflict("pad numbers", "the drawn +", m, N))
+                reasons.append(conflict("pad numbers", "the drawn +" + (" and the holes" if h is m else ""), m, N))
+            elif h is N:
+                # the peg goes in one way only, and that is the way the pad numbers place the part
+                reasons.append(f"rot {others} also {_lands_word(alts)} both pads; ruled out by the pad numbers and "
+                               f"the holes: {holes_say(N)}")
+            elif h is not None:
+                # the part sits on its pegs only the other way round than the pad numbers place it
+                chosen, verdict, doubt, against_numbers = h, RED, "polarity", True
+                reasons.append(f"polarity undecided: the pad numbers pick rot {_deg(N)}, but {holes_say(h)}: check "
+                               f"the part against both footprints and record the row with `jlcplace confirm`")
             else:
                 verdict, doubt = YELLOW, "polarity"
                 reasons.append(f"polarity decided by pad numbers only (rot {others} also {_lands_word(alts)} both "
@@ -833,7 +883,14 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
                               else "pad numbers and pin names" if by_names else "pad numbers"))
         twins = [m for m in normal if m is not chosen and m.land != chosen.land and f.same_nets(m, chosen)
                  and m.agree >= chosen.agree and m.tf.rms <= chosen.tf.rms + TWIN_RMS]
-        if twins:
+        h = by_holes([chosen] + twins) if twins else None
+        if h is not None:
+            # alike on the pads, but the pegs fit one way only
+            rest = [m for m in [chosen] + twins if m is not h]
+            chosen = h
+            reasons.append(f"rot {', '.join(_deg(m) for m in rest)} {'puts' if len(rest) == 1 else 'put'} every pad "
+                           f"on the same numbers and nets; the holes fix the body's orientation: {holes_say(h)}")
+        elif twins:
             verdict = YELLOW if verdict == GREEN else verdict
             doubt = doubt or "orientation"
             reasons.append(f"rot {', '.join(_deg(m) for m in twins)} {'puts' if len(twins) == 1 else 'put'} every pad "
@@ -866,19 +923,36 @@ def fit_part(part: Part, ee: EEFootprint, *, snap: float = 0.5) -> Correction:
             alts = [m for m in normal if m is not chosen and not harmless(m, chosen)]
             verdict, doubt = YELLOW, "polarity"
             reasons.append(f"{why}; {mark_says()}: rot {_deg(chosen)}")
+        elif alts and by_holes([lead] + alts) is not None:
+            chosen = by_holes([lead] + alts)
+            alts = [m for m in normal if m is not chosen and not harmless(m, chosen)]
+            verdict, doubt = YELLOW, "orientation"
+            reasons.append(f"{why}; {holes_say(chosen)}: placed by the holes")
         elif alts:
             verdict = RED
             reasons.append(f"ambiguous: {why}, and rot {', '.join(_deg(m) for m in [lead] + alts)} each land every "
                            f"pad on different nets with nothing to separate them")
         else:
             verdict = YELLOW
-            several = sum(m.tf.rms <= chosen.tf.rms + TWIN_RMS for m in normal) > 1
+            alike = [m for m in normal if m.tf.rms <= chosen.tf.rms + TWIN_RMS]
+            h = by_holes(alike) if len(alike) > 1 else None
+            chosen = h if h is not None else chosen
+            several = len(alike) > 1 and h is None
             doubt = "orientation" if several else ""
             reasons.append(f"{why}; " + ("every placement that lands all pads is electrically equivalent"
                                          + (" or swaps the terminals of a non-polar part" if nonpolar else "")
-                                         + ", but the pads do not fix the body's orientation"
-                                         if several else "one placement fits"))
+                                         + (f", and {holes_say(h)}" if h is not None else
+                                            ", but the pads do not fix the body's orientation")
+                                         if len(alike) > 1 else "one placement fits"))
     take(chosen.tf, "number" if chosen.is_nf else "geometry")
+    # a peg that would not go in: the EasyEDA footprint's holes land in KiCad's unplated holes under another placement
+    # that lands every pad, not under this one
+    pegged = [m for m in normal if m.land != chosen.land and f.holes_fit(m.tf)] \
+        if f.holes_fit(chosen.tf) is False else []
+    if pegged and verdict != RED:
+        verdict, doubt = YELLOW, doubt or "orientation"
+        reasons.append(f"{holes_say(*sorted(pegged, key=_rank))}, not at rot {_deg(chosen)}: check the part's "
+                       f"pegs against the KiCad footprint")
 
     # ---- names and quality
     def downgrade(why: str):

@@ -651,6 +651,24 @@ def test_rows_of_doubtful_corrections_are_yellow(env, capsys):
     assert rows["LED1"] == 180.0                               # by the numbers: EasyEDA's pad 1 on KiCad's 1
 
 
+def test_a_peg_hole_settles_what_the_pad_numbers_alone_would(env, capsys):
+    """field: a right-angle two-pin header whose EasyEDA footprint draws its peg as a HOLE and whose KiCad footprint
+    has the unplated hole: yellow ("polarity decided by pad numbers only") although the peg fits one way only."""
+    rec = record([("2", -1.5, 0.0, 1.7, 1.7, 0), ("1", 1.5, 0.0, 1.78, 1.7, 0)], uuid="hdr")
+    rec["result"]["packageDetail"]["dataStr"]["shape"].append(f"HOLE~{HX:.4f}~{HY + 4.32 / 0.254:.4f}~5.9055~gge9~0")
+    write_records(env, C3002=rec)
+    env.make(Part("J5", TOP, 115.0, 70.0, 90.0, footprint="Connector:Header_1x02_P3.00mm_Horizontal", lcsc="C3002",
+                  pads=[Pad("1", 0.0, 0.0, 1.5, 2.02, shape="roundrect", kind="tht", net="P"),
+                        Pad("2", 3.0, 0.0, 1.5, 2.02, shape="oval", kind="tht", net="N"),
+                        Pad("", 1.5, -4.32, 3.0, 3.0, shape="circle", kind="npth", copper=False)]))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--fail-on", "yellow")
+    assert code == 0 and "J5" not in out, out
+    assert {r.ref: r.rotation for r in read_cpl(env.out)}["J5"] == 270.0
+    code, out, _ = run(capsys, "fit", env.board, "--ref", "J5", *offline(env), "--json", env.tmp / "fit.json")
+    fits = json.loads((env.tmp / "fit.json").read_text(encoding="utf-8"))["fits"]
+    assert any("ruled out by the pad numbers and the holes" in r for r in fits[0]["reasons"]), fits
+
+
 def test_names_against_numbers_wait_for_a_decision(env, capsys):
     """truth-3 / geo-4: D12, EasyEDA's symbol names its pad 1 A, its footprint draws the + beside pad 2, KiCad's
     pad 1 is K. JLC's preview went with the + (and the numbers); jlcplace went with the names and wrote it reversed.
