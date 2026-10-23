@@ -162,15 +162,17 @@ Preview checklist (12 items, 99 parts): look at these in JLC's placement preview
 Only red and yellow rows are listed. The 179 green rows are counted, not printed.
 
 ::: warning If you skip `fetch`
-Without the records, nothing can be simulated. Every row is red or yellow, and the last line says what is missing:
+Without the records, nothing can be simulated. Every row is red or yellow, and the line under the header says what
+is missing:
 
 ```text
+jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace: no EasyEDA record in the cache .../.cache/jlcplace for 49 of the 49 codes JLC places (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch dial-me-spinner-main.kicad_pcb` downloads them (rate-limited), or pass --online
 ...
 RED     BZ1   C910763    bottom  placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part; the row point is the centre of its courtyard
 ...
 184 results: 68 red, 116 yellow, 0 green, 0 verified
 ...
-jlcplace: no EasyEDA record in the cache .../.cache/jlcplace for 49 codes (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
 ```
 :::
 

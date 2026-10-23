@@ -118,7 +118,7 @@ carries its unit (`12.5mm`), a column header with a unit (`Center-X(mil)`), and 
 ## Almost every row says "placement not simulated" {#almost-every-row-says-placement-not-simulated}
 
 **What you see.** Nothing is green. Multi-pin and polar parts are red, resistors and capacitors yellow, every one
-"placement not simulated", and the last line names the codes the cache lacks:
+"placement not simulated", and the line under the header names the codes the cache lacks:
 
 ```sh
 jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv
@@ -126,15 +126,16 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv
 
 ```text
 jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace: no EasyEDA record in the cache .../.cache/jlcplace for 15 of the 15 codes JLC places (C7519, C11702, C19666, C25741, C25905, C77131, C96446, C151296 and 7 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch dial-me-spinner-base.kicad_pcb` downloads them (rate-limited), or pass --online
 RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part; the row point is the centre of its courtyard
 RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads); the row point is 1.01 mm from the centre of its courtyard
 ...
 YELLOW  C1   C277470    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a two-pad non-polar part, and the row point is on it
 ...
 17 results: 8 red, 9 yellow, 0 green, 0 verified
+Gerbers not checked: plot them from this CPL's origin (aux 100, 100), as JLC lays the CPL over them from their own 0, 0 (--gerbers checks it)
 Preview checklist (17 items): look at these in JLC's placement preview
   not simulated  D1, J1, J2, J3, Q1, SW1, U1, U2, C1, C2, C3, C4, R1, R2, R3, R4, RT1
-jlcplace: no EasyEDA record in the cache .../.cache/jlcplace for 15 codes (C7519, C11702, C19666, C25741, C25905, C77131, C96446, C151296 and 7 more): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
 ```
 
 **Why.** `check`, `cpl`, `fit`, `show` and `confirm` never download anything unless you pass `--online`. They read

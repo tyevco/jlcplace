@@ -53,3 +53,21 @@ def test_every_sidebar_link_has_a_page():
     for link in links:
         page = DOCS / (link.strip("/") or "index")
         assert page.with_suffix(".md").exists(), f"sidebar/nav link {link} has no page"
+
+
+def test_the_missing_records_note_the_docs_show_is_the_one_jlcplace_prints():
+    """The docs showed the note on a cache that lacks the records as the last line, `jlcplace fetch BOARD` in it, where
+    jlcplace prints it right after the header (when the cache lacks nearly every record) and types the board's fetch.
+    Both forms keep the words "no EasyEDA record in the cache DIR for", which the plugin's skills look for."""
+    for page in PAGES:
+        for _, body in FENCE.findall(page.read_text(encoding="utf-8")):
+            lines = body.splitlines()
+            for i, line in enumerate(lines):
+                if not (line.startswith("jlcplace: ") and "EasyEDA record" in line):
+                    continue
+                where = f"{page.relative_to(DOCS)}: {line[:80]}"
+                assert line.startswith("jlcplace: no EasyEDA record in the cache "), where
+                assert "`jlcplace fetch BOARD" not in line, where + ": the note types the board's fetch"
+                if "so the rows below are checked without JLC's footprints" in line and any(
+                        ln.startswith("jlcplace 0.1.0: ") for ln in lines[:i]):          # not under -q
+                    assert lines[i - 1].startswith("jlcplace 0.1.0: "), where + ": right under the header"

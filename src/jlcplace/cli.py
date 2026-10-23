@@ -139,14 +139,11 @@ def _misses_note(client: EEClient, args=None, looked_up: int = 0) -> tuple[list[
     codes = ", ".join(missing[:8]) + (f" and {n - 8} more" if n > 8 else "")
     fetch = f"`{_fetch_command(args)}` downloads them (rate-limited), or pass --online"
     if looked_up and n >= LEAD_SHARE * looked_up:
-        have = looked_up - n
-        what = (f"the code JLC places ({codes}) has no EasyEDA record" if looked_up == 1 else
-                f"none of the {looked_up} codes JLC places ({codes}) has an EasyEDA record" if not have else
-                f"only {have} of the {looked_up} codes JLC places "
-                + ("has an EasyEDA record" if have == 1 else "have EasyEDA records"))
-        lack = f" ({codes} lack them)" if have else ""
-        return [(f"jlcplace: {what} in the cache {client.cache_dir}{lack}, so the rows below are checked without "
-                 f"JLC's footprints (red where a part needs one): {fetch}")], []
+        # the trailing line's words ("no EasyEDA record in the cache DIR for ..."), which the docs and the Claude
+        # Code plugin's skills look for
+        what = "the one code" if looked_up == 1 else f"{n} of the {looked_up} codes"
+        return [(f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {what} JLC places ({codes}), so "
+                 f"the rows below are checked without JLC's footprints (red where a part needs one): {fetch}")], []
     return [], [f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {plural(n, 'code')} ({codes}): "
                 f"{fetch}"]
 

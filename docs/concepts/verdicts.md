@@ -184,6 +184,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv --cache no-r
 
 ```text
 jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace: no EasyEDA record in the cache no-records for 15 of the 15 codes JLC places (C7519, C11702, C19666, C25741, C25905, C77131, C96446, C151296 and 7 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch dial-me-spinner-base.kicad_pcb --cache no-records` downloads them (rate-limited), or pass --online
 RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part; the row point is the centre of its courtyard
 RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads); the row point is 1.01 mm from the centre of its courtyard
 ...
@@ -191,7 +192,6 @@ YELLOW  C1   C277470    top     placement not simulated: no EasyEDA footprint (n
 ...
 17 results: 8 red, 9 yellow, 0 green, 0 verified
 ...
-jlcplace: no EasyEDA record in the cache no-records for 15 codes (C7519, C11702, C19666, C25741, C25905, C77131, C96446, C151296 and 7 more): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
 ```
 
 A resistor or capacitor whose row point lies on its pads is yellow: turned either way it is fine, and it is where it

@@ -314,6 +314,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb old-main-CPL.csv --db jlcplace-db 
 
 ```text
 jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace: no EasyEDA record in the cache no-records for 49 of the 49 codes JLC places (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch dial-me-spinner-main.kicad_pcb --cache no-records` downloads them (rate-limited), or pass --online
 RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
 RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
 RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, MP, MP (nearest KiCad pad centre up to 1.40 mm away)
@@ -326,7 +327,6 @@ YELLOW  U30  C3715882   bottom  ok: yellow because the stored auto correction is
 YELLOW  U31  C189624    top     ok: yellow because the stored auto correction is yellow: rms 0.113 mm: the land patterns differ (every pad lands)
 184 results: 3 red, 7 yellow, 174 green, 0 verified
 ...
-jlcplace: no EasyEDA record in the cache no-records for 49 codes (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
 ```
 
 The three misplaced connectors are found as they are with the records. (J40's pads are named by KiCad's numbers

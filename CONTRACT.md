@@ -732,10 +732,11 @@ def origin_lines(run) -> list[(verdict, text)]
   REF [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache
   (the default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache
   lacked and say how to fetch them (the `jlcplace fetch BOARD [--bom BOM]` to type, with the --lcsc-field, --reader and
-  --cache given): after the summary, or, when the cache lacks
-  at least `cli.LEAD_SHARE` (90 %) of the codes a `check` or `cpl` looks up, right after its header (`Run.lead`: "none
-  of the 2 codes JLC places (C1001, C1002) has an EasyEDA record in the cache DIR, so the rows below are checked
-  without JLC's footprints ..."; the rows and the exit code as they are); `check` and `cpl` print
+  --cache given): after the summary ("no EasyEDA record in the cache DIR for 1 code (C1002): ..."), or, when the cache
+  lacks at least `cli.LEAD_SHARE` (90 %) of the codes a `check` or `cpl` looks up, right after its header, in the same
+  words, which the docs and the plugin's skills look for (`Run.lead`: "no EasyEDA record in the cache DIR for 2 of the
+  2 codes JLC places (C1001, C1002), so the rows below are checked without JLC's footprints ..."; the rows and the
+  exit code as they are); `check` and `cpl` print
   `pipeline.offset_hints` (origin mismatch, units, Y not negated) unless an origin finding says it. `--gerbers` (check,
   cpl): read with `gerber.read_gerbers` (unreadable: bad input), checked with `gerber.gerber_origin` against the board
   as --origin (default aux) gives it, and against the board's Edge.Cuts (`report.board_outline`); with `jlc_origin` the
