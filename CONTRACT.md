@@ -698,8 +698,9 @@ def origin_lines(run) -> list[(verdict, text)]
   above the board views and above the part cards, and in the footer).
 * Findings and the origin in the reports: the summary's header names the CPL origin ("origin aux 100, 100", or "origin
   100, 100 from the Gerbers (aux)") and the Gerber set ("over the Gerbers gerbers.zip"); each finding is the first line
-  after it (`headline`), the count line ends "; origin red"; without --gerbers and without findings one line reminds
-  that the Gerbers were not checked. `to_dict` adds `findings` [{status, verdict, message}], `summary.findings`, and
+  after it (`headline`), the count line ends "; origin red" (each kind of finding once, at its worst verdict: "; gerbers
+  red" for two red `gerbers` findings); without --gerbers and without findings one line reminds that the Gerbers were
+  not checked. `to_dict` adds `findings` [{status, verdict, message}], `summary.findings`, and
   `origin` {x, y, kind, from_gerbers, verdict (green | red | unchecked), note, gerbers (the OriginCheck's derived
   numbers: origin, named, method, flip, scale, residual, matched, board_pads, gerber_pads, pin_pairs, compared,
   coverage, missing (<= 50), extra (a count), mismatched (<= 50), belongs, stale, notes) | null, offset (Offset's

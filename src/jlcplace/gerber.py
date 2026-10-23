@@ -1640,9 +1640,11 @@ def _coverage(res: OriginCheck, board: Board, gs: GerberSet, o, flip: str, s: fl
     and counted once. Paste pads on no board pad, a whole paste layer of them plotted from another origin
     (`extra_origin`). With pin attributes (TO.P, TO.N), copper pads that name another board pad or net than the one
     at their place (`mismatched`: parts swapped or nets changed since the plot). A side with no layer is a note (and
-    one of `problems`), not stale."""
+    one of `problems`), not stale; on a side with paste but no copper layer (one of `problems` too), an SMD pad with
+    no paste pad lowers the coverage but is not called missing: it may have no paste (a test point, a fiducial)."""
     allp = board_pads(board, apertures=True)
     seen: dict[int, bool] = {}                        # board pad index -> a Gerber pad on every side compared
+    unpasted: set[int] = set()                        # ... none on a side compared by its paste alone
     notes, todo = [], []
     for side in (TOP, BOTTOM):
         cu, paste = bool(gs.find("copper", side)), bool(gs.find("paste", side))
@@ -1653,20 +1655,23 @@ def _coverage(res: OriginCheck, board: Board, gs: GerberSet, o, flip: str, s: fl
             if n:
                 notes.append(f"the Gerbers have no {side} copper or paste layer: the {n} SMD pads of the {side} side "
                              "were not checked")
-        todo.append((side, mine))
+        todo.append((side, mine, cu))
         seen.update((i, True) for i in mine)
     res.compared = len(seen)
     if o is None:
         res.missing = [f"{allp[i].ref}:{allp[i].number}" for i in sorted(seen)]
         return notes
     tol_s = tol * s                                   # gerber units
-    for side, mine in todo:
+    for side, mine, cu in todo:
         G = np.array([(p.x, p.y) for p in gs.pads(side)], float).reshape(-1, 2)
         if mine:
             U = np.array([board_to_gerber((allp[i].x, allp[i].y), o, flip, s) for i in mine])
             j, _ = _Grid(G, tol_s).nearest(U)
             for i, k in zip(mine, j):
-                seen[i] = seen[i] and k >= 0
+                if cu:
+                    seen[i] = seen[i] and k >= 0
+                elif k < 0:
+                    unpasted.add(i)
         here = [p for p in allp if p.side in (side, "both")]
         B = np.array([board_to_gerber((p.x, p.y), o, flip, s) for p in here], float).reshape(-1, 2)
         grid = _Grid(B, tol_s)
@@ -1687,7 +1692,7 @@ def _coverage(res: OriginCheck, board: Board, gs: GerberSet, o, flip: str, s: fl
             cu = [i for i, p in enumerate(here) if p.copper]
             res.mismatched += _renamed([here[i] for i in cu], B[cu], gs.find("copper", side), tol_s)
     res.missing = [f"{allp[i].ref}:{allp[i].number}" for i in sorted(seen) if not seen[i]]
-    res.coverage = 1.0 - len(res.missing) / len(seen) if seen else 0.0
+    res.coverage = 1.0 - len(unpasted | {i for i in seen if not seen[i]}) / len(seen) if seen else 0.0
     res.belongs = bool(seen) and res.coverage >= BELONGS
     res.stale = res.belongs and bool(res.missing or res.extra or res.mismatched)
     return notes
