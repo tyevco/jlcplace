@@ -132,8 +132,9 @@ better, as it fixes the parts' angles and offsets too.
   marked "look at this one first". `jlcplace show board.kicad_pcb --ref U10 --gerbers uploaded-gerbers.zip` prints
   the row under every reading. If one reading explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb
   uploaded-CPL.csv --gerbers uploaded-gerbers.zip --reading jlc-2022+180` (with that reading's name, and the same
-  `--gerbers` or `--origin` as step 3) should show red exactly the bottom parts that came out wrong. Then write the next CPL with `jlcplace cpl` and the same `--reading`. Report it at
-  https://github.com/tyevco/jlcplace/issues, because it would change the default for everyone.
+  `--gerbers` or `--origin` as step 3) should show red exactly the bottom parts that came out wrong. Then write the
+  next CPL with `jlcplace cpl` and the same `--reading`. Report it at https://github.com/tyevco/jlcplace/issues,
+  because it would change the default for everyone.
 * **Parts at odd angles** (a ring of LEDs) off square: check the row's angle against the board. Angles that are not
   multiples of 90 are allowed. The checklist names one part per code to look at.
 
