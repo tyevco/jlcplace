@@ -3,7 +3,7 @@
     jlcplace check BOARD CPL       simulate a CPL from any tool against the board (and its Gerbers: --gerbers)
     jlcplace cpl BOARD -o CPL      write the CPL (corrections from the database, else fitted), check it, refuse if red
     jlcplace fit BOARD             fit corrections (and store them with --db)
-    jlcplace fetch BOARD|CODE ...  download EasyEDA records into the cache
+    jlcplace fetch BOARD|CODE ...  download EasyEDA records into the cache (--bom: the BOM's codes too)
     jlcplace confirm BOARD --ref   record a verification (manual, JLC preview, assembled board) in the database
     jlcplace show CODE | BOARD --ref REF
     jlcplace snapshot BOARD -o board.json
@@ -509,6 +509,8 @@ def cmd_fit(args) -> int:
 # ------------------------------------------------------------------------------------------------------- fetch
 
 def cmd_fetch(args) -> int:
+    if not args.targets and not args.bom:
+        raise BadInput("fetch: give a board, LCSC codes or --bom CSV")
     client = EEClient(args.cache, min_interval=args.min_interval)
     codes: list[str] = []
     for t in args.targets:
@@ -518,6 +520,10 @@ def cmd_fetch(args) -> int:
             args.board = t
             board = _board(args)
             codes += sorted({p.lcsc for p in board.parts if p.lcsc and _placeable(p)}, key=natural_key)
+    bom = _bom(args.bom)
+    if bom is not None:
+        # JLC places the BOM's codes, also where the board names another code or none (codes kept in the BOM only)
+        codes += [b["lcsc"] for b in bom if is_code(b.get("lcsc") or "")]
     codes = list(dict.fromkeys(codes))
     got = missing = failed = 0
     for code in codes:
@@ -883,8 +889,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_fit)
 
     s = sub.add_parser("fetch", parents=[board], help="download EasyEDA records into the cache")
-    s.add_argument("targets", nargs="+", metavar="BOARD|CODE",
+    s.add_argument("targets", nargs="*", metavar="BOARD|CODE",
                    help="boards (every LCSC code on them) and/or LCSC codes such as C7519")
+    s.add_argument("--bom", metavar="CSV", help="the JLC BOM: its LCSC codes too (JLC places the BOM's codes, also "
+                                                 "where the board has none)")
     s.add_argument("--cache", default=None, metavar="DIR", help=f"record cache (default {default_cache_dir()})")
     s.add_argument("--refresh", action="store_true", help="fetch again even when cached")
     s.add_argument("--min-interval", type=float, default=0.7, metavar="S", help="seconds between requests")

@@ -79,7 +79,7 @@ def _usage(name: str, sub: argparse.ArgumentParser) -> str:
         if a.option_strings or a.help is argparse.SUPPRESS:
             continue
         meta = a.metavar or a.dest.upper()
-        words.append(f"{meta} [{meta} ...]" if a.nargs == "+" else meta)
+        words.append(f"{meta} [{meta} ...]" if a.nargs == "+" else f"[{meta} ...]" if a.nargs == "*" else meta)
     required = [a for a in sub._actions if a.option_strings and a.required]
     flags = " ".join(f"{a.option_strings[-1]} "
                      f"{a.metavar or ('{' + ','.join(map(str, a.choices)) + '}' if a.choices else a.dest.upper())}"

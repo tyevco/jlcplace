@@ -658,7 +658,9 @@ def origin_lines(run) -> list[(verdict, text)]
   BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless --force: an existing CPL
   is left unchanged and the note says so, under -q naming the red refs; the reports of a run that wrote nothing name no
   CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint or entry get the fallback row);
-  `fit BOARD [--ref]... [--db] [--json]`; `fetch BOARD|CODE...` [--refresh]; `confirm BOARD --ref REF --db DIR --by NAME
+  `fit BOARD [--ref]... [--db] [--json]`; `fetch [BOARD|CODE]... [--bom CSV] [--refresh]` (the codes of the boards'
+  parts a CPL can get placed, the codes given, and with --bom every LCSC code of the BOM; none of them: bad input);
+  `confirm BOARD --ref REF --db DIR --by NAME
   --source manual|preview|board [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx
   --dy]` (preview and board need --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the
   correction recorded, refs of one entry must agree on it, a reference two placed parts carry is refused, the part's

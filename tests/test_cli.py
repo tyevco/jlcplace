@@ -324,6 +324,31 @@ def test_fetch_uses_the_cache(env, capsys):
                                     "C1002: TEST-r0402, 2 pads (cached)"]
 
 
+def test_fetch_takes_the_codes_a_bom_keeps(env, capsys):
+    """A board that keeps its LCSC codes only in the BOM (no LCSC field on its footprints) could not be fetched before
+    the check: `fetch BOARD` found no codes and had no --bom. The BOM's codes are fetched too now, as the GitHub
+    Action does."""
+    board = env.make()
+    for p in board.parts:
+        p.lcsc = ""
+    save_snapshot(board, env.board)
+    bom = env.tmp / "bom.csv"
+    bom.write_text("Comment,Designator,Footprint,LCSC\nX,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2\",0402,C1002\n"
+                   "Y,R9,0402,n/a\n", encoding="utf-8")
+    code, out, _ = run(capsys, "fetch", env.board, "--cache", env.cache)
+    assert code == 0 and out.startswith("0 codes"), out
+    code, out, _ = run(capsys, "fetch", env.board, "C1003", "--bom", bom, "--cache", env.cache)
+    assert code == 0 and out.splitlines() == ["C1003: not found (Component not found; cached)",
+                                              "C1001: TEST-sot, 6 pads (cached)", "C1002: TEST-r0402, 2 pads (cached)",
+                                              f"3 codes: 2 footprints, 1 not found, 0 failed; cache {env.cache}"], out
+    code, out, _ = run(capsys, "fetch", "--bom", bom, "--cache", env.cache)
+    assert code == 0 and "2 codes: 2 footprints" in out, out
+    code, _, err = run(capsys, "fetch", "--cache", env.cache)
+    assert code == 3 and "give a board, LCSC codes or --bom CSV" in err, err
+    code, _, err = run(capsys, "fetch", env.board, "--bom", env.tmp / "missing.csv", "--cache", env.cache)
+    assert code == 3 and "missing.csv: no such file" in err, err
+
+
 # ------------------------------------------------------------------------------------------------------- pipeline
 
 def test_proxy_footprint_reproduces_the_correction():
