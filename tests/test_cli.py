@@ -250,6 +250,22 @@ def test_a_row_point_outside_the_board_outline_is_yellow(env, capsys):
         "the row point is outside the board outline (Edge.Cuts), 5.00 mm beyond its edge")
 
 
+def test_fixed_cpl_counts_rows_outside_the_board_outline(env, capsys):
+    """--fixed-cpl checked its rows again without the board outline: the rows outside it were green in 'its check',
+    and yellow when the file it wrote was checked."""
+    path = env.tmp / "outlined.kicad_pcb"
+    path.write_text(OUTLINED.format(parts="\n".join(R0402.format(ref=r, x=x, y=y) for r, x, y in (
+        ("R1", 110, 90), ("R2", 130, 90), ("R3", 115, 85), ("R4", 105, 95), ("R5", 105, 85)))), encoding="utf-8")
+    assert run(capsys, "cpl", path, "-o", env.out, "--reader", "sexpr", *offline(env))[0] == 0
+    page = env.tmp / "page.csv"                    # written from the page origin
+    write_cpl(page, [dataclasses.replace(r, x=r.x + 100.0, y=r.y - 100.0) for r in read_cpl(env.out)])
+    fixed = env.tmp / "fixed.csv"
+    code, out, _ = run(capsys, "check", path, page, "--reader", "sexpr", *offline(env), "-q", "--fixed-cpl", fixed)
+    assert "(5 rows moved by (-100.000, +100.000) mm): its check: 0 red, 2 yellow, 3 green" in out, out
+    code, out, _ = run(capsys, "check", path, fixed, "--reader", "sexpr", *offline(env))
+    assert "5 results: 0 red, 2 yellow, 3 green" in out, out
+
+
 def test_cpl_refuses_red_rows(env, capsys):
     env.make(two("D1", TOP, 115.0, 70.0, 0.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
     Path(env.out).write_text("old\n", encoding="utf-8")
