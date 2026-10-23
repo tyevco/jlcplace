@@ -64,19 +64,28 @@ def assembled(part: Part) -> bool:
     return part.placed and not part.exclude_bom
 
 
-def jlc_places(part: Part, bom_refs=None, cpl_refs=None) -> bool:
+def jlc_places(part: Part, bom_refs=None, cpl_refs=None, taken=()) -> bool:
     """JLC places it, as far as the board, the JLC BOM's designators (`bom_refs`, None: no BOM given) and the CPL's
     (`cpl_refs`) tell. JLC never sees KiCad's attributes and places what its BOM and CPL list: never a DNP or
     board-only part; an assembled one always; one the board excludes from its position files or its BOM when the BOM
     lists it, or, with no BOM given, when the board only excludes it from its position files (its own BOM lists it)
-    and the CPL lists it."""
+    and the CPL lists it. `taken`: the references the board's assembled parts carry (assembled_refs): an excluded part
+    with one of them is an alternate footprint (KiCad 6 had no DNP attribute), and the BOM line and the row that name
+    it are the assembled part's."""
     if part.dnp or part.board_only:
         return False
     if assembled(part):
         return True
+    if part.ref in taken:
+        return False
     if bom_refs is not None:
         return part.ref in bom_refs
     return not part.exclude_bom and cpl_refs is not None and part.ref in cpl_refs
+
+
+def assembled_refs(board: Board) -> set[str]:
+    """The references of the board's assembled parts (`assembled`), for jlc_places' `taken`."""
+    return {p.ref for p in board.parts if assembled(p)}
 
 
 def _finite(v: float, text) -> float:
@@ -389,11 +398,12 @@ def rows_for_board(board: Board, corrections: dict[str, Correction], reading: st
     """(rows, refs) for the parts JLC assembles that carry an LCSC code, made with convention.cpl_row_for; `refs`
     are those left out for want of a correction, or with only a mirrored one (no rigid placement reproduces it).
     With `bom_refs` (the JLC BOM's designators), also the parts the board excludes from its position files or its BOM
-    that the BOM lists (jlc_places). `corrections` is keyed by reference or LCSC code. Both lists sorted naturally
-    (R2 before R10)."""
+    that the BOM lists, unless an assembled part carries the reference (jlc_places). `corrections` is keyed by
+    reference or LCSC code. Both lists sorted naturally (R2 before R10)."""
     rows, missing = [], []
+    taken = assembled_refs(board)
     for part in board.parts:
-        if not jlc_places(part, bom_refs) or not part.lcsc:
+        if not jlc_places(part, bom_refs, taken=taken) or not part.lcsc:
             continue
         corr = correction_for(corrections, part)
         if corr is None or corr.mirror:

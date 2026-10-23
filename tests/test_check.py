@@ -883,6 +883,35 @@ def test_a_reference_two_placed_parts_share_is_red():
     assert [(r.ref, r.status, r.verdict) for r in res] == [("R7", "ok", GREEN), ("R8", "ok", GREEN)]
 
 
+def test_an_alternate_footprint_the_board_excludes_shares_the_assembled_parts_reference():
+    """KiCad 6 had no DNP attribute: an alternate footprint of U1 was excluded from the position files and the BOM,
+    and kept U1's reference. The BOM's U1 line and the CPL's U1 row are the assembled part's, so the alternate is no
+    second U1 that JLC places: it was "duplicate-ref", red, with a BOM (and, excluded only from the position files,
+    without one), `cpl --bom` wrote a U1 row for each, and resolve() took the alternate when it came first."""
+    from jlcplace.pipeline import resolve
+    u1, alt = sot23_6("U1"), sot23_6("U1", x=150.0)
+    corr = Correction(270.0, verdict=GREEN)
+    ee = ee_for(u1, corr)
+    board = Board("b", ORIGIN, [alt, u1])                 # the alternate first: Board.part gives it
+    client = SimpleNamespace(get=lambda code: ee)
+    for exclude_bom in (True, False):
+        alt.exclude_pos, alt.exclude_bom = True, exclude_bom
+        for bom_refs in (None, {"U1"}):
+            res = check_cpl(board, [row_for(u1, corr)], lambda code: ee, corrections={"C7519": corr},
+                            bom_refs=bom_refs)
+            assert [(r.ref, r.status, r.verdict) for r in res] == [("U1", "ok", GREEN)], (exclude_bom, bom_refs, res)
+            res = check_cpl(board, [], lambda code: ee, corrections={"C7519": corr}, bom_refs=bom_refs)
+            assert [(r.ref, r.status) for r in res] == [("U1", "no-row")], (exclude_bom, bom_refs, res)
+            bom = None if bom_refs is None else [{"designators": ["U1"], "lcsc": "C7519"}]
+            assert resolve(board, client, bom_rows=bom, cpl_refs={"U1"})["U1"].part is u1
+        rows, missing = rows_for_board(board, {"C7519": corr}, bom_refs={"U1"})
+        assert (rows, missing) == ([row_for(u1, corr)], []), rows
+    # two assembled parts with one reference are still ambiguous
+    alt.exclude_pos = alt.exclude_bom = False
+    res = check_cpl(board, [row_for(u1, corr)], lambda code: ee, corrections={"C7519": corr})
+    assert [(r.status, r.verdict) for r in res] == [("duplicate-ref", RED)]
+
+
 def test_a_one_pad_part_without_a_footprint_says_why():
     """logic-11: not 'the part has polarity or more than two pads'."""
     tp = Part("TP1", TOP, 100.0, 100.0, 0.0, footprint="TestPoint:TestPoint_Pad_1.0x1.0mm", lcsc="C5",

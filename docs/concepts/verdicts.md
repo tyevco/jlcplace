@@ -249,7 +249,9 @@ the BOM lists it: JLC will place it`.
 
 `R1 is on the board 2 times: JLC cannot tell them apart`. KiCad lets two footprints share a reference (for example a
 footprint and a DNP alternative). When more than one of them is placed, a CPL row cannot say which one it means, so
-none of them is simulated.
+none of them is simulated. A footprint the board excludes from its position files or its BOM beside an assembled one
+of the same reference (KiCad 6, which had no DNP attribute, marked alternatives so) is not counted: the BOM line and
+the row are the assembled part's.
 
 ## Messages that do not change the verdict
 
