@@ -1,6 +1,6 @@
 ---
 name: prepare-jlc-order
-description: Prepare a KiCad board's JLCPCB assembly order (Gerbers, drill files and CPL from one origin, a BOM with LCSC codes, a CPL checked with jlcplace, and a pre-upload checklist) with kicad-cli or KiCad's dialogs. Use when the user wants to order a KiCad board from JLCPCB with assembly (PCBA, SMT), or asks what to upload.
+description: Prepare a KiCad board's JLCPCB assembly order (Gerbers, drill files and CPL from one origin, a BOM with LCSC codes, a CPL checked with jlcplace against the Gerbers, and a pre-upload checklist) with kicad-cli or KiCad's dialogs. Use when the user wants to order a KiCad board from JLCPCB with assembly (PCBA, SMT), or asks what to upload.
 argument-hint: "[board.kicad_pcb]"
 allowed-tools: Bash(jlcplace cpl *) Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace --version) Bash(kicad-cli *) Read Glob
 ---

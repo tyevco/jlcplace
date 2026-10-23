@@ -55,8 +55,9 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    A part whose uploaded row jlcplace flags red needs no failure record, because jlcplace's correction already
    differs from that row. `confirm --failed` refuses it with exit 3 (`the row in ... is not the stored correction's
    ...: its failure says nothing about that correction; nothing recorded`), and then records none of the `--ref`s
-   given with it. A part that came out wrong although its row is green is different: see the bottom side and the
-   pinout sections below.
+   given with it. A part that came out wrong although its row is green: first see the bottom side and the pinout
+   sections below. If neither explains it, record it with `--failed` (as under "Reversed"): its row is then red
+   (`verified-wrong`) until the correction is fixed.
 
 ## Shifted: the part sits beside its pads
 
@@ -116,36 +117,57 @@ better, as it fixes the parts' angles and offsets too.
 
 An assembled board is evidence for the bottom reading too. If the checklist's `look at this one first` part (its row
 green) came out right on the board, JLC read the bottom side as `jlc-2022`, the reading jlcplace writes, and the
-other green bottom parts follow. Record that part with `--source board` (step 6) and tell the user what it settles.
-jlcplace still lists the other bottom parts under "bottom reading" afterwards: recording one part does not clear the
-item, so in the next preview a glance at each is enough.
+other green bottom parts follow. Record that part with `--source board` (step 6): the readings under which it would
+have moved are then ruled out for every part, and the next checklist has no `bottom reading` item for the parts that
+only those readings moved (the others say which readings it ruled out). Tell the user what it settles.
 
-## Reversed: a diode, LED or polarised capacitor turned 180 degrees
+## Reversed: a two-terminal part turned 180 degrees
 
-KiCad's libraries put a diode or LED's cathode on pad 1 and a polarised capacitor's "+" on pad 1. Some EasyEDA
-footprints number them the other way. jlcplace compares the EasyEDA pin names, the "+" drawn on the EasyEDA
-footprint, and the KiCad pin functions:
+A diode, LED, polarised capacitor or trimmer capacitor (its rotor), or a jumper or switch on a right-angle
+`_Horizontal` footprint (its body), must not be turned round. KiCad's libraries put a diode or LED's cathode on pad 1
+and a polarised capacitor's "+" on pad 1. Some EasyEDA footprints number them the other way. jlcplace compares the
+EasyEDA pin names, the "+" drawn on the EasyEDA footprint, EasyEDA's unplated holes (a peg) and the KiCad pin
+functions and holes:
 
-* `polarity decided by pad numbers only ... check the polarity mark in JLC's preview` (yellow), or `the polarity needs
-  a decision` (red): nothing in the records settles it. If the preview or the board showed it reversed, record it
-  ([review-jlc-preview](../review-jlc-preview/SKILL.md): the uploaded CPL, and the two space presses that turned it
-  round, `--space 2`). `jlcplace cpl` then writes the turned row.
-* jlcplace says green, but the assembled part is reversed: the pad numbers agree, yet the real part's pin 1 is not
-  the pin that KiCad's footprint calls 1. That is a pinout problem: see below.
+* `polarity reversed: the row puts the part the other way round than the correction does ...` (red, `reversed`): the
+  uploaded row is half a turn from jlcplace's. Write the CPL with `jlcplace cpl`. If the part came out right as
+  uploaded, the correction is wrong: record the uploaded row (`--source board --cpl uploaded-CPL.csv`, step 6), which
+  replaces it.
+* `polarity decided by pad numbers only ... check the polarity mark in JLC's preview` (yellow), `polarity evidence
+  conflicts: ...` (yellow), or `the polarity needs a decision` (red): nothing in the records settles it. If the preview
+  showed it reversed, record it ([review-jlc-preview](../review-jlc-preview/SKILL.md): the uploaded CPL, and the two
+  space presses that turned it round, `--space 2`). `jlcplace cpl` then writes the turned row.
+* jlcplace says green, but the assembled part is reversed. With the user's agreement, record that:
+
+  ```sh
+  jlcplace confirm board.kicad_pcb --ref D3 --db jlcplace-db --by NAME --source board --cpl uploaded-CPL.csv --failed --note "reversed on the board"
+  ```
+
+  Its row is then red (`verified-wrong`), and `jlcplace cpl --db` refuses it until the correction is fixed: typed in
+  (`--source manual --rot ...`, the user's decision), or the two space presses that turn it round in the next
+  preview (of a CPL written with `--force`). If the real part's pin 1 is not the pin KiCad's footprint calls 1, that
+  is a pinout problem: see below.
 
 ## Wrong pins: placed as JLC's footprint says, but the circuit is wrong
 
 The LCSC part's pinout differs from the KiCad symbol and footprint. For example, a SOT-23 MOSFET has G-S-D where the
 symbol expects G-D-S, or a regulator orders its pins differently. No CPL can fix this. The part must change, or the
-symbol's pin mapping and the board must. Evidence from jlcplace: a correction reason such as `pin names pick rot
-...`, `numbering conflict: ... check the pinout`, or the `landings` in `jlcplace show board.kicad_pcb --ref Q1`
-(EasyEDA pad, KiCad pad, net). Compare them with the part's datasheet (lcsc.com, search the code). If the installed
-jlcplace reports a pinout status or finding in its check output, use it as the primary evidence.
+symbol's pin mapping and the board must. The primary evidence is the check's: it compares the LCSC part's pin names,
+through the row, with the symbol's pin functions on the pads they land on. A red `pinout` row (`pinout differs from
+the symbol: pad 2 is S on the LCSC part, D on the board; ...`: no placement wires it right) or a yellow `N pin names
+differ from the symbol: ...` names the pins; the checklist lists such parts first, under `pinout`. It needs pin
+functions on the board's pads (KiCad fills them with "Update PCB from Schematic"); without them nothing is compared.
+More evidence: a correction reason such as `pin names pick rot ...` or `numbering conflict: ... check the pinout`, and
+the `landings` in `jlcplace show board.kicad_pcb --ref Q1` (EasyEDA pad, KiCad pad, net). Compare them with the
+part's datasheet (lcsc.com, search the code). A preview verification does not settle a pinout (the preview shows
+pads, not pin functions); a board that works does (`confirm --source board`).
 
 ## Missing parts
 
-`no-row` (red: the CPL has no row for an assembled part), a BOM line without an LCSC code, or a part JLC had out of
-stock (JLC's order page says so). Add the row or code, or choose another part. Then run [prepare-jlc-order](../prepare-jlc-order/SKILL.md)
+`no-row` (red: the CPL has no row for a part JLC places, such as a part the BOM lists that the board excludes from
+its position files, which KiCad's position file then leaves out), a BOM line without an LCSC code, or a part JLC had
+out of stock (JLC's order page says so). Add the row (`jlcplace cpl --bom` writes one for every part the BOM lists)
+or the code, or choose another part. Then run [prepare-jlc-order](../prepare-jlc-order/SKILL.md)
 steps 5 and 6 again.
 
 The [verdict reference](../check-jlc-placement/verdicts.md) explains every status and message.

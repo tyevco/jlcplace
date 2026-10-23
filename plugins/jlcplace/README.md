@@ -73,8 +73,8 @@ Examples:
 * **EasyEDA data stays on your machine.** The footprint records belong to the JLCEDA/EasyEDA Official Library.
   jlcplace keeps them in its local cache (`$JLCPLACE_CACHE`, else `$XDG_CACHE_HOME/jlcplace`, else
   `~/.cache/jlcplace`). The HTML report (`--report`) and the overlay images (`--overlay`) draw EasyEDA pad outlines
-  and are for your own review. Never commit or publish the cache, the report or the images. The CPL, the checklist, the JSON and JUnit outputs and the correction
-  database hold derived numbers only, and can be committed.
+  and are for your own review. Never commit or publish the cache, the report or the images. The CPL, the checklist,
+  the JSON and JUnit outputs and the correction database hold derived numbers only, and can be committed.
 * **The bottom side.** JLC does not document how it reads a bottom-side rotation. jlcplace uses the reading every
   open tool uses and lists the parts that depend on it. JLC's placement preview stays the final check.
 
