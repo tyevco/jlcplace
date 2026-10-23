@@ -468,6 +468,21 @@ def _seen(run: Run, res: RowResult) -> str:
     return "board" if "board" in srcs else "preview" if "preview" in srcs else ""
 
 
+def _entry(run: Run, res: RowResult) -> tuple | None:
+    """The database entry a result's correction is: (code, EasyEDA key, KiCad hash); None without a correction."""
+    info = run.resolved.get(res.ref)
+    c = info.corr if info is not None else None
+    return None if c is None else (res.lcsc, c.ee_key, c.kicad_hash)
+
+
+def odd_seen(run: Run) -> set[tuple]:
+    """The (entry, side) pairs of which a part at an odd angle was shown right itself (`_seen`): the odd-angle item
+    of a code and side asks for one look ("the others are the same part on the same side"), so the parts of that
+    entry on that side whose rows are verified have had it."""
+    return {(_entry(run, r), r.row.layer) for r in run.results
+            if r.row is not None and _off90(r.row.rotation) > 1e-6 and _seen(run, r)}
+
+
 def ruled_out(run: Run) -> dict[str, list[str]]:
     """The other bottom readings that verified bottom parts rule out, with those parts: a row JLC's preview or the
     assembled board showed right (`_seen`) would have moved under them, so JLC does not read the bottom so."""
@@ -485,10 +500,12 @@ def _left(res: RowResult, ruled) -> dict[str, list]:
     return {n: m for n, m in res.reading_moves.items() if m and n not in ruled}
 
 
-def _found(run: Run, res: RowResult, ruled=None) -> list[tuple[str, str, str]]:
+def _found(run: Run, res: RowResult, ruled=None, odd=None) -> list[tuple[str, str, str]]:
     """(category, what as an item, what as a note on another item) for every reason to look at a result's part.
-    `ruled`: the bottom readings verified parts rule out (ruled_out): a part that moves only under those is settled."""
+    `ruled`: the bottom readings verified parts rule out (ruled_out): a part that moves only under those is settled.
+    `odd`: odd_seen(run), the entries and sides a part was shown right at an odd angle with."""
     ruled = ruled or {}
+    odd = odd or set()
     row = res.row
     part = jlc_part(run.board, res.ref)
     a = row.rotation if row else None
@@ -533,8 +550,10 @@ def _found(run: Run, res: RowResult, ruled=None) -> list[tuple[str, str, str]]:
                       f"verified {where}")
         out.append(("bottom reading", f"if JLC read the bottom rotation another way: {moves}",
                     f"the bottom reading matters ({moves})"))
-    if row is not None and part is not None and _off90(a) > 1e-6 and not _seen(run, res):
-        # a part JLC's preview or the assembled board showed right at its angle has been looked at
+    if row is not None and part is not None and _off90(a) > 1e-6 and not _seen(run, res) and not (
+            res.verdict == VERIFIED and (_entry(run, res), row.layer) in odd):
+        # a part JLC's preview or the assembled board showed right at its angle has been looked at, and so has a
+        # verified row of its entry on its side when one of them was shown right at an odd angle
         out.append(("odd angle", f"rotation {a:g} is not a multiple of 90: check the part sits square on its pads",
                     f"rotation {a:g} is not a multiple of 90"))
     return sorted(out, key=lambda f: CATEGORIES.index(f[0]))
@@ -587,13 +606,14 @@ def checklist(run: Run) -> list[CheckItem]:
                             a reading under which a verified bottom part (ruled_out) would move is ruled out, and a
                             part that moves only under such readings is settled;
       odd angle             rows at angles that are not multiples of 90, one item per code and side (not a part
-                            verified itself, `_seen`).
+                            verified itself, `_seen`, nor a verified row of an entry a part was shown right with
+                            at an odd angle on that side, `odd_seen`).
     Within a category, red rows (fix the row first) before yellow before green."""
     items: list[CheckItem] = []
     by_ref: dict[str, RowResult] = {}
-    ruled = ruled_out(run)
+    ruled, odd = ruled_out(run), odd_seen(run)
     for res in run.results:
-        found = _found(run, res, ruled)
+        found = _found(run, res, ruled, odd)
         if not found:
             continue
         part = jlc_part(run.board, res.ref)

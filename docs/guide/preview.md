@@ -233,7 +233,8 @@ Preview checklist (4 items, 90 parts): look at these in JLC's placement preview
 The yellow rows are gone and three rows are verified. A confirmed part leaves the checklist. J1, verified, would
 have moved under every other bottom reading, so none of them is left: the bottom reading items are gone, and the
 odd angles of J40 and U10, folded into their bottom reading items before, are items of their own. An odd angle item
-stays until its part is looked at: a part verified at its angle (BZ1, J1) has been.
+stays until a part of it is looked at: a part verified at its angle (BZ1, J1) has been, and so has every part of its
+code on its side once one of them was verified at an odd angle (C107 for the ring of capacitors).
 
 `confirm` needs the part's EasyEDA record in the cache, because a verification is stored under the EasyEDA footprint
 it was made with: when EasyEDA later changes that footprint, the verification no longer applies. If the record is

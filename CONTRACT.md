@@ -664,7 +664,8 @@ def origin_lines(run) -> list[(verdict, text)]
   preview or board verification of its numbers for this ref, side and board file stem) would move is ruled out for
   every part: a part that moves only under ruled-out readings has no item, the others leave them out of the pins and
   say "ccw-from-top+180 and jlc-2022+180 are ruled out by U4, verified on the assembled board"), odd angle (row rotation
-  not a multiple of 90; not for a row verified itself). A part is one item, under its first category; its other
+  not a multiple of 90; not for a row verified itself, nor for a verified row of an entry and side of which a part was
+  verified itself at an odd angle, `odd_seen`). A part is one item, under its first category; its other
   categories are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and
   `ref` the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
   `rotation` None; outside the outline per (code, side, row verdict), `ref` the part furthest out, the notes that

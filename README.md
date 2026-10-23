@@ -333,7 +333,8 @@ from the CPL's origin. Then, in this order:
   and the others say which readings are ruled out, by which part. Parts of one code at one rotation move alike and
   share an item.
 * **odd angle**: rows at angles that are not multiples of 90, one item per code and side (an LED ring of 44 is one
-  item), naming the part furthest from a multiple of 90; a part verified itself at its angle is left out.
+  item), naming the part furthest from a multiple of 90; a part verified itself at its angle is left out, and so are
+  the verified rows of its entry on its side once one of them was verified at an odd angle (C107 for the ring).
 
 Within each (after the bottom reading's first part), red rows come first and are flagged: fix the row before
 looking at it (for a pinout: the LCSC part or the symbol is wrong). The Markdown, CSV, JSON and HTML checklists carry
