@@ -27,8 +27,9 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
 
    The terminal shows only the first message of each row. For each red or yellow row, read every message in
    `results.json`, and its `row` (as uploaded) and `expected` (the row jlcplace writes), or run
-   `jlcplace show board.kicad_pcb --ref J1`. Quote the distances to the user (`differs from the row jlcplace writes
-   (...): 3.399 mm and 0 deg away`), and any pads that land on other pins' nets (`11->2 (+13V_OLED, not GND)`).
+   `jlcplace show board.kicad_pcb --ref J1 --gerbers uploaded-gerbers.zip`. Quote the distances to the user
+   (`differs from the row jlcplace writes (...): 3.399 mm and 0 deg away`), and any pads that land on other pins'
+   nets (`11->2 (+13V_OLED, not GND)`).
    `overlay/top.svg` and `overlay/bottom.svg` (PNGs too when a renderer is at hand) show each side as JLC's preview
    does, with the EasyEDA pads where the uploaded rows put them and the problem parts circled: put them beside the
    preview or the photos. `--report report.html` draws every part on its own card. Both draw EasyEDA pad outlines:
@@ -42,12 +43,19 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    change it): the parts that came out **right**, with `jlcplace confirm ... --source board --cpl uploaded-CPL.csv`
    and no `--failed` ([review-jlc-preview](../review-jlc-preview/SKILL.md)). Read the rows from the CPL's origin, as
    the check did: pass the same `--gerbers uploaded-gerbers.zip`, or without the zip the `--origin` the check's first
-   line names when it is not aux (`origin 0, 0 from the Gerbers (absolute)`: `--origin absolute`).
+   line names when it is not aux (`origin 0, 0 from the Gerbers (absolute)`: `--origin absolute`); when the check
+   ends with an `origin mismatch` hint, check again with the `--origin` the hint names, and confirm with that same
+   `--origin`.
    * A red row off jlcplace's correction (`off-copper`, `wrong-pad`, `reversed`: its `row` differs from `expected`
      in `results.json`, or it says `differs from the row jlcplace writes`) needs no failure record: jlcplace already
      writes another row. `confirm --failed` refuses it with exit 3 (`the row in ... is not the stored correction's
      ...: its failure says nothing about that correction; nothing recorded`), and then records none of the `--ref`s
      given with it.
+   * Nor does such a row that came out right get a record: a red `off-copper` or `wrong-pad` row off jlcplace's
+     correction that came out right on the board was put right by JLC. Record nothing for it; the row jlcplace
+     writes is the one to upload (`confirm` refuses one that puts every pad off copper: `the row itself is off ...:
+     if the part came out right, JLC moved it`). Only a `reversed` row that came out right as uploaded is recorded,
+     as "Reversed" says.
    * A red row that lands as a red correction puts it (`renumbered` red, `ok` red: `the polarity needs a decision`,
      `pinout`) is jlcplace's own row. Settle it with a decision (`confirm --source manual`,
      [write-jlc-cpl](../write-jlc-cpl/SKILL.md)), or, if the board showed it wrong, record it with `--failed`.
@@ -115,11 +123,11 @@ better, as it fixes the parts' angles and offsets too.
   `jlc-2022` reading jlcplace assumes. JLC does not document it, and nothing offline proves it. The "bottom reading"
   items of `uploaded-checklist.md` say, for each bottom part, what each other reading would do (`as jlc-2022+180,
   pin 1 would sit on pad 4`). Compare those predictions with what the preview or the board showed for the part
-  marked "look at this one first". `jlcplace show board.kicad_pcb --ref U10` prints the row under every reading. If
-  one reading explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb uploaded-CPL.csv --reading
-  jlc-2022+180` (with that reading's name) should show red exactly the bottom parts that came out wrong. Then write
-  the next CPL with `jlcplace cpl` and the same `--reading`. Report it at https://github.com/tyevco/jlcplace/issues,
-  because it would change the default for everyone.
+  marked "look at this one first". `jlcplace show board.kicad_pcb --ref U10 --gerbers uploaded-gerbers.zip` prints
+  the row under every reading. If one reading explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb
+  uploaded-CPL.csv --reading jlc-2022+180` (with that reading's name) should show red exactly the bottom parts that
+  came out wrong. Then write the next CPL with `jlcplace cpl` and the same `--reading`. Report it at
+  https://github.com/tyevco/jlcplace/issues, because it would change the default for everyone.
 * **Parts at odd angles** (a ring of LEDs) off square: check the row's angle against the board. Angles that are not
   multiples of 90 are allowed. The checklist names one part per code to look at.
 
