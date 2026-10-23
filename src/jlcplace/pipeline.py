@@ -92,6 +92,8 @@ class Run:
     gerbers: OriginCheck | None = None                             # the --gerbers set's origin check
     gerbers_path: str = ""
     offset: Offset | None = None                                   # common_offset of the rows, once computed
+    lead: list[str] = field(default_factory=list)                  # said right after the summary's header (the
+                                                                   # record cache lacks what every row needs)
 
     def counts(self) -> dict[str, int]:
         c = {RED: 0, YELLOW: 0, GREEN: 0, VERIFIED: 0}

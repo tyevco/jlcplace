@@ -110,15 +110,45 @@ def _client(args) -> EEClient:
     return EEClient(args.cache, offline=not args.online)
 
 
-def _misses_note(client: EEClient) -> list[str]:
-    """What to do about records the cache lacked (the commands do not download them unless asked)."""
+LEAD_SHARE = 0.9          # the cache lacks this share of the board's records: the note leads the output
+
+
+def _fetch_command(args) -> str:
+    """The `jlcplace fetch` that downloads the records a command's board and BOM need, as one would type it."""
+    words = ["jlcplace", "fetch", args.board] if getattr(args, "board", None) else ["jlcplace", "fetch", "BOARD"]
+    if getattr(args, "bom", None):
+        words += ["--bom", args.bom]
+    for name in getattr(args, "lcsc_field", None) or ():
+        words += ["--lcsc-field", name]
+    if getattr(args, "reader", "auto") != "auto":
+        words += ["--reader", args.reader]
+    if getattr(args, "cache", None):
+        words += ["--cache", args.cache]
+    # a path as it is (Windows' too), quoted only when a shell would split it
+    return " ".join(w if re.fullmatch(r"[\w@%+=:,./\\~-]+", w) else f'"{w}"' for w in map(str, words))
+
+
+def _misses_note(client: EEClient, args=None, looked_up: int = 0) -> tuple[list[str], list[str]]:
+    """What to do about records the cache lacked (the commands do not download them unless asked), as (lines to say
+    right after the summary's header, lines to say after it): when the cache lacks (almost) every record of the
+    `looked_up` codes, every row below says "not simulated" for that one reason, so the note comes first."""
     n = len(client.misses)
     if not n:
-        return []
+        return [], []
     missing = sorted(client.misses, key=natural_key)
     codes = ", ".join(missing[:8]) + (f" and {n - 8} more" if n > 8 else "")
-    return [(f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {plural(n, 'code')} ({codes}): "
-             f"`jlcplace fetch BOARD` downloads them (rate-limited), or pass --online")]
+    fetch = f"`{_fetch_command(args)}` downloads them (rate-limited), or pass --online"
+    if looked_up and n >= LEAD_SHARE * looked_up:
+        have = looked_up - n
+        what = (f"the code JLC places ({codes}) has no EasyEDA record" if looked_up == 1 else
+                f"none of the {looked_up} codes JLC places ({codes}) has an EasyEDA record" if not have else
+                f"only {have} of the {looked_up} codes JLC places "
+                + ("has an EasyEDA record" if have == 1 else "have EasyEDA records"))
+        lack = f" ({codes} lack them)" if have else ""
+        return [(f"jlcplace: {what} in the cache {client.cache_dir}{lack}, so the rows below are checked without "
+                 f"JLC's footprints (red where a part needs one): {fetch}")], []
+    return [], [f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {plural(n, 'code')} ({codes}): "
+                f"{fetch}"]
 
 
 def _db(args, *, creates: bool = False) -> CorrectionDB | None:
@@ -176,10 +206,11 @@ def _finish(args, run, notes=(), outline=None, errors=()) -> int:
     written already (--fixed-cpl): the others are written all the same, then it is bad input."""
     out = sys.stderr if args.json == "-" else sys.stdout
     if not args.quiet:
-        out.write(report.summary(run, color=_color(out)))
+        out.write(report.summary(run, color=_color(out)))       # run.lead right after its header
     else:
         for f in run.findings:
             print(printable(f"jlcplace: {f.verdict}: {report.headline(f)}"), file=out)
+        notes = list(run.lead) + list(notes)
     for n in notes:
         print(printable(n), file=out)
     if args.github_annotations:
@@ -328,8 +359,13 @@ def cmd_check(args) -> int:
             fixed = [_fixed_cpl(args, run, resolved, bom)]
         except BadInput as e:                  # the summary and the other outputs are written first, then exit 3
             errors.append(str(e))
-    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + _misses_note(client), _outline(gerbers),
-                   errors)
+    run.lead, missing = _misses_note(client, args, _codes(resolved))
+    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + missing, _outline(gerbers), errors)
+
+
+def _codes(resolved) -> int:
+    """How many codes a run looked up: one record each."""
+    return len({r.part.lcsc for r in resolved.values() if r.part.lcsc})
 
 
 def _fixed_cpl(args, run, resolved, bom) -> str:
@@ -428,7 +464,8 @@ def cmd_cpl(args) -> int:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
-    return _finish(args, run, [note] + hints + _misses_note(client), _outline(gerbers))
+    run.lead, missing = _misses_note(client, args, _codes(resolved))
+    return _finish(args, run, [note] + hints + missing, _outline(gerbers))
 
 
 # ------------------------------------------------------------------------------------------------------- fit
@@ -499,7 +536,7 @@ def cmd_fit(args) -> int:
         counts = {v: verdicts.count(v) for v in (RED, YELLOW, GREEN)}
         print(f"{plural(len(parts), 'part')}: {counts[RED]} red, {counts[YELLOW]} yellow, {counts[GREEN]} green"
               + (f"; database {args.db}" if db is not None else ""), file=out)
-        for n in _misses_note(client):
+        for n in sum(_misses_note(client, args), []):
             print(printable(n), file=out)
     if args.json:
         _write(args.json, json.dumps({"tool": report.TOOL, "board": board.path, "fits": data}, indent=1) + "\n")

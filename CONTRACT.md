@@ -613,7 +613,8 @@ def origin_lines(run) -> list[(verdict, text)]
 
 ## report.py and cli.py
 
-* report: `summary(run, color=False)` (one line per red or yellow result: `headline(res)`, "status: first message",
+* report: `summary(run, color=False)` (`run.lead` right after the header, then one line per red or yellow result:
+  `headline(res)`, "status: first message",
   the status left out when the message says it; text through `model.printable`; with no CPL file, "vs the rows
   jlcplace would write"; the checklist as "N items, M parts" by category, groups as ranges "C102..C112"),
   `plural(n, word)`, `ref_ranges(refs, dash)`, `to_dict(run)` (strict JSON: a landing with no copper to measure to
@@ -668,7 +669,11 @@ def origin_lines(run) -> list[(verdict, text)]
   were verified with; EasyEDA's own not-found answer gives an entry with no EasyEDA key), and everything is checked
   before anything is written); `show CODE | BOARD --ref REF [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`,
   `fit`, `show` and `confirm` read only the record cache (the default, also `--offline`) unless `--online` is given;
-  `check`, `cpl` and `fit` then name the codes the cache lacked and say how to fetch them; `check` and `cpl` print
+  `check`, `cpl` and `fit` then name the codes the cache lacked and say how to fetch them (the `jlcplace fetch BOARD
+  [--bom BOM]` to type, with the --lcsc-field, --reader and --cache given): after the summary, or, when the cache lacks
+  at least `cli.LEAD_SHARE` (90 %) of the codes a `check` or `cpl` looks up, right after its header (`Run.lead`: "none
+  of the 2 codes JLC places (C1001, C1002) has an EasyEDA record in the cache DIR, so the rows below are checked
+  without JLC's footprints ..."; the rows and the exit code as they are); `check` and `cpl` print
   `pipeline.offset_hints` (origin mismatch, units, Y not negated) unless an origin finding says it. `--gerbers` (check,
   cpl): read with `gerber.read_gerbers` (unreadable: bad input), checked with `gerber.gerber_origin` against the board
   as --origin (default aux) gives it, and against the board's Edge.Cuts (`report.board_outline`); with `jlc_origin` the

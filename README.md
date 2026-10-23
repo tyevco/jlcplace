@@ -84,8 +84,9 @@ from the CPL's origin.
 `fetch` is the one command that uses the network unasked. `check`, `cpl`, `fit`, `show` and `confirm` read the
 record cache and download nothing unless `--online` is given (then they fetch what the cache lacks, as `fetch` does).
 A check that lacks records says which and how to get them ("no EasyEDA record in the cache ... for 2 codes (C1001,
-C1002): `jlcplace fetch BOARD` downloads them, or pass --online"); those parts are checked from the database, or not
-simulated.
+C1002): `jlcplace fetch board.kicad_pcb --bom board-BOM.csv` downloads them (rate-limited), or pass --online"), right
+after the summary's header when the cache lacks nearly all of them (every row would say "not simulated"); those parts
+are checked from the database, or not simulated.
 
 `--bom` checks that the BOM agrees with the board and the CPL. JLC assembles from the BOM's LCSC column and never sees
 the board, so the BOM's code is the part that is simulated (and written by `cpl --bom`), also where the board names

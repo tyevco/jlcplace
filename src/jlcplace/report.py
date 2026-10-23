@@ -145,6 +145,7 @@ def summary(run: Run, *, color: bool = False) -> str:
     out = [printable(f"{TOOL}: {_name(b.path)} ({b.source}, {len(b.parts)} parts, origin {_origin(run)}) vs "
                      f"{_name(run.cpl_path) or 'the rows jlcplace would write'} ({len(run.rows)} rows){_gerbers(run)}, "
                      f"bottom reading {run.reading}")]
+    out += [printable(n) for n in run.lead]    # e.g. the record cache is empty: what to do before reading the rows
     for f in run.findings:                     # the whole run first: every row below follows from it
         out.append(f"{paint(f.verdict, f'{f.verdict.upper():<6}')}  {printable(headline(f))}")
     bad = [r for _, r in _sorted(run.results) if r.verdict in (RED, YELLOW)]
