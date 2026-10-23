@@ -270,6 +270,7 @@ jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.cs
 
 ```text
 jlcplace 0.1.0: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace: no EasyEDA record in the cache no-records for 49 of the 49 codes JLC places (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch hardware/board.kicad_pcb --bom fab/board-BOM.csv --cache no-records` downloads them (rate-limited), or pass --online
 YELLOW  D20  C2500      top     ok: yellow because the stored auto correction is yellow: rms 0.281 mm: the land patterns differ (every pad lands)
 YELLOW  U2   C2681320   top     ok: yellow because the stored auto correction is yellow: rms 0.213 mm: the land patterns differ (every pad lands)
 YELLOW  U21  C2681320   top     ok: yellow because the stored auto correction is yellow: rms 0.213 mm: the land patterns differ (every pad lands)
@@ -277,7 +278,6 @@ YELLOW  U30  C3715882   bottom  ok: yellow because the stored auto correction is
 YELLOW  U31  C189624    top     ok: yellow because the stored auto correction is yellow: rms 0.113 mm: the land patterns differ (every pad lands)
 184 results: 0 red, 5 yellow, 177 green, 2 verified
 ...
-jlcplace: no EasyEDA record in the cache no-records for 49 codes (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
 ```
 
 So with `--fail-on yellow` and no records, those parts need confirming in the preview as well. The same goes for a

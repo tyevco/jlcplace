@@ -1592,7 +1592,7 @@ def test_records_are_downloaded_only_when_asked(env, capsys, monkeypatch):
         code, out, err = run(capsys, *cmd, "--cache", cache)
         assert code != 4 and net.codes == [], (cmd, out, err)
     code, out, err = run(capsys, "check", env.board, env.out, "--cache", cache)
-    assert code == 2 and "has an EasyEDA record in the cache" in out, out
+    assert code == 2 and f"no EasyEDA record in the cache {cache} for 2 of the 2 codes" in out, out
     note = next(ln for ln in out.splitlines() if ln.startswith("jlcplace: "))
     assert "2 codes JLC places (C1001, C1002)" in note and "jlcplace fetch" in note and "--online" in note, note
     assert run(capsys, "check", env.board, env.out, "--cache", cache, "--online", "--offline")[0] == 3
@@ -1608,7 +1608,8 @@ def test_records_are_downloaded_only_when_asked(env, capsys, monkeypatch):
 def test_an_empty_record_cache_is_said_before_the_rows(env, capsys):
     """An offline check with no cached records printed every row "not simulated" (red for the parts that need a
     footprint) before the one line that says why, at the end. That line now comes right after the header, with the
-    `fetch` that downloads them; the rows and the exit code stay as they were."""
+    `fetch` that downloads them; the rows and the exit code stay as they were. It keeps the words the trailing line
+    has ("no EasyEDA record in the cache DIR for N ... codes"), which the docs and the Claude Code plugin look for."""
     env.make()
     bom = env.tmp / "bom.csv"
     bom.write_text("Comment,Designator,Footprint,LCSC\nX,\"U1,U2\",SOT-23-6,C1001\nR,\"R1,R2\",0402,C1002\n",
@@ -1619,15 +1620,16 @@ def test_an_empty_record_cache_is_said_before_the_rows(env, capsys):
         code, out, _ = run(capsys, "check", env.board, env.out, *args, *offline(env, env.empty))
         lines = out.splitlines()
         assert code == full[0] == 2 and lines[0].startswith("jlcplace 0.1.0: board.kicad_pcb"), out
-        want = (f"jlcplace: none of the 2 codes JLC places (C1001, C1002) has an EasyEDA record in the cache "
-                f"{env.empty}, so the rows below are checked without JLC's footprints (red where a part needs one): "
+        want = (f"jlcplace: no EasyEDA record in the cache {env.empty} for 2 of the 2 codes JLC places (C1001, "
+                f"C1002), so the rows below are checked without JLC's footprints (red where a part needs one): "
                 f"`jlcplace fetch {env.board}{' --bom ' + str(bom) if args else ''} --cache {env.empty}` downloads "
                 f"them (rate-limited), or pass --online")
-        assert lines[1] == want and out.count("has an EasyEDA record") == 1, out
+        assert lines[1] == want and out.count(f"no EasyEDA record in the cache {env.empty}") == 1, out
         assert [ln for ln in lines if ln.startswith(("RED", "YELLOW"))] == \
             [ln for ln in full[1].splitlines() if ln.startswith(("RED", "YELLOW"))]
     code, out, _ = run(capsys, "check", env.board, env.out, "-q", *offline(env, env.empty))
-    assert code == 2 and out.count("has an EasyEDA record") == 1 and out.startswith("jlcplace: none of"), out
+    assert code == 2 and out.count(f"no EasyEDA record in the cache {env.empty}") == 1, out
+    assert out.startswith(f"jlcplace: no EasyEDA record in the cache {env.empty} for 2 of the 2 codes"), out
     # most records at hand: the note names what is missing where it always was, after the summary
     shutil.copy(Path(env.cache) / "C1001.json", Path(env.empty) / "C1001.json")
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env, env.empty))

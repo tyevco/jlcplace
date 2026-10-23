@@ -111,7 +111,7 @@ JLCPLACE_CACHE=~/other-cache jlcplace check example.json example-CPL-good.csv -q
 C7519: SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL, 6 pads (cached)
 C4167968: not found (Component not found; cached)
 2 codes: 1 footprint, 1 not found, 0 failed; cache .../.cache/jlcplace
-jlcplace: no EasyEDA record in the cache .../other-cache for 5 codes (C1001, C1002, C1003, C1004, C1005): `jlcplace fetch BOARD` downloads them (rate-limited), or pass --online
+jlcplace: no EasyEDA record in the cache .../other-cache for 5 of the 5 codes JLC places (C1001, C1002, C1003, C1004, C1005), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch example.json` downloads them (rate-limited), or pass --online
 ```
 
 ### Variables the tests read
