@@ -266,6 +266,27 @@ def test_fixed_cpl_counts_rows_outside_the_board_outline(env, capsys):
     assert "5 results: 0 red, 2 yellow, 3 green" in out, out
 
 
+def test_rows_outside_the_board_outline_are_on_the_preview_checklist(env, capsys):
+    """A row outside the board outline was told to 'look at it in JLC's preview', and the preview checklist, the list
+    of what to look at there, left it out. Rows of one code on one side outside it are one item, naming the one
+    furthest out."""
+    path = env.tmp / "outlined.kicad_pcb"
+    path.write_text(OUTLINED.format(parts="\n".join(R0402.format(ref=r, x=x, y=y) for r, x, y in (
+        ("R1", 110, 90), ("R2", 130, 90), ("R3", 115, 85)))), encoding="utf-8")
+    assert run(capsys, "cpl", path, "-o", env.out, "--reader", "sexpr", *offline(env))[0] == 0
+    t = env.tmp
+    code, out, _ = run(capsys, "check", path, env.out, "--reader", "sexpr", *offline(env), "--checklist", t / "c.md",
+                       "--json", t / "r.json")
+    assert "  outside the outline  R2 R3" in out, out
+    (item,) = [i for i in json.loads((t / "r.json").read_text(encoding="utf-8"))["checklist"]
+               if i["category"] == "outside the outline"]
+    assert (item["ref"], item["refs"]) == ("R2", ["R2", "R3"]), item
+    assert item["what"] == ("the row points of 2 parts of one code on this side are outside the board outline "
+                            "(Edge.Cuts), up to 10.00 mm beyond its edge (R2): look at them in JLC's preview"), item
+    md = (t / "c.md").read_text(encoding="utf-8")
+    assert "## Outside the outline" in md and "**R2 R3**" in md, md
+
+
 def test_cpl_refuses_red_rows(env, capsys):
     env.make(two("D1", TOP, 115.0, 70.0, 0.0, "C1003", footprint="LED_SMD:LED_0603_1608Metric", half=0.7875))
     Path(env.out).write_text("old\n", encoding="utf-8")

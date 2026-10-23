@@ -321,6 +321,8 @@ from the CPL's origin. Then, in this order:
   differ (every pad lands) is left out: the preview cannot settle that.
 * **not simulated**: parts with no EasyEDA footprint, each on its own (not a part without an LCSC code: JLC does
   not place it, so its preview never shows it); a trimmer capacitor's item asks which pad is its rotor.
+* **outside the outline**: rows whose point lies outside the board outline (a part overhanging the edge, a row of
+  another part); the parts of one code on one side are one item, naming the one furthest out.
 * **bottom reading**: bottom parts whose pins would move if JLC read the bottom rotation differently (see below),
   said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
   green part that moves under every other reading comes first, and when it sits right the others follow. Recorded

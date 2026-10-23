@@ -355,6 +355,10 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
     return run
 
 
+_OUTSIDE = "the row point is outside the board outline"     # off_board's message, and its checklist item's
+_BEYOND = re.compile(r"outside the board outline \((.*?)\), ([\d.]+) mm beyond its edge")
+
+
 def off_board(run: Run, outline, what: str = "Edge.Cuts") -> list[str]:
     """Rows whose point lies outside the board outline (`outline`: board-frame polylines, chained into closed rings,
     read even-odd: a cutout is outside; nothing is checked when they close none) are yellow at least: JLC puts the
@@ -369,8 +373,7 @@ def off_board(run: Run, outline, what: str = "Edge.Cuts") -> list[str]:
         if not rings or sum(geom.point_in_polygon(q, r) for r in rings) % 2:
             continue
         d = min(geom._dist_to_polygon(q, r) for r in rings)
-        msg = (f"the row point is outside the board outline ({what}), {d:.2f} mm beyond its edge: look at it in JLC's "
-               f"preview")
+        msg = f"{_OUTSIDE} ({what}), {d:.2f} mm beyond its edge: look at it in JLC's preview"
         if res.verdict in (GREEN, YELLOW):
             res.verdict = YELLOW
             res.messages.insert(0, msg)
@@ -407,8 +410,11 @@ def row_lines(path, results: list[RowResult]) -> list[int | None]:
 
 # ------------------------------------------------------------------------------------------------------- checklist
 
-CATEGORIES = ("pinout", "uncertain correction", "not simulated", "bottom reading", "odd angle")    # checklist order
+CATEGORIES = ("pinout", "uncertain correction", "not simulated", "outside the outline", "bottom reading",
+              "odd angle")                                                            # checklist order
 _VRANK = {RED: 0, YELLOW: 1, GREEN: 2, VERIFIED: 3}
+#: the reasons that can follow an "outside the outline" item, said for a group whose parts differ in them
+_NOTE_WORDS = {"bottom reading": "the bottom reading matters", "odd angle": "a rotation that is not a multiple of 90"}
 
 
 #: a row message that asks for the LCSC part's pinout to be checked (check._pinout), and a fit reason about pin names
@@ -511,6 +517,9 @@ def _found(run: Run, res: RowResult, ruled=None) -> list[tuple[str, str, str]]:
         # a part without a code is no item: JLC places nothing it has no code for, so its preview never shows it
         m = res.messages[0] if res.messages else "no EasyEDA footprint"
         out.append(("not simulated", m, m))
+    off = next((m for m in res.messages if m.startswith(_OUTSIDE)), None)
+    if off and res.lcsc:
+        out.append(("outside the outline", off, _OUTSIDE))
     if res.convention_sensitive and (_left(res, ruled) or not res.reading_moves):
         moves = moves_text(res, ruled)
         gone = [n for n in BOTTOM_READINGS if n in ruled and res.reading_moves.get(n)]
@@ -538,6 +547,17 @@ def _merge(group: list[CheckItem]) -> CheckItem:
         return it
     refs = sorted((r for g in group for r in g.refs), key=natural_key)
     rots = {g.rotation for g in group}
+    if it.category == "outside the outline":
+        # named: the one furthest out; the reasons that follow are the group's when they are alike, else counted
+        far = max(sorted(group, key=lambda g: natural_key(g.ref)), key=lambda g: float(_BEYOND.search(g.what)[2]))
+        tails = {g.what.partition("; also ")[2] for g in group}
+        also = [c for c in CATEGORIES if any(c in g.also for g in group)]
+        notes = (f"; also {tails.pop()}" if tails != {""} else "") if len(tails) == 1 else "".join(
+            f"; also {_NOTE_WORDS.get(c, c)} ({sum(c in g.also for g in group)} of them)" for c in also)
+        m = _BEYOND.search(far.what)
+        what = (f"the row points of {len(refs)} parts of one code on this side are outside the board outline "
+                f"({m[1]}), up to {m[2]} mm beyond its edge ({far.ref}): look at them in JLC's preview{notes}")
+        return replace(far, rotation=far.rotation if len(rots) == 1 else None, what=what, refs=refs, also=also)
     if it.category == "odd angle":
         look = max(sorted(group, key=lambda g: natural_key(g.ref)), key=lambda g: _off90(g.rotation))
         lo, hi = min(g.rotation for g in group), max(g.rotation for g in group)
@@ -559,6 +579,8 @@ def checklist(run: Run) -> list[CheckItem]:
                             placement in doubt (polarity, then names, then orientation first), or a reason other
                             than a land-pattern residual or a non-90 angle (on a row that is not green, any);
       not simulated         no EasyEDA footprint (a part with a code: JLC places no other);
+      outside the outline   a row point outside the board outline (off_board), per code and side: the one furthest
+                            out named;
       bottom reading        bottom parts whose pins move under another reading of the bottom rotation, said in pins;
                             first a green part that moves under every other reading: it settles the reading for all;
                             a reading under which a verified bottom part (ruled_out) would move is ruled out, and a
@@ -585,7 +607,7 @@ def checklist(run: Run) -> list[CheckItem]:
     for it in items:
         if not it.lcsc or it.category == "not simulated":
             key: tuple = (id(it),)                 # every row nothing simulated needs its own look
-        elif it.category == "odd angle":
+        elif it.category in ("odd angle", "outside the outline"):
             key = (it.category, it.lcsc, it.layer, it.verdict)
         elif it.category == "bottom reading":
             key = (it.category, it.lcsc, it.layer, it.verdict, it.rotation, it.what)

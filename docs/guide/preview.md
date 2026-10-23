@@ -120,6 +120,14 @@ R26 has an LCSC code, C4167968, but EasyEDA has no footprint for it, so nothing 
 row point lies on its pads, so it is only yellow. A polar or multi-pin part without a footprint would be red.
 **Look at:** that R26 sits on its two pads. A resistor may face either way.
 
+### Outside the outline
+
+Not on this board. A row whose point lies outside the board outline (the Gerbers' outline with `--gerbers`, else the
+board's Edge.Cuts; a cutout counts as outside) puts the part's centre off the board: right for a part that overhangs
+the edge, wrong for a row of another part or from another origin. The parts of one code on one side are one item,
+naming the one furthest out. **Look at:** that the part sits on its pads, overhanging the edge as the board means it
+to.
+
 ### Bottom reading
 
 These are bottom-side parts whose pins would move if JLC read a bottom rotation another way than `jlc-2022`. Each

@@ -653,7 +653,8 @@ def origin_lines(run) -> list[(verdict, text)]
   preview; an uncertain correction of that part keeps only its other reasons the preview can settle), uncertain
   correction (correction yellow or red, not a fallback, on a simulated
   row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can settle shown
-  first), not simulated (a part with a code: JLC places no other), bottom reading (convention-sensitive, said in pins
+  first), not simulated (a part with a code: JLC places no other), outside the outline (a row with `off_board`'s
+  message, a part with a code), bottom reading (convention-sensitive, said in pins
   with `moves_text`: "as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2
   would swap"; `ruled_out(run)`: a reading under which a bottom row verified itself (`_seen`: verdict VERIFIED and an ok
   preview or board verification of its numbers for this ref, side and board file stem) would move is ruled out for
@@ -662,8 +663,10 @@ def origin_lines(run) -> list[(verdict, text)]
   not a multiple of 90; not for a row verified itself). A part is one item, under its first category; its other
   categories are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and
   `ref` the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
-  `rotation` None; bottom reading per (code, side, verdict, rotation, what); uncertain correction per (code, side,
-  verdict, what); never a not-simulated row or a part without a code. `first`: the bottom-reading item of a green row
+  `rotation` None; outside the outline per (code, side, row verdict), `ref` the part furthest out, the notes that
+  follow the group's when alike, else counted ("also a rotation that is not a multiple of 90 (44 of them)"); bottom
+  reading per (code, side, verdict, rotation, what); uncertain correction per (code, side, verdict, what); never a
+  not-simulated row or a part without a code. `first`: the bottom-reading item of a green row
   whose pins move under every other reading not ruled out (the most of its pads off copper under each, then the most
   pads), `what` starting "look at this one first" and saying that recording it (`confirm --source preview` or
   `--source board`) takes the other bottom parts' items away: it settles the reading for every bottom part. Sorted
