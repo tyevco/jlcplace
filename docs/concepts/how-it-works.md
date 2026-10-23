@@ -440,7 +440,7 @@ jq -c '.checklist[] | select(.category=="bottom reading") | {ref, rotation, what
 ```
 
 ```text
-{"ref":"J1","rotation":120.0,"what":"look at this one first: it moves under every other reading, so it shows how JLC reads the bottom side; when it sits right, the other bottom parts follow. If JLC read the bottom rotation another way: as ccw-from-top or ccw-from-top+180 or jlc-2022+180, pin 1 would land off copper (14 pins move); also rotation 120 is not a multiple of 90"}
+{"ref":"J1","rotation":120.0,"what":"look at this one first: it moves under every other reading, so it shows how JLC reads the bottom side; when it sits right, record it (`jlcplace confirm --source preview`, or `--source board` on the assembled board) and the other bottom parts' items go. If JLC read the bottom rotation another way: as ccw-from-top or ccw-from-top+180 or jlc-2022+180, pin 1 would land off copper (14 pins move); also rotation 120 is not a multiple of 90"}
 ...
 {"ref":"U11","rotation":90.0,"what":"if JLC read the bottom rotation another way: as ccw-from-top or jlc-2022+180, pin 1 would sit on pad 5 (8 pins move)"}
 ...
@@ -453,7 +453,11 @@ at 180 under `ccw-from-top+180` and `jlc-2022+180`. A part that looks the same t
 apart and is not listed. A part at an odd angle, such as J1 at 120 degrees, moves under all three and lands off its
 pads, which is the easiest thing to see in JLC's preview. So the checklist puts first a green part that moves under
 every other reading, preferring the one with the most pads off copper: if it sits right in the preview, JLC reads
-the bottom side as jlcplace assumed, and every other bottom part follows.
+the bottom side as jlcplace assumed, and every other bottom part follows. Recorded with `jlcplace confirm` (`--source
+preview`, or `--source board` on the assembled board), a bottom part shown right rules out every reading under which
+it would have moved, for the whole board: a part that moves only under readings ruled out leaves the checklist. Only
+a part's own verification counts (its reference, side and board): a part that shares the verified one's database
+entry at another angle could still move under a reading that one could not tell apart.
 
 If JLC ever changes how it reads bottom rotations, `--reading` makes another reading the one the verdicts use (see
 [Checking a CPL](../guide/check#reading-the-bottom-side-rotation)).

@@ -205,7 +205,7 @@ Each entry has a status, strongest first:
 | `board-verified` | `confirm --source board`: right on assembled boards | `verified` |
 | `preview-verified` | `confirm --source preview`: right in JLC's placement preview | `verified` |
 | `manual` | `confirm --source manual`: a person's decision, about the stored numbers or typed in with `--rot`, `--dx`, `--dy` | as fitted; a red one becomes yellow ("accepted manually") |
-| `auto` | `fit`; `confirm` fitting a part the database lacked; `confirm --failed`, which also makes it red | as fitted |
+| `auto` | `fit`; `confirm` fitting a part the database lacked; `confirm --failed`, which also makes it red | as fitted; red after `--failed`, through refits of the same numbers, and its rows red (`verified-wrong`), until other numbers replace it or a later verification of it goes right |
 
 A row that matches a `verified` correction is itself `verified`. The status decides two things.
 

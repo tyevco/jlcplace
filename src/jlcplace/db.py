@@ -4,7 +4,7 @@
     entry = {"ee": {"key": parts.ee_key, "title"}, "kicad": {"fpid", "pad_hash": parts.kicad_hash},
              "correction": {"rot", "dx", "dy", "mirror"}, "fit": {"method", "rms", "matched", "score",
              "alternatives", "doubt"?, "polar"?}, "verdict", "reasons", "status", "verifications": [{"by", "date",
-             "source", "ok", "board", "ref", "layer", "presses", "note"}], "tool", "fitted"}
+             "source", "ok", "board", "ref", "layer", "presses", "note", "correction"}], "tool", "fitted"}
 
 Only derived numbers, hashes and the EasyEDA footprint's title (for people reading the file) are stored, never pad
 geometry: EasyEDA claims copyright over its library, and the numbers are all a CPL needs. An entry is keyed by (ee
@@ -15,7 +15,10 @@ Status, strongest first: board-verified (the assembled board was right), preview
 was right), manual (typed in), auto (fitted). A verification is of the row that was uploaded: its correction
 (convention.row_correction) replaces the entry's numbers when they differ. A verification can carry the keys pressed
 in JLC's preview to put the part right; they move the uploaded row (presses_to_row, Fabrication-Toolkit's convention,
-derived at presses_to_correction), and the correction is the moved row's.
+derived at presses_to_correction), and the correction is the moved row's. A verification records the numbers it
+was of: when the latest one of the entry's numbers failed (`confirm --failed`), they were verified wrong, and the
+entry stays red, through refits that give the same numbers, until other numbers replace them or a later verification
+finds them right (Correction.failure).
 """
 
 from __future__ import annotations
@@ -97,12 +100,43 @@ def _fit_block(corr: Correction) -> dict:
 
 def _to_correction(e: dict, status: str | None = None) -> Correction:
     c, f = e["correction"], e.get("fit", {})
-    return Correction(rot=float(c["rot"]), dx=float(c["dx"]), dy=float(c["dy"]), mirror=bool(c.get("mirror")),
+    corr = Correction(rot=float(c["rot"]), dx=float(c["dx"]), dy=float(c["dy"]), mirror=bool(c.get("mirror")),
                       method=f.get("method") or "db", rms=float(f.get("rms", 0.0)), verdict=e.get("verdict", ""),
                       score=int(f.get("score", 0)), reasons=list(e.get("reasons", [])),
                       alternatives=copy.deepcopy(f.get("alternatives", [])), matched=int(f.get("matched", 0)),
                       ee_key=_keys(e)[0], kicad_hash=_keys(e)[1], status=status or e.get("status", "auto"),
-                      doubt=str(f.get("doubt") or ""), polar=None if f.get("polar") is None else bool(f["polar"]))
+                      doubt=str(f.get("doubt") or ""), polar=None if f.get("polar") is None else bool(f["polar"]),
+                      verifications=_of_numbers(e))
+    if corr.failure is not None:
+        corr.verdict = RED                 # verified wrong: nothing about these numbers makes them right again
+    return corr
+
+
+def _failed_reason(v: dict) -> str:
+    """The reason confirm adds to an entry when a verification fails."""
+    note = v.get("note") or ""
+    return f"verification failed ({v.get('source', '')}, {v.get('by', '')})" + (f": {note}" if note else "")
+
+
+def _of_numbers(e: dict) -> list[dict]:
+    """The entry's verifications of the numbers it holds now, in order (copies). A verification records the numbers
+    it was of ("correction"); one recorded before verifications held them counts as of these, a failed one only while
+    the entry still gives its reason (a refit or a verification with other numbers replaced the reasons)."""
+    out = []
+    for v in e.get("verifications") or []:
+        if not isinstance(v, dict):
+            continue
+        c = v.get("correction")
+        if c is None:
+            mine = v.get("ok", True) is not False or _failed_reason(v) in (e.get("reasons") or [])
+        else:
+            try:
+                mine = _same(c, e["correction"])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                mine = False               # a hand-edited record without numbers it could be of
+        if mine:
+            out.append(copy.deepcopy(v))
+    return out
 
 
 def _keys(e: dict) -> tuple[str, str]:
@@ -160,9 +194,9 @@ class CorrectionDB:
     def lookup(self, code: str, *, ee_key: str = "", kicad_hash: str = "") -> Correction | None:
         """The correction for a code on a KiCad footprint (pad hash) and EasyEDA footprint (key); "" matches any.
         Among matching entries the strongest status wins (board-verified > preview-verified > manual > auto), then
-        the later entry. When entries exist for the pad hash but none for this ee key, the strongest is returned
-        stale: status "stale", verdict red, reason STALE_REASON (the caller refits and compares). None when no
-        entry is for this KiCad footprint."""
+        the later entry, with its verifications of its numbers (red when the latest one failed). When entries exist
+        for the pad hash but none for this ee key, the strongest is returned stale: status "stale", verdict red,
+        reason STALE_REASON (the caller refits and compares). None when no entry is for this KiCad footprint."""
         cands = [(i, e) for i, e in enumerate(self._load(code)["entries"])
                  if not kicad_hash or _keys(e)[1] in ("", kicad_hash)]
         if not cands:
@@ -178,8 +212,9 @@ class CorrectionDB:
     def upsert(self, code: str, corr: Correction, *, footprint: str = "", ee_title: str = "", tool: str = TOOL
                ) -> None:
         """Store a fitted or typed-in correction under (corr.ee_key, corr.kicad_hash). Re-storing the same numbers
-        refreshes the fit and keeps the status and verifications; different numbers replace the entry's
-        correction, but never one with a stronger status (ValueError: confirm or edit the file instead)."""
+        refreshes the fit and keeps the status and verifications (and a failed verification of those numbers, with
+        its red verdict and reason); different numbers replace the entry's correction, but never one with a stronger
+        status (ValueError: confirm or edit the file instead)."""
         if corr.status not in STATUS_RANK:
             raise ValueError(f"{code}: cannot store a correction with status {corr.status!r}")
         doc = self._load(code)
@@ -196,6 +231,11 @@ class CorrectionDB:
                 new["status"] = old["status"] if rank_old > rank_new else corr.status
                 if STATUS_RANK.get(new["status"], 0) >= STATUS_RANK["preview-verified"]:
                     new["verdict"], new["reasons"] = old.get("verdict", VERIFIED), old.get("reasons", [])
+                elif _to_correction(old).failure is not None:
+                    # these numbers were verified wrong: a refit that gives them again does not make them right
+                    new["verdict"] = RED
+                    new["reasons"] += [r for r in old.get("reasons", []) if r.startswith("verification failed")
+                                       and r not in new["reasons"]]
             elif rank_old > rank_new:
                 raise ValueError(f"{code}: refusing to replace a {old['status']} correction with a {corr.status} one")
             new["verifications"] = old.get("verifications", [])
@@ -212,7 +252,9 @@ class CorrectionDB:
 
         source: "board" (the assembled board), "preview" (JLC's placement preview) or "manual". ok=True raises the
         status to the source's (verdict VERIFIED for board/preview; a red entry confirmed manually becomes yellow).
-        ok=False marks the entry red and drops it to "auto".
+        ok=False marks the entry red and drops it to "auto": its numbers were verified wrong (Correction.failure)
+        until other numbers replace them or a later verification of them is ok. Each verification records the
+        numbers it was of ("correction").
         `correction`: the correction of the row that was checked (convention.row_correction of the uploaded row,
         moved by the presses): when its numbers differ from the entry's, it replaces them (its reasons and verdict
         with them) and carries only this verification's status. A verified entry is not replaced by a verification
@@ -265,7 +307,8 @@ class CorrectionDB:
                                                                                               else ""))
         entry.setdefault("verifications", []).append(
             {"by": by, "date": _today(), "source": source, "ok": bool(ok), "board": board, "ref": ref,
-             "layer": layer, "presses": p if any(p.values()) else None, "note": note})
+             "layer": layer, "presses": p if any(p.values()) else None, "note": note,
+             "correction": dict(entry["correction"])})      # the numbers it was of: other numbers are not
         self._save(code, doc)
         return _to_correction(entry)
 

@@ -199,6 +199,15 @@ class Correction:
                                    # pad: "polarity" (pad numbers only, or names / + mark decided), "orientation" (the
                                    # pads do not fix the body's orientation), "" none
     polar: bool | None = None      # two-terminal part judged polar by the fit (parts.nonpolar); None: not judged
+    verifications: list[dict] = field(default_factory=list)  # a stored correction's verifications of these numbers
+                                   # (db.py's records: by, date, source, ok, board, ref, layer, ...), in order
+
+    @property
+    def failure(self) -> dict | None:
+        """The verification that found these numbers wrong (`confirm --failed`: JLC's preview, the assembled board or
+        a person), when no later one found them right; None otherwise."""
+        v = self.verifications[-1] if self.verifications else None
+        return v if isinstance(v, dict) and v.get("ok", True) is False else None
 
 
 @dataclass
@@ -224,8 +233,8 @@ class RowResult:
     ref: str
     lcsc: str = ""
     status: str = "ok"             # ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout
-                                   # | not-simulated | no-row | not-on-board | layer-mismatch | not-placed | duplicate
-                                   # | duplicate-ref
+                                   # | verified-wrong | not-simulated | no-row | not-on-board | layer-mismatch
+                                   # | not-placed | duplicate | duplicate-ref
     verdict: str = GREEN
     landings: list[PadLanding] = field(default_factory=list)
     uncovered: list[str] = field(default_factory=list)   # KiCad soldered pads no EE pad lands in

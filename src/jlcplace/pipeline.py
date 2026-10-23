@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 import numpy as np
 
@@ -36,7 +37,7 @@ from .cpl import UNITS, assembled, jlc_places, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
-from .model import GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
+from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
 from .parts import ee_key, kicad_hash, norm_number, trimmer
 
@@ -396,12 +397,12 @@ def _pin_words(moved: list[tuple[str, str | None]]) -> str:
     return f"pin {e or '?'} would {where}" + (f" ({len(moved)} pins move)" if len(moved) > 1 else "")
 
 
-def moves_text(res: RowResult) -> str:
+def moves_text(res: RowResult, skip=()) -> str:
     """'as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2 would swap'
-    (the readings with the same effect said once)."""
+    (the readings with the same effect said once; those in `skip`, ruled out, not said)."""
     said: dict[str, list[str]] = {}
     for name in BOTTOM_READINGS:
-        if res.reading_moves.get(name):
+        if res.reading_moves.get(name) and name not in skip:
             said.setdefault(_pin_words(res.reading_moves[name]), []).append(name)
     if not said:                                   # a result made without the moves: the check's own message
         m = next((m for m in res.messages if m.startswith("bottom reading matters")), "")
@@ -409,8 +410,41 @@ def moves_text(res: RowResult) -> str:
     return "; ".join(f"as {' or '.join(names)}, {words}" for words, names in said.items())
 
 
-def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
-    """(category, what as an item, what as a note on another item) for every reason to look at a result's part."""
+def _seen(run: Run, res: RowResult) -> str:
+    """'board' or 'preview' when the row is verified and an ok verification of its numbers was of this part on this
+    board, on its side (the assembled board winning); '' otherwise. A part that shares the entry was verified at its
+    own angle, which says nothing of how this one turns under another bottom reading."""
+    info = run.resolved.get(res.ref)
+    if res.verdict != VERIFIED or res.row is None or info is None or info.corr is None:
+        return ""
+    stem = Path(run.board.path).stem
+    srcs = {str(v.get("source") or "").removesuffix("-verified") for v in info.corr.verifications
+            if v.get("ok", True) is not False and v.get("ref") == res.ref and v.get("layer") == res.row.layer
+            and Path(str(v.get("board") or "")).stem == stem}
+    return "board" if "board" in srcs else "preview" if "preview" in srcs else ""
+
+
+def ruled_out(run: Run) -> dict[str, list[str]]:
+    """The other bottom readings that verified bottom parts rule out, with those parts: a row JLC's preview or the
+    assembled board showed right (`_seen`) would have moved under them, so JLC does not read the bottom so."""
+    out: dict[str, list[str]] = {}
+    for res in run.results:
+        if res.row is not None and res.row.layer == BOTTOM and _seen(run, res):
+            for name in BOTTOM_READINGS:
+                if res.reading_moves.get(name):
+                    out.setdefault(name, []).append(res.ref)
+    return out
+
+
+def _left(res: RowResult, ruled) -> dict[str, list]:
+    """A bottom result's moves under the readings not ruled out."""
+    return {n: m for n, m in res.reading_moves.items() if m and n not in ruled}
+
+
+def _found(run: Run, res: RowResult, ruled=None) -> list[tuple[str, str, str]]:
+    """(category, what as an item, what as a note on another item) for every reason to look at a result's part.
+    `ruled`: the bottom readings verified parts rule out (ruled_out): a part that moves only under those is settled."""
+    ruled = ruled or {}
     row = res.row
     part = jlc_part(run.board, res.ref)
     a = row.rotation if row else None
@@ -440,11 +474,20 @@ def _found(run: Run, res: RowResult) -> list[tuple[str, str, str]]:
         # a part without a code is no item: JLC places nothing it has no code for, so its preview never shows it
         m = res.messages[0] if res.messages else "no EasyEDA footprint"
         out.append(("not simulated", m, m))
-    if res.convention_sensitive:
-        moves = moves_text(res)
+    if res.convention_sensitive and (_left(res, ruled) or not res.reading_moves):
+        moves = moves_text(res, ruled)
+        gone = [n for n in BOTTOM_READINGS if n in ruled and res.reading_moves.get(n)]
+        if gone:
+            by = sorted({r for n in gone for r in ruled[n]}, key=natural_key)
+            seen = {_seen(run, r) for r in run.results if r.ref in by} - {""}
+            where = " and ".join(w for k, w in (("preview", "in JLC's preview"), ("board", "on the assembled board"))
+                                 if k in seen)
+            moves += (f"; {' and '.join(gone)} {'is' if len(gone) == 1 else 'are'} ruled out by {', '.join(by)}, "
+                      f"verified {where}")
         out.append(("bottom reading", f"if JLC read the bottom rotation another way: {moves}",
                     f"the bottom reading matters ({moves})"))
-    if row is not None and part is not None and _off90(a) > 1e-6:
+    if row is not None and part is not None and _off90(a) > 1e-6 and not _seen(run, res):
+        # a part JLC's preview or the assembled board showed right at its angle has been looked at
         out.append(("odd angle", f"rotation {a:g} is not a multiple of 90: check the part sits square on its pads",
                     f"rotation {a:g} is not a multiple of 90"))
     return sorted(out, key=lambda f: CATEGORIES.index(f[0]))
@@ -481,12 +524,16 @@ def checklist(run: Run) -> list[CheckItem]:
       not simulated         no EasyEDA footprint (a part with a code: JLC places no other);
       bottom reading        bottom parts whose pins move under another reading of the bottom rotation, said in pins;
                             first a green part that moves under every other reading: it settles the reading for all;
-      odd angle             rows at angles that are not multiples of 90, one item per code and side.
+                            a reading under which a verified bottom part (ruled_out) would move is ruled out, and a
+                            part that moves only under such readings is settled;
+      odd angle             rows at angles that are not multiples of 90, one item per code and side (not a part
+                            verified itself, `_seen`).
     Within a category, red rows (fix the row first) before yellow before green."""
     items: list[CheckItem] = []
     by_ref: dict[str, RowResult] = {}
+    ruled = ruled_out(run)
     for res in run.results:
-        found = _found(run, res)
+        found = _found(run, res, ruled)
         if not found:
             continue
         part = jlc_part(run.board, res.ref)
@@ -510,26 +557,27 @@ def checklist(run: Run) -> list[CheckItem]:
         groups.setdefault(key, []).append(it)
     items = [_merge(g) for g in groups.values()]
 
-    # the bottom reading is one question for the whole board: a part whose pins move under every other reading
-    # answers it when its row is green; the one with the most of its pads off copper under every reading (a part
-    # off its pads is the easiest to see), then the most pads, first
-    others = len(BOTTOM_READINGS) - 1
+    # the bottom reading is one question for the whole board: a part whose pins move under every other reading (that
+    # no verified part rules out) answers it when its row is green; the one with the most of its pads off copper
+    # under every reading (a part off its pads is the easiest to see), then the most pads, first
+    others = len(BOTTOM_READINGS) - 1 - len(ruled)
 
     def settles(it: CheckItem) -> tuple | None:
         rs = [by_ref[r] for r in it.refs]
-        if it.category != "bottom reading" or it.verdict not in (GREEN, VERIFIED) or \
-                any(len([m for m in r.reading_moves.values() if m]) < others for r in rs):
+        if it.category != "bottom reading" or it.verdict not in (GREEN, VERIFIED) or others < 1 or \
+                any(len(_left(r, ruled)) < others for r in rs):
             return None
         r = rs[0]
-        off = min(sum(k is None for _, k in m) for m in r.reading_moves.values()) / max(1, len(r.landings))
+        off = min(sum(k is None for _, k in m) for m in _left(r, ruled).values()) / max(1, len(r.landings))
         return (-off, -len(r.landings), natural_key(r.ref))
 
     lead = min((it for it in items if settles(it) is not None), key=settles, default=None)
     if lead is not None:
         lead.first = True
-        lead.what = ("look at this one first: it moves under every other reading, so it shows how JLC reads the "
-                     "bottom side; when it sits right, the other bottom parts follow. "
-                     + lead.what[0].upper() + lead.what[1:])
+        lead.what = (f"look at this one first: it moves under every other reading{' still open' if ruled else ''}, "
+                     f"so it shows how JLC reads the bottom side; when it sits right, record it (`jlcplace confirm "
+                     f"--source preview`, or `--source board` on the assembled board) and the other bottom parts' "
+                     f"items go. " + lead.what[0].upper() + lead.what[1:])
     return sorted(items, key=lambda it: (CATEGORIES.index(it.category), not it.first, _VRANK.get(it.verdict, 0),
                                          _rank_doubt(run, it), natural_key(it.refs[0])))
 

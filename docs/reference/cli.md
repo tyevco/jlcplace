@@ -229,7 +229,7 @@ jlcplace confirm --ref REF --db DIR --by NAME --source {board,preview,manual} [o
 | `--by` `NAME` | who checked it |
 | `--source` `{board,preview,manual}` | what was checked: manual (datasheet), preview (JLC's preview) or board (assembled) |
 | `--note` `NOTE` | free text stored with the verification |
-| `--failed` | the check showed the placement wrong (marks it red) |
+| `--failed` | the check showed the placement wrong: its row is red in `check --db` and `cpl --db` until the correction is fixed and confirmed again |
 | `--space` `SPACE` | space presses in JLC's preview (90 deg ccw each) |
 | `--right` `RIGHT` | right-arrow presses (negative: left) |
 | `--up` `UP` | up-arrow presses (negative: down) |

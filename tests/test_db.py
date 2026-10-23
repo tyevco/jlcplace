@@ -179,7 +179,8 @@ def test_upsert_keeps_verifications_and_never_downgrades(db):
     (e,) = db.entries("C1")
     assert (e["status"], e["verdict"], e["reasons"]) == ("board-verified", VERIFIED, ["fit by number"])
     assert e["verifications"] == [{"by": "ann", "date": "2026-10-22", "source": "board", "ok": True, "board": "dms",
-                                   "ref": "U2", "layer": TOP, "presses": None, "note": "assembled fine"}]
+                                   "ref": "U2", "layer": TOP, "presses": None, "note": "assembled fine",
+                                   "correction": {"rot": 90.0, "dx": 0.1, "dy": -0.2, "mirror": False}}]
     with pytest.raises(ValueError, match="board-verified"):
         db.upsert("C1", corr(rot=270.0))
     with pytest.raises(ValueError):
@@ -205,6 +206,43 @@ def test_confirm(db):
     assert (got.status, got.verdict) == ("auto", RED)
     assert got.reasons[-1] == "verification failed (board, bob): U2 pin 1 on pad 4"
     assert [v["ok"] for v in db.entries("C1")[0]["verifications"]] == [True, True, True, False]
+
+
+def test_a_failed_verification_holds_until_the_numbers_are_fixed_or_found_right(db):
+    """A failed verification changed nothing that lasted: `fit --db` stored the same numbers green again, and the
+    check could not tell the entry's numbers had been verified wrong. A verification records the numbers it was of;
+    the latest one of the entry's numbers failing is `failure` (red), through refits of the same numbers, until other
+    numbers replace them or a later verification of them is ok."""
+    keys = {"ee_key": "uuid1:100", "kicad_hash": "sha1:aaaa"}
+    db.upsert("C1", corr())
+    assert db.lookup("C1").failure is None
+    db.confirm("C1", **keys, by="ann", source="preview", ok=False, ref="U2", layer=TOP,
+               note="pin 1 at the wrong corner")
+    v = db.entries("C1")[0]["verifications"][-1]
+    assert v["correction"] == {"rot": 90.0, "dx": 0.1, "dy": -0.2, "mirror": False}
+    got = db.lookup("C1", **keys)
+    assert got.verdict == RED and got.failure == v
+    db.upsert("C1", corr())                                # a refit gives the same numbers: still wrong
+    got = db.lookup("C1", **keys)
+    assert (got.verdict, got.failure, got.reasons) == (RED, v, ["fit by number", "verification failed (preview, ann): "
+                                                                                 "pin 1 at the wrong corner"])
+    got = db.confirm("C1", **keys, by="bob", source="board")              # the assembled board was right after all
+    assert (got.verdict, got.failure, db.lookup("C1").failure) == (VERIFIED, None, None)
+    db.confirm("C1", **keys, by="bob", source="board", ok=False)
+    db.upsert("C1", corr(rot=270.0, status="manual", verdict=YELLOW))   # fixed: the failure was of other numbers
+    got = db.lookup("C1", **keys)
+    assert (got.rot, got.verdict, got.failure, len(got.verifications)) == (270.0, YELLOW, None, 0)
+    # a failure recorded before verifications held their numbers counts while the entry still gives its reason
+    old = {"by": "ann", "date": "2026-01-02", "source": "preview", "ok": False, "board": "b.kicad_pcb", "ref": "U2",
+           "layer": TOP, "presses": None, "note": ""}
+    entry = db.entries("C1")[0]
+    for reasons, failed in ((["fit by number", "verification failed (preview, ann)"], True),
+                            (["fit by number"], False)):
+        db.file("C2").write_text(json.dumps({"lcsc": "C2", "entries": [
+            {**entry, "verdict": RED if failed else GREEN, "reasons": reasons, "verifications": [old]}]}),
+            encoding="utf-8")
+        got = db.lookup("C2", **keys)
+        assert (got.failure is not None, got.verdict) == (failed, RED if failed else GREEN)
 
 
 def test_manual_confirmation_of_a_red_fit(db):

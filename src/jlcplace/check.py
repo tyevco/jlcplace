@@ -29,6 +29,9 @@ vouches for it.
 A row that lands the pads as a fitted correction does whose choice among several placements is in doubt
 (Correction.doubt: a polarity only the pad numbers decide, an orientation the pads do not fix) is yellow. A row that
 lands every pad on its own pad but sits off where a (not red) correction puts the part is yellow ("offset").
+A stored correction whose numbers were verified wrong (`confirm --failed`: Correction.failure) makes its own row
+red ("verified-wrong"), whatever the pads land on: what was wrong may be the footprint's numbering, or a body its pads
+do not orient. A row away from it is yellow: nothing verified vouches for it either.
 
 Pin names
 ---------
@@ -179,6 +182,20 @@ def _worst(*verdicts: str) -> str:
     return min(verdicts, key=lambda v: VERDICT_ORDER.get(v, 0))
 
 
+_SOURCE_WORDS = {"preview": "JLC's preview", "board": "the assembled board", "manual": "a manual check"}
+
+
+def failure_text(v: dict) -> str:
+    """'verified wrong by JLC's preview on 2026-10-23 (U3, ann: pin 1 at the wrong corner)': a failed verification
+    (Correction.failure) as the check and the checklist say it."""
+    src = str(v.get("source") or "")
+    where = _SOURCE_WORDS.get(src.removesuffix("-verified"), src or "a verification")
+    said = ": ".join(t for t in (", ".join(str(v[k]) for k in ("ref", "by") if v.get(k)), str(v.get("note") or ""))
+                     if t)
+    return (f"verified wrong by {where}" + (f" on {v['date']}" if v.get("date") else "")
+            + (f" ({said})" if said else ""))
+
+
 _DOUBT_WORDS = {"polarity": ("polarity", "pin names pick", "+ "), "names": ("pin names pick",),
                 "orientation": ("orientation", "one land")}
 
@@ -219,7 +236,8 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
     expected row gets a message; more than OFFSET_FLOOR mm and OFFSET_PAD of the smallest pad it lands on, or
     OFFSET_ANGLE degrees, from that of a correction that is not red, it is yellow ("offset"). With every pad on copper,
     pin names that the row permutes beyond what any known placement fixes are red ("pinout"), and other name
-    differences yellow (_pinout)."""
+    differences yellow (_pinout). A correction verified wrong (`corr.failure`): its row (within the offset tolerances)
+    is red, status "verified-wrong", saying by what, when and what to do; a row away from it is yellow."""
     if reading not in BOTTOM_READINGS:
         raise ValueError(f"unknown reading {reading!r}: one of {', '.join(BOTTOM_READINGS)}")
     if alt_readings is not True and alt_readings:
@@ -398,10 +416,10 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
         msgs.append("KiCad pads that no EasyEDA pad lands on, of pins an EasyEDA pad covers (vias, a cut lead's "
                     "stub): " + ", ".join(sorted(set(excused), key=natural_key)))
 
+    sizes = [pad_size(p) for _, _, p in placed if p is not None]
+    tol = max(OFFSET_FLOOR, OFFSET_PAD * min(sizes)) if sizes else OFFSET_FLOOR
     if dev is not None and not off and corr.verdict in (GREEN, YELLOW, VERIFIED) and dev[1] <= 45.0:
         d, da = dev
-        sizes = [pad_size(p) for _, _, p in placed if p is not None]
-        tol = max(OFFSET_FLOOR, OFFSET_PAD * min(sizes)) if sizes else OFFSET_FLOOR
         if d > tol or da > OFFSET_ANGLE:
             # every centre is on its own pad, but the part sits off where the correction puts it
             issues.append(YELLOW)
@@ -434,6 +452,27 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
         elif msg:
             issues += [issue] if issue else []
             msgs.append(msg)
+
+    fail = corr.failure if corr is not None else None
+    if fail is not None and dev is not None:
+        d, da = dev
+        if d <= tol and da <= OFFSET_ANGLE:
+            # the row JLC's preview, the board or a person showed wrong: its pads may land on their own numbers all
+            # the same (what was wrong is then the footprint's numbering, or a body its pads do not orient)
+            issues.append(RED)
+            text = (f"{failure_text(fail)}: the row is the stored correction's; fix the correction (`jlcplace "
+                    f"confirm` with the presses that put the part right in the preview, or --rot/--dx/--dy) and "
+                    f"confirm it again")
+            if status in ("ok", "renumbered"):
+                status = "verified-wrong"
+                msgs.insert(0, text)
+            else:
+                msgs.append(text)
+        else:
+            # not the row that was wrong, but nothing verified vouches for it either
+            issues.append(YELLOW)
+            msgs.append(f"the stored correction was {failure_text(fail)}; this row is {d:.3f} mm and {da:g} deg from "
+                        f"its row: look at it in JLC's preview, then record it (`jlcplace confirm --cpl`)")
 
     if row.layer == BOTTOM and alt_readings:
         _sensitivity(res, part, row, ee, origin, reading, alt_readings, flip_ok)
