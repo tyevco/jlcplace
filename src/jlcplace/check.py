@@ -55,7 +55,7 @@ from collections import Counter
 from . import geom
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_library, cpl_row_for, cpl_to_board, ee_to_board, \
     ee_to_library
-from .cpl import assembled, correction_for, natural_key
+from .cpl import assembled, correction_for, jlc_places, natural_key
 from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
@@ -579,20 +579,23 @@ def _sensitivity(res: RowResult, part: Part, row: CplRow, ee: EEFootprint, origi
 
 def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, reading: str = DEFAULT,
               bom_refs=None) -> list[RowResult]:
-    """One RowResult per CPL row (in order), then one per part JLC assembles that has an LCSC code and no row
-    ("no-row", red). Rows for refs not on the board, for parts JLC does not assemble, on the wrong layer, or repeated
-    are red ("not-on-board", "not-placed", "layer-mismatch", "duplicate"); a row for a part only excluded from the
-    BOM is yellow ("not-placed": JLC places only what the BOM lists). `ee_lookup(code)` returns an EEFootprint,
-    NotFound or None; an exception from it counts as no footprint. `corrections` is keyed by reference or code.
-    `bom_refs`, the designators a JLC BOM lists: a part only excluded from the board's BOM that the BOM lists is
-    simulated like any other (JLC places what the BOM lists), with a message. A reference that more than one part JLC
-    places carries ("duplicate-ref", red: JLC cannot tell them apart) is never simulated: every row of it gets that
-    result, and a reference with no row gets it once."""
+    """One RowResult per CPL row (in order), then one per part JLC places that has an LCSC code and no row
+    ("no-row", red). Rows for refs not on the board, for DNP or board-only parts, on the wrong layer, or repeated are
+    red ("not-on-board", "not-placed", "layer-mismatch", "duplicate"). JLC never sees KiCad's attributes and places
+    what its BOM and CPL list (cpl.jlc_places): a row for a part the board excludes from its position files or its
+    BOM is simulated like any other when the BOM lists it (`bom_refs`, the designators a JLC BOM lists) or, with no
+    BOM given, when the board only excludes it from its position files (the CPL lists it); an exclusion from the
+    position files is then yellow at least, a board inconsistency ("the BOM and the CPL list it: JLC places it").
+    Such a row that nothing else lists is yellow ("not-placed": JLC places only what its BOM lists), and a part the
+    BOM lists with no row is "no-row" like any other. `ee_lookup(code)` returns an EEFootprint, NotFound or None; an
+    exception from it counts as no footprint. `corrections` is keyed by reference or code. A reference that more than
+    one part JLC places carries ("duplicate-ref", red: JLC cannot tell them apart) is never simulated: every row of
+    it gets that result, and a reference with no row gets it once."""
     count = Counter(r.ref for r in rows)
     cache: dict[str, object] = {}
     placed: dict[str, list[Part]] = {}           # the parts JLC places, by reference
     for p in board.parts:
-        if assembled(p) or (bom_refs is not None and p.placed and p.exclude_bom and p.ref in bom_refs):
+        if jlc_places(p, bom_refs, count):
             placed.setdefault(p.ref, []).append(p)
     shared = {ref: ps for ref, ps in placed.items() if len(ps) > 1}
 
@@ -620,17 +623,16 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
             out.append(RowResult(row.ref, status="not-on-board", verdict=RED, row=row,
                                  messages=[f"{row.ref} is not on the board"]))
             continue
-        listed = False
-        if not assembled(part):
+        listed = not assembled(part) and jlc_places(part, bom_refs, count)
+        if not assembled(part) and not listed:
             flags = [n for n, f in (("DNP", part.dnp), ("excluded from position files", part.exclude_pos),
                                     ("board-only", part.board_only), ("excluded from the BOM", part.exclude_bom)) if f]
-            only_bom = flags == ["excluded from the BOM"]
-            listed = only_bom and bom_refs is not None and row.ref in bom_refs
-            if not listed:
-                out.append(RowResult(row.ref, part.lcsc, status="not-placed", verdict=YELLOW if only_bom else RED,
-                                     row=row,
-                                     messages=[f"the board part is {', '.join(flags)}: JLC must not place it"]))
-                continue
+            must = part.dnp or part.board_only
+            why = (": JLC must not place it" if must or bom_refs is None else
+                   " and the BOM does not list it: JLC does not place it")
+            out.append(RowResult(row.ref, part.lcsc, status="not-placed", verdict=RED if must else YELLOW, row=row,
+                                 messages=[f"the board part is {', '.join(flags)}{why}"]))
+            continue
         if row.layer != part.layer:
             out.append(RowResult(row.ref, part.lcsc, status="layer-mismatch", verdict=RED, row=row,
                                  messages=[f"the row says {row.layer}, the part is on the {part.layer}"]))
@@ -640,22 +642,41 @@ def check_cpl(board: Board, rows: list[CplRow], ee_lookup, *, corrections=None, 
         if not part.lcsc:
             res.messages.insert(0, "the board part has no LCSC code")
         if listed:
-            res.messages.append("the board excludes it from the BOM, but the BOM lists it: JLC will place it")
+            listed_note(res, part, bom_refs)
         if count[row.ref] > 1:
             res.status, res.verdict = "duplicate", RED
             res.messages.insert(0, f"{count[row.ref]} rows for {row.ref}")
         out.append(res)
     reported = set()
     for part in sorted(board.parts, key=lambda p: natural_key(p.ref)):
-        if assembled(part) and part.lcsc and part.ref not in count:
+        if jlc_places(part, bom_refs) and part.lcsc and part.ref not in count:
             if part.ref in shared:
                 if part.ref not in reported:
                     reported.add(part.ref)
                     out.append(ambiguous(part.ref, None))
                 continue
+            why = "it has an LCSC code" if assembled(part) else "the BOM lists it"
             out.append(RowResult(part.ref, part.lcsc, status="no-row", verdict=RED,
-                                 messages=["JLC assembles it (it has an LCSC code) but the CPL has no row"]))
+                                 messages=[f"JLC assembles it ({why}) but the CPL has no row"
+                                           + (" (the board excludes it from the position files, so KiCad's position "
+                                              "file leaves it out)" if part.exclude_pos else "")]))
     return out
+
+
+def listed_note(res: RowResult, part: Part, bom_refs=None) -> None:
+    """What a row JLC places though the board excludes its part says (check_cpl, and pipeline's proxy simulation): an
+    exclusion from the position files is a board inconsistency, yellow at least (first when the row is green);
+    `bom_refs` None: no BOM was given."""
+    if part.exclude_pos:
+        # KiCad's attribute keeps the part out of KiCad's own position file, not off JLC's machine
+        lists = "the BOM and the CPL list it" if bom_refs is not None else "the CPL lists it"
+        res.messages.insert(0 if res.verdict in (GREEN, VERIFIED) else len(res.messages),
+                            f"the board excludes it from the position files, but {lists}: JLC places it (it never sees "
+                            f"KiCad's attributes); untick 'Exclude from position files' if it is to be assembled, else "
+                            f"drop its row and BOM line")
+        res.verdict = _worst(res.verdict, YELLOW)
+    else:
+        res.messages.append("the board excludes it from the BOM, but the BOM lists it: JLC will place it")
 
 
 def jlc_part(board: Board, ref: str) -> Part | None:

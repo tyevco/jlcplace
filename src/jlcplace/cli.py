@@ -36,7 +36,7 @@ from . import __version__, geom, report
 from .board import load_board, save_snapshot
 from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row
 from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
-from .cpl import assembled, atomic_write, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
+from .cpl import atomic_write, jlc_places, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
 from .easyeda import EEClient, EEError, check_code, default_cache_dir
 from .fit import ee_landings, fit_part
@@ -44,7 +44,7 @@ from .gerber import board_origins, gerber_origin, read_gerbers
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, CplRow, EEFootprint, NotFound, \
     printable
 from .parts import ee_key, kicad_hash
-from .pipeline import Finding, apply_bom_codes, bom_overrides, check, correction, describe, fallback, \
+from .pipeline import Finding, apply_bom_codes, bom_overrides, bom_refs, check, correction, describe, fallback, \
     gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, offset_tol, origin_findings, resolve, \
     row_lines
 from .report import plural
@@ -315,7 +315,7 @@ def cmd_check(args) -> int:
     jlc, gerbers, found = _gerbers(args, board, rows)
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
-    resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom)
+    resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom, cpl_refs={r.ref for r in rows})
     run = check(jlc, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
@@ -388,8 +388,10 @@ def cmd_cpl(args) -> int:
     jlc, gerbers, found = _gerbers(args, board)   # with --gerbers, the rows are written from the Gerbers' origin
     overrides = apply_bom_codes(board, bom) if bom is not None else []
     client = _client(args)
-    resolved = resolve(board, client, _db(args), snap=args.snap, use_fallback=True)
-    rows, _ = rows_for_board(jlc, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading)
+    # with the BOM, also the parts the board excludes from its position files or BOM that it lists: JLC places them
+    resolved = resolve(board, client, _db(args), snap=args.snap, use_fallback=True, bom_rows=bom)
+    rows, _ = rows_for_board(jlc, {ref: r.corr for ref, r in resolved.items() if r.corr is not None}, args.reading,
+                             bom_refs=bom_refs(bom))
     out = Path(args.output)
     tmp = str(out.parent / f".{out.name}.jlcplace-check.tmp")
     try:
@@ -431,6 +433,12 @@ def cmd_cpl(args) -> int:
 
 # ------------------------------------------------------------------------------------------------------- fit
 
+def _placeable(part) -> bool:
+    """A part a CPL can get placed: assembled, or excluded only from the position files (JLC never sees KiCad's
+    attributes: a CPL row and a BOM line place it), never a DNP or board-only part (cpl.jlc_places)."""
+    return jlc_places(part, None, {part.ref})
+
+
 def _fit_dict(part, ee, corr: Correction, stored: str) -> dict:
     return {"ref": part.ref, "lcsc": part.lcsc, "layer": part.layer, "footprint": part.footprint,
             "easyeda": ee.title if isinstance(ee, EEFootprint) else None,
@@ -447,7 +455,7 @@ def cmd_fit(args) -> int:
     if unknown:
         raise BadInput(f"not on the board: {', '.join(unknown)}")
     parts = [p for p in sorted(board.parts, key=lambda p: natural_key(p.ref))
-             if p.lcsc and (p.ref in want if want else assembled(p))]
+             if p.lcsc and (p.ref in want if want else _placeable(p))]
     client, db = _client(args), _db(args, creates=True)
     out = sys.stderr if args.json == "-" else sys.stdout
     ees: dict = {}
@@ -509,7 +517,7 @@ def cmd_fetch(args) -> int:
         else:
             args.board = t
             board = _board(args)
-            codes += sorted({p.lcsc for p in board.parts if p.lcsc and assembled(p)}, key=natural_key)
+            codes += sorted({p.lcsc for p in board.parts if p.lcsc and _placeable(p)}, key=natural_key)
     codes = list(dict.fromkeys(codes))
     got = missing = failed = 0
     for code in codes:

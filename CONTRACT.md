@@ -431,15 +431,22 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   part whose drawn + the row puts on KiCad's positive pad: a message. A row landing as a manual correction: yellow,
   "accepted by the manual correction"; as a board-verified one: a message; a preview verification settles only a
   two-terminal part (JLC's preview does not show pin functions).
-* `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC assembles with a code and no row.
-  JLC assembles a part when `cpl.assembled(part)` = placed and not exclude_bom. A reference that more than one part
+* `check_cpl`: one result per row in order, then "no-row" (red) for parts JLC places with a code and no row ("JLC
+  assembles it (the BOM lists it) but the CPL has no row (the board excludes it from the position files, so KiCad's
+  position file leaves it out)"). JLC never sees KiCad's attributes and places what its BOM and CPL list:
+  `cpl.jlc_places(part, bom_refs, cpl_refs)` = not DNP, not board-only, and `cpl.assembled(part)` (placed and not
+  exclude_bom), or listed by `bom_refs` (the designators a JLC BOM lists; None: no BOM), or, with no BOM, only
+  exclude_pos and listed by the CPL's rows. A reference that more than one part
   JLC places carries is "duplicate-ref" (red, "R1 is on the board 2 times: JLC cannot tell them apart"): every row of
   it, or one result when it has none, and never simulated against either part (a row of a reference whose other
   parts JLC does not place is checked against the placed one). Rows for refs not on the board
   ("not-on-board"), on the wrong layer ("layer-mismatch"), repeated ("duplicate", every copy) are red; "not-placed"
-  is red for DNP/exclude_pos/board_only parts and yellow when the only flag is exclude_bom, unless `bom_refs` (the
-  designators a JLC BOM lists) lists it: then it is simulated like any other row, with a message. A row for a part
-  with no code is checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
+  is red for DNP and board-only parts ("JLC must not place it") and yellow for a part the board excludes from its BOM
+  or position files that nothing else lists ("... and the BOM does not list it: JLC does not place it"). A part JLC
+  places that is not assembled is simulated like any other row, with a message: for an exclude_pos part, first when
+  the row is green, and the row is yellow at least ("the board excludes it from the position files, but the BOM and
+  the CPL list it: JLC places it (it never sees KiCad's attributes); untick ..."). A row for a part with no code is
+  checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
 * Statuses: ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout | not-simulated | no-row |
   not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref.
@@ -450,8 +457,9 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
 def read_cpl(path, *, units="mm") -> list[CplRow]
 def write_cpl(path, rows: list[CplRow])
 def read_bom(path) -> list[dict]       # designators, lcsc (normalised when valid, else raw), comment, footprint, qty
-def rows_for_board(board, corrections, reading="jlc-2022") -> tuple[list[CplRow], list[str]]
-def assembled(part) -> bool; def correction_for(corrections, part) -> Correction | None; def natural_key(ref)
+def rows_for_board(board, corrections, reading="jlc-2022", *, bom_refs=None) -> tuple[list[CplRow], list[str]]
+def assembled(part) -> bool; def jlc_places(part, bom_refs=None, cpl_refs=None) -> bool
+def correction_for(corrections, part) -> Correction | None; def natural_key(ref)
 def atomic_write(path, text)           # temp file + rename; keeps an existing file's mode, else 0666 less the umask
 ```
 * `read_cpl`: CSV, TSV or semicolons (the first delimiter under which a header names all five columns), header
@@ -465,8 +473,8 @@ def atomic_write(path, text)           # temp file + rename; keeps an existing f
 * `atomic_write` creates its temporary file with mode 0666 (the kernel applies the umask; the umask is never read,
   since reading it means setting it, process-wide) and gives it an existing file's mode before the rename.
 * `read_cpl` and `read_bom` raise ValueError (with the line) for a designator `model.ref_problem` refuses.
-* `rows_for_board`: rows for assembled parts with a code; refs without a correction or with a mirrored one are
-  returned as missing. Both sorted naturally.
+* `rows_for_board`: rows for the parts JLC places (`jlc_places(part, bom_refs)`: assembled, or listed by the BOM)
+  with a code; refs without a correction or with a mirrored one are returned as missing. Both sorted naturally.
 
 ## db.py — the shared correction database (one JSON file per code, safe to keep in git)
 
@@ -513,11 +521,13 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 def correction(part, ee, db=None, *, snap=0.5) -> (Correction | None, source)     # db | fit | ""
 def fallback(part, ee) -> Correction          # KiCad's own row (rot 0); yellow for a non-polar 2-pad part or a
                                               # two-pad trimmer, else red
-def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None) -> dict[ref, Resolved]
+def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None, cpl_refs=None)
+    -> dict[ref, Resolved]
 def check(board, rows, resolved, *, reading=DEFAULT, bom_rows=None, cpl_path="") -> Run
 def proxy_footprint(part, corr) -> EEFootprint   # KiCad pads through the inverse correction
 def apply_bom_codes(board, bom_rows) -> list[(ref, board code, BOM code)]; def bom_overrides(changed) -> list[str]
-def bom_listed(part, bom_rows) -> bool; def lookup_ee(client, code); def key_reasons(corr, n=2)
+def bom_listed(part, bom_rows) -> bool; def bom_refs(bom_rows) -> set | None; def lookup_ee(client, code)
+def key_reasons(corr, n=2)
 def needs_preview(corr) -> bool; def moves_text(res) -> str
 class Resolved(part, ee, corr, source, proxy); class Run(board, rows, results, resolved, reading, cpl_path,
     bom_messages, row_lines, findings, gerbers, gerbers_path, offset): counts(), worst(), exit_code(fail_on),
@@ -542,8 +552,11 @@ def origin_lines(run) -> list[(verdict, text)]
   its BOM line's code (JLC assembles from the BOM; every part with the reference, so a DNP alternate footprint
   listed first does not keep it from the placed one): `apply_bom_codes` returns the references whose board code it
   replaced (the code of the part JLC places, `check.jlc_part`), `bom_overrides` makes their BOM messages.
-  `resolve(bom_rows=...)` also resolves the parts the board only excludes from its BOM but the BOM lists
-  (`bom_listed`), and `check` simulates their rows.
+  `resolve` resolves the parts `cpl.jlc_places` names: with `bom_rows`, also the parts the board excludes from its
+  BOM or its position files that the BOM lists (`bom_listed`; `bom_refs(bom_rows)` = the BOM's designators), with
+  `cpl_refs` (the CPL's references, `check`) the parts only excluded from the position files that the CPL lists;
+  `check` simulates their rows. `cpl --bom` resolves and writes (`cpl.rows_for_board(..., bom_refs=)`) the parts the
+  BOM lists; `fetch BOARD` and `fit BOARD` take the parts a CPL can get placed (assembled, or only exclude_pos).
 * Common offset. Where a row belongs (cpl frame): `cpl_row_for(part, corr)` with a non-mirror correction, else the
   part's anchor (not-on-board and duplicate-ref results skipped). Hypotheses, simplest first: the rows as read, Mid Y
   not negated, then each other unit in `cpl.UNITS` than `units`, Y negated or not; for each, the densest cluster of
