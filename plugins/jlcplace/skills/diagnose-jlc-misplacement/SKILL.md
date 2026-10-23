@@ -2,7 +2,7 @@
 name: diagnose-jlc-misplacement
 description: Explain why parts on a JLCPCB-assembled board or in its placement preview came out shifted, rotated, reversed or on the wrong pins (origin, units, Y axis, EasyEDA or CPL-writer offsets, bottom side, polarity, pinout), using jlcplace check on the uploaded files, and say what to upload next time. Use when a JLC order or preview showed parts wrong.
 argument-hint: "[board.kicad_pcb] [uploaded-CPL.csv]"
-allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *) Bash(jlcplace --version) Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/prepare-jlc-order/scripts/origin_check.py *) Read Glob
+allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *) Bash(jlcplace --version) Read Glob
 ---
 
 # Diagnose a misplaced JLC order
@@ -18,31 +18,34 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
      table, a project script, order notes next to the CPL that mention corrections;
    * for an assembled board, whether the bottom-side parts came out right, starting with the part the checklist marks
      `look at this one first` (see "The bottom side on an assembled board" below).
-3. Check the uploaded files. Never add `--online`. If the check says records are missing, ask before running
-   `jlcplace fetch`. Pass the project's database (`--db jlcplace-db`, or its own path) even if it does not exist yet:
-   a missing directory only warns.
+3. Check the uploaded files, the Gerber zip among them when it is at hand (leave out `--gerbers` otherwise): JLC
+   laid the CPL over those Gerbers from their (0, 0), and so does the check. Never add `--online`. If the check says
+   records are missing, ask before running the `jlcplace fetch` it names. Pass the project's database
+   (`--db jlcplace-db`, or its own path) even if it does not exist yet: a missing directory only warns.
 
    ```sh
-   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --db jlcplace-db --checklist checklist.md --json results.json
+   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md --json results.json --overlay overlay
    ```
 
    The terminal shows only the first message of each row. For each red or yellow row, read every message in
    `results.json`, and its `row` (as uploaded) and `expected` (the row jlcplace writes), or run
    `jlcplace show board.kicad_pcb --ref J1`. Quote the distances to the user (`differs from the row jlcplace writes
    (...): 3.399 mm and 0 deg away`), and any pads that land on other pins' nets (`11->2 (+13V_OLED, not GND)`).
-   `--report report.html` draws every part with its EasyEDA pads, which helps when comparing with the preview. It is
-   for local viewing only: never publish it.
+   `overlay/top.svg` and `overlay/bottom.svg` (PNGs too when a renderer is at hand) show each side as JLC's preview
+   does, with the EasyEDA pads where the uploaded rows put them and the problem parts circled: put them beside the
+   preview or the photos. `--report report.html` draws every part on its own card. Both draw EasyEDA pad outlines:
+   for local viewing only, never publish them.
 4. Match each reported symptom to a cause below, using jlcplace's result for that part and the pattern across parts.
    Per part, say the cause, the evidence, and the fix.
 5. Write what to upload next time:
-   * a CPL from `jlcplace cpl` that checks clean, with the same `--db` ([write-jlc-cpl](../write-jlc-cpl/SKILL.md));
-   * if the Gerber zip is at hand, always run the origin check from [prepare-jlc-order](../prepare-jlc-order/SKILL.md)
-     on the uploaded zip and the new CPL (on Windows, `py` in place of `python3`). `same origin` means the Gerbers,
-     the drill files and the BOM can be uploaded again as they are, and only the CPL changes. A mismatch means
-     re-exporting everything from one origin, as that skill says:
+   * a CPL from `jlcplace cpl` that checks clean, with the same `--db` ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)),
+     written with `--gerbers uploaded-gerbers.zip` when the zip is at hand: its rows are then written from the
+     zip's (0, 0) and checked against it. No red `origin` or `gerbers` line means the Gerbers, the drill files and
+     the BOM can be uploaded again as they are, and only the CPL changes. A red `gerbers` line means plotting them
+     again, as [prepare-jlc-order](../prepare-jlc-order/SKILL.md) says:
 
      ```sh
-     python3 ${CLAUDE_PLUGIN_ROOT}/skills/prepare-jlc-order/scripts/origin_check.py uploaded-gerbers.zip board-CPL.csv
+     jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md
      ```
 
    * for the next preview, the checklist that `jlcplace cpl --checklist` writes for the new CPL, not the one made
@@ -59,20 +62,21 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
 
 | pattern | cause | jlcplace shows | fix |
 |---|---|---|---|
-| Every part off by the same vector | The CPL and the Gerbers use different origins (drill/place, grid or page origin). | The CPL may check clean against the board, because it matches the board's own origin, while the Gerbers do not. | The origin check (step 5) on the uploaded zip and CPL. Re-export everything from the drill/place origin. |
-| Every row red, and a hint `pass --origin absolute` | A position file relative to the page origin, with Gerbers from another origin. | `would sit on their parts if the CPL were relative to the page origin` | As above. |
-| Parts bunched near one corner | The CPL's numbers are in inches. | `pass --units in` | Write the CPL in mm (`jlcplace cpl`). |
-| Parts at the right X but mirrored up and down | The Y sign is flipped: a CPL made from KiCad's Y-down coordinates. | Nearly every row red, off copper. | Write the CPL with `jlcplace cpl`. |
+| Every part off by the same vector | The CPL and the Gerbers use different origins (drill/place, grid or page origin). | With `--gerbers`, a red line before the rows: `origin mismatch: JLC lays the CPL over the Gerbers from their (0, 0), board (0, 0) (the page origin), but the CPL was written from the aux (drill/place file) origin (100, 100) (184 of 184 rows): JLC would put every part 141.42 mm off ...; fix: ...`. Without the Gerbers the CPL may check clean, because it matches the board's own origin while the Gerbers do not. | The finding's `fix:`: write the CPL from the Gerbers' origin (`jlcplace cpl --gerbers`), or re-export everything from the drill/place origin. |
+| Every row red, and a hint `origin mismatch: N of M rows would sit on their parts if shifted by ...` | A CPL from another origin than the board's drill/place origin (no Gerbers given). | `the CPL was written from the page origin (0, 0), not the board's aux origin ...` | Check again with `--gerbers`, which tells which origin JLC used, then as above. |
+| Parts bunched near one corner | The CPL's numbers are in inches. | `... if the CPL's numbers were in inches: JLC reads a CPL's numbers in mm` | Write the CPL in mm (`jlcplace cpl`). |
+| Parts at the right X but mirrored up and down | The Y sign is flipped: a CPL made from KiCad's Y-down coordinates. | `... with Mid Y negated` | Write the CPL with `jlcplace cpl`. |
 | Only bottom parts, mirrored left and right | X negated for bottom parts (KiCad's "negative X coordinates for bottom", `--bottom-negate-x`). | Bottom rows red, top rows green. | Write the CPL with `jlcplace cpl`. |
 | A few parts (often connectors, switches, modules) off by anything from about 1 mm to over 100 mm | The CPL lacks the EasyEDA footprint's origin offset, or the tool that wrote it applied a wrong offset of its own. Tell them apart as below. | `N of M EasyEDA pads land off copper ... (nearest KiCad pad centre up to D mm away)`, and in `results.json` `differs from the row jlcplace writes (...): D mm ...` | Write the CPL with `jlcplace cpl`, with a numbering decision if it asks for one. If the writer applied its own offset, tell the user where, so it is not used again. |
 
-**Which offset was wrong.** For each such part, compare three points, all in CPL coordinates (mm from the
-drill/place origin, Y up):
+**Which offset was wrong.** For each such part, compare three points, all in CPL coordinates (mm from the CPL
+origin, Y up):
 
 * U, the uploaded row: `row` in `results.json`, or the CPL;
 * K, KiCad's anchor. `jlcplace show` prints the part's `x:` and `y:` in KiCad's board coordinates (from the page
-  origin, Y down). In CPL coordinates that is (x - aux_x, aux_y - y), with the aux origin from the check's first line
-  (`origin aux 100, 100`). The `rows:` that `show` prints are already CPL coordinates;
+  origin, Y down). In CPL coordinates that is (x - ox, oy - y), with the origin (ox, oy) from the check's first line
+  (`origin aux 100, 100`, or `origin 100, 100 from the Gerbers (aux)`). The `rows:` that `show` prints are already
+  CPL coordinates from the board's aux origin;
 * J, jlcplace's row: `expected` in `results.json`, or `show`'s row for the reading in use (`jlc-2022`).
 
 If U is on K, and J is off K by about the distance jlcplace reports, the CPL lacks the EasyEDA origin offset: the
@@ -85,9 +89,10 @@ pads, or a switch numbered 1,1,2,2. Do not make the user's offset table bigger. 
 row at (16.9416, -9.7815). The row is 3.40 mm from the anchor while jlcplace's correction is 0.06 mm, so the
 project's own CPL writer caused the error.
 
-If `jlcplace check --help` lists `--gerbers`, pass `--gerbers uploaded-gerbers.zip` to the check: the installed
-version then checks the Gerbers' origin itself, and may name a common offset across all rows. Prefer its finding to
-the table above when it gives one.
+With the Gerbers, the `origin mismatch` finding settles the first rows of the table: it names the origin the
+Gerbers were plotted from and the one the CPL was written from. `--fixed-cpl fixed-CPL.csv` on the check writes the
+uploaded rows shifted onto the Gerbers' origin and says how that file checks; a CPL from `jlcplace cpl --gerbers` is
+better, as it fixes the parts' angles and offsets too.
 
 ## Turned: on its pads, at the wrong angle
 
@@ -141,6 +146,6 @@ jlcplace reports a pinout status or finding in its check output, use it as the p
 
 `no-row` (red: the CPL has no row for an assembled part), a BOM line without an LCSC code, or a part JLC had out of
 stock (JLC's order page says so). Add the row or code, or choose another part. Then run [prepare-jlc-order](../prepare-jlc-order/SKILL.md)
-steps 5 and 7 again.
+steps 5 and 6 again.
 
 The [verdict reference](../check-jlc-placement/verdicts.md) explains every status and message.

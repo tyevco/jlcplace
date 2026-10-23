@@ -7,7 +7,8 @@ origin**.
 ## Gerbers (PCB Editor)
 
 1. File > Fabrication Outputs > Gerbers (.gbr)...
-2. Plot format Gerber. Output directory `fab/gerbers/`.
+2. Plot format Gerber. Output directory `fab/gerbers/`. Delete the old files in it first: KiCad never deletes an old
+   plot, and a zip with two plots in it is red in `jlcplace check --gerbers`.
 3. Layers: F.Cu, the inner copper layers (In1.Cu ...), B.Cu, F.Paste, B.Paste, F.Silkscreen, B.Silkscreen, F.Mask,
    B.Mask, Edge.Cuts.
 4. Tick **Use drill/place file origin**. Leave "Use Protel filename extensions" as it is (JLC reads both).

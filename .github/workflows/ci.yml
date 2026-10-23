@@ -123,8 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # the origin check on the dial-me-spinner fab outputs runs in the kicad job, which has them
-      ALLOW_SKIPS: "needs the dial-me-spinner fab outputs"
+      ALLOW_SKIPS: "(?!)"           # nothing may skip here
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
     steps:
       - uses: actions/checkout@v4
@@ -156,8 +155,6 @@ jobs:
           claude plugin validate plugins/jlcplace --strict
           claude plugin validate plugins/jlcplace --profile directory
       - name: pytest (the plugin's tests, `claude plugin validate` among them)
-        env:
-          JLCPLACE_DIAL_ME_SPINNER: ${{ runner.temp }}/absent/dial-me-spinner
         run: >
           python -X warn_default_encoding -m pytest -q -p no:cacheprovider -rs tests/test_claude_plugin.py
           --junitxml=junit-plugin.xml

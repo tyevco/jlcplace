@@ -30,14 +30,15 @@ Third-party marketplaces do not update on their own. To get a newer version, run
 Code. Or turn on auto-update for the marketplace under `/plugin` (Marketplaces).
 
 The plugin does not install the jlcplace CLI. The first time a skill needs it, Claude looks for it and, if you agree,
-installs it from GitHub with `uv tool install`, `pipx install`, or a virtual environment of its own. It needs
-Python 3.10 or later, and git (or GitHub's zip download of the repository). It does not need KiCad: a built-in reader
-handles `.kicad_pcb` files from KiCad 5 to 10.
+installs it from GitHub with `uv tool install`, `pipx install`, or a virtual environment of its own. The skills
+need jlcplace 0.2.0 or later, and Claude offers to update an older one. It needs Python 3.10 or later, and git (or
+GitHub's zip download of the repository). It does not need KiCad: a built-in reader handles `.kicad_pcb` files from
+KiCad 5 to 10.
 KiCad's `kicad-cli` is used only to export Gerbers, drill files and the BOM, and the order skill falls back to
 KiCad's dialogs without it.
 
 **Permission prompts.** Each skill pre-approves the jlcplace commands it runs by name (`jlcplace check`, `cpl`,
-`show`, `--version`, and the order skill's origin check and `kicad-cli`), so those run without a prompt. Recording
+`show`, `--version`, and the order skill's `kicad-cli`), so those run without a prompt. Recording
 results (`jlcplace confirm`), downloading EasyEDA records (`jlcplace fetch`) and installing anything always ask. If
 uv or pipx installs jlcplace into a directory that is not on your `PATH`, Claude calls it by its full path, which
 the pre-approvals do not cover, so every call asks; run `uv tool update-shell` (or `pipx ensurepath`) and start a new
@@ -51,7 +52,7 @@ Claude picks the skill from what you ask. You can also run one as `/jlcplace:<na
 |---|---|
 | `check-jlc-placement` | Checks a CPL from any tool (KiCad, kicad-jlcpcb-tools, Fabrication-Toolkit, KiKit, hand-made) against the board with `jlcplace check`, and explains each red, yellow, green or verified row and what to fix. |
 | `write-jlc-cpl` | Writes a corrected CPL with `jlcplace cpl`, resolves the rows it refuses, and records numbering or polarity decisions with `jlcplace confirm --source manual`. |
-| `prepare-jlc-order` | The whole hand-off: Gerbers, drill files and CPL from one origin, a BOM with LCSC codes, the jlcplace check, an origin check of the Gerber zip against the CPL, and a pre-upload checklist. |
+| `prepare-jlc-order` | The whole hand-off: Gerbers, drill files and CPL from one origin, a BOM with LCSC codes, the jlcplace check of the CPL against the Gerber zip (`--gerbers`: the Gerbers' origin, and whether they are this board's), and a pre-upload checklist. |
 | `diagnose-jlc-misplacement` | An order or a preview showed parts shifted, turned, reversed or on the wrong pins. It separates origin, units and Y-axis errors from EasyEDA angle and origin differences, offsets the CPL writer added itself, the bottom-side reading, polarity conventions and pinout mismatches, gives the fix for each, and says which files to upload again. |
 | `review-jlc-preview` | Walks jlcplace's preview checklist item by item in JLC's placement preview, and records each result with `jlcplace confirm --source preview`, including key presses and failures. |
 | `setup-jlcplace` | Finds, installs or updates the jlcplace CLI. The other skills use it. |
@@ -71,8 +72,8 @@ Examples:
   GitHub, again only when you agree. Nothing else uses the network.
 * **EasyEDA data stays on your machine.** The footprint records belong to the JLCEDA/EasyEDA Official Library.
   jlcplace keeps them in its local cache (`$JLCPLACE_CACHE`, else `$XDG_CACHE_HOME/jlcplace`, else
-  `~/.cache/jlcplace`). The HTML report (`--report`) draws EasyEDA pad outlines and is for your own review. Never
-  commit or publish the cache or the report. The CPL, the checklist, the JSON and JUnit outputs and the correction
+  `~/.cache/jlcplace`). The HTML report (`--report`) and the overlay images (`--overlay`) draw EasyEDA pad outlines
+  and are for your own review. Never commit or publish the cache, the report or the images. The CPL, the checklist, the JSON and JUnit outputs and the correction
   database hold derived numbers only, and can be committed.
 * **The bottom side.** JLC does not document how it reads a bottom-side rotation. jlcplace uses the reading every
   open tool uses and lists the parts that depend on it. JLC's placement preview stays the final check.

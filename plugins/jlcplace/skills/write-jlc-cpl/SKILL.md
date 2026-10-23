@@ -15,24 +15,25 @@ and many EasyEDA footprints (SOT-23 variants, connectors, LGA sensors) use other
 ## Steps
 
 1. Run `jlcplace --version`. If the command is missing, follow [setup-jlcplace](../setup-jlcplace/SKILL.md) first.
-2. Find the board (`*.kicad_pcb`), the JLC BOM (`*BOM*.csv`) if there is one, and the project's correction
-   database (a directory of `C<digits>.json` files, often `jlcplace-db/`). Pass the BOM whenever it exists. JLC
-   assembles from the BOM's LCSC codes, and `cpl --bom` uses those codes.
+2. Find the board (`*.kicad_pcb`), the JLC BOM (`*BOM*.csv`) and the Gerbers (a zip or directory) if there are,
+   and the project's correction database (a directory of `C<digits>.json` files, often `jlcplace-db/`). Pass the BOM
+   whenever it exists: JLC assembles from the BOM's LCSC codes, and `cpl --bom` uses those codes. Pass the Gerbers
+   the CPL will be ordered with whenever they exist: JLC reads the rows from their (0, 0).
 3. Make sure the EasyEDA records are cached. Without them, every multi-pin or polar part is red ("no EasyEDA record
    in the cache") and nothing is written. If the user agrees to the download (it contacts the EasyEDA API,
    rate-limited, once), run the command below. Never add `--online` to `cpl` or `check` instead:
 
    ```sh
-   jlcplace fetch board.kicad_pcb
+   jlcplace fetch board.kicad_pcb --bom board-BOM.csv
    ```
 
 4. Write the CPL:
 
    ```sh
-   jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom board-BOM.csv --db jlcplace-db --checklist checklist.md
+   jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom board-BOM.csv --gerbers board-gerbers.zip --db jlcplace-db --checklist checklist.md
    ```
 
-   Leave out `--bom` when there is no BOM. Always pass the project's database (`jlcplace-db`, or the project's own
+   Leave out `--bom` or `--gerbers` when there is none. Always pass the project's database (`jlcplace-db`, or the project's own
    path), even before it exists: jlcplace then only warns and uses no stored corrections, and `jlcplace confirm`
    creates it with the first decision, so every later `cpl` and `check` uses it. Do not pass `-o -`: the CPL must be
    a file (exit 3).
@@ -95,10 +96,13 @@ preview. The exit code is still 2, and each such row must be on the user's previ
 * JLC's header `Designator,Mid X,Mid Y,Layer,Rotation`, values in mm, Top or Bottom, CRLF line ends.
 * One row for every part JLC assembles that has an LCSC code: placed, not DNP, not excluded from the position files
   or the BOM. With `--bom`, the BOM's code is used. Parts with no code get no row, so JLC does not place them.
-* Coordinates relative to the board's drill/place (aux) origin, Y up, which is the default `--origin aux`. The
-  Gerbers and the drill file must use the same origin: see [prepare-jlc-order](../prepare-jlc-order/SKILL.md). Use
-  `--origin grid`, `--origin absolute` or `--origin X,Y` only to match Gerbers that already use that origin. If the
-  board has no aux origin, aux is the page origin (0, 0).
+* Coordinates in mm, Y up, from the Gerbers' own (0, 0) with `--gerbers` (the first line says `origin 100, 100
+  from the Gerbers (aux)`): JLC lays the CPL over the Gerbers from there. Gerbers that are not this board's as it is
+  (mirrored, another board's, an older plot) are a red `gerbers` line, and nothing is written. Without `--gerbers`,
+  from the board's drill/place (aux) origin, the default `--origin aux` (the page origin (0, 0) when the board has
+  none): the Gerbers and the drill files must then be plotted from that origin (see
+  [prepare-jlc-order](../prepare-jlc-order/SKILL.md)), which the summary reminds of. `--origin grid`, `absolute` or
+  `X,Y` names another origin; with `--gerbers`, an `--origin` other than the Gerbers' is red.
 * Bottom-side rotations use the `jlc-2022` reading (180 - theta + rot, seen from below), which every open tool uses.
   JLC does not document it. The checklist's "bottom reading" items are how the preview proves it.
 
