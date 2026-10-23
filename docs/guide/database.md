@@ -215,14 +215,15 @@ any part with its code), the strongest status wins, and among equals the later e
 **What may replace what.** `fit` never replaces a stronger entry with other numbers: it prints `not stored` and the
 reason instead. `confirm` records the row you uploaded, and when that row's correction differs from the stored one it
 replaces it, except where the stored entry is preview- or board-verified and the new source is no stronger. Here
-the old CPL's J1 row, 3.4 mm off, is refused against J1's preview-verified entry:
+the FPC connector J20 was confirmed in the preview from the released CPL, as J1 was, and the old CPL's J20 row,
+4.5 mm off, is refused against its preview-verified entry:
 
 ```sh
-jlcplace confirm dial-me-spinner-main.kicad_pcb --ref J1 --db jlcplace-db --by you --source preview --cpl old-main-CPL.csv
+jlcplace confirm dial-me-spinner-main.kicad_pcb --ref J20 --db jlcplace-db --by you --source preview --cpl old-main-CPL.csv
 ```
 
 ```text
-jlcplace: J1: the stored correction is preview-verified with other numbers (rot 0, dx -0.0002, dy -0.0626; the row in old-main-CPL.csv gives rot 0, dx -3.3991, dy -0.0630): if that verification was wrong, record it with --failed and its own row first
+jlcplace: J20: the stored correction is preview-verified with other numbers (rot 0, dx -0.0009, dy 1.3405; the row in old-main-CPL.csv gives rot 0, dx -4.4760, dy 1.3400): if that verification was wrong, record it with --failed and its own row first
 ```
 
 Nothing is written, and the exit code is 3. A verification from the assembled boards (`--source board`) would replace

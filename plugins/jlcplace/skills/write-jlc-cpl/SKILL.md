@@ -35,8 +35,9 @@ and many EasyEDA footprints (SOT-23 variants, connectors, LGA sensors) use other
 
    Leave out `--bom` or `--gerbers` when there is none. Always pass the project's database (`jlcplace-db`, or the
    project's own path), even before it exists: jlcplace then only warns and uses no stored corrections, and
-   `jlcplace confirm` creates it with the first decision, so every later `cpl` and `check` uses it. Do not pass
-   `-o -`: the CPL must be a file (exit 3).
+   `jlcplace confirm` creates it with the first decision, so every later `cpl` and `check` uses it. When the
+   project's CPLs are written with a `--reading` (diagnose-jlc-misplacement found it), pass it to every `cpl` and
+   `check`. Do not pass `-o -`: the CPL must be a file (exit 3).
 5. Read the result:
    * Exit 0 and `jlcplace: wrote board-CPL.csv (N rows)`: done. Yellow rows are written, and they need a look in
      JLC's preview.

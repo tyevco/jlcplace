@@ -165,9 +165,10 @@ uploaded CPL; `--source manual` does not need one. The rows are read from `--ori
 them without the Gerbers; for a CPL written from the Gerbers' (0, 0) (`cpl --gerbers`), pass the same `--gerbers`
 (`show` takes it too). A row that puts every EasyEDA pad off copper is refused, and so is a row of a part with no
 EasyEDA footprint whose point lies off the part (off its pads where the check calls the row red for that, off its pads
-and its courtyard, or, with no courtyard, off its pads and outside the board outline): it is usually read from another
-origin (or, for a bottom part, another bottom reading: the message names the readings that land the pads, and if the
-CPL was written with one, pass it), and the correction stored from it would be that far off. Read from the Gerbers'
+and its courtyard, or, with no courtyard, off its pads and outside the board outline, or further off them than 5 mm
+and their own size): it is usually read from another origin (or, for a bottom part, another bottom reading: the
+message names the readings that land the pads, and if the CPL was written with one, pass it), and the correction
+stored from it would be that far off. Read from the Gerbers'
 (0, 0), or a few mm from the part, a row without presses is off itself, as the check reports it, and a part that came
 out right was moved by JLC: there is nothing to record; with presses, they are what is wrong (miscounted, or of the
 wrong sign): confirm again with those that were made. `confirm` needs the part's EasyEDA
@@ -337,10 +338,11 @@ from the CPL's origin. Then, in this order:
   said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
   green part that moves under every other reading comes first, and when it sits right the others follow. Recorded
   with `jlcplace confirm` (`--source preview`, or `--source board` on the assembled board), a bottom part shown right
-  rules out every reading under which it would have moved, for every part (only its own verification counts, not one
-  of a part that shares its entry at another angle): a part that moves only under readings ruled out has no item,
-  and the others say which readings are ruled out, by which part. Parts of one code at one rotation move alike and
-  share an item.
+  rules out every reading under which it would have moved, for every part (only its own verification counts, at the
+  rotation of its row: not one of a part that shares its entry at another angle, nor its own of a row at another
+  rotation, such as one written under another `--reading`): a part that moves only under readings ruled out has no
+  item, and the others say which readings are ruled out, by which part. Parts of one code at one rotation move alike
+  and share an item.
 * **odd angle**: rows at angles that are not multiples of 90, one item per code and side (an LED ring of 44 is one
   item), naming the part furthest from a multiple of 90; a part verified itself at its angle is left out, and so are
   the verified rows of its entry on its side once one of them was verified at an odd angle (C107 for the ring of
