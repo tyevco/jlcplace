@@ -1483,6 +1483,8 @@ class OriginCheck:
     stale: bool = False            # this board's, but pads moved, came or went (or were renamed) since plotted
     problems: list[tuple[str, str, str]] = field(default_factory=list)   # (verdict, side or "", message): the set
                                    # lacks a side's layers, holds two plots, or its outline is from another origin
+    outline_ok: bool = True        # no problem with its outline (profile) through the copper's map: rows may be
+                                   # judged against it
     messages: list[str] = field(default_factory=list)
 
     @property
@@ -1624,7 +1626,9 @@ def gerber_origin(board: Board, gerbers, cpl_origin=None, *, cpl_origin_kind: st
     if res.extra_origin is not None:
         res.named_extra = next((k for k in ["aux", "absolute", "grid", res.cpl_origin_kind] if k in named and
                                 math.dist(res.extra_origin, named[k]) <= ORIGIN_TOL), "")
-    res.problems += _outline(gs, o, flip, s, edge, board)
+    bad = _outline(gs, o, flip, s, edge, board)
+    res.problems += bad
+    res.outline_ok = not bad
     _verdict(res)
     res.messages += notes
     return res

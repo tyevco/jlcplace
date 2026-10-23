@@ -340,9 +340,12 @@ def _outline(gerbers):
 
 def _off_board(args, run, gerbers):
     """Rows outside the board outline JLC sees (pipeline.off_board): the Gerbers' profile, else the board's Edge.Cuts
-    (none for a snapshot). Returns the Gerbers' outline for the overlays (None: they read Edge.Cuts themselves)."""
+    (none for a snapshot), also when the Gerbers' check rejected their profile (plotted from another origin, another
+    board's: a finding says so, and the rows are not blamed for it). Returns the Gerbers' outline for the overlays
+    (None: they read Edge.Cuts themselves)."""
     outline = _outline(gerbers)
-    off_board(run, outline or report.board_outline(args.board), "the Gerbers' outline" if outline else "Edge.Cuts")
+    judged = outline if outline and gerbers[1].outline_ok else None
+    off_board(run, judged or report.board_outline(args.board), "the Gerbers' outline" if judged else "Edge.Cuts")
     return outline
 
 
