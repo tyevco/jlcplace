@@ -165,10 +165,10 @@ uploaded CPL; `--source manual` does not need one. The rows are read from `--ori
 them without the Gerbers; for a CPL written from the Gerbers' (0, 0) (`cpl --gerbers`), pass the same `--gerbers`
 (`show` takes it too). A row that puts every EasyEDA pad off copper is refused, and so is a row of a part with no
 EasyEDA footprint whose point lies off the part (off its pads where the check calls the row red for that, off its pads
-and its courtyard, or, with no courtyard, off its pads and outside the board outline, or further off them than 5 mm
-and their own size): it is usually read from another origin (or, for a bottom part, another bottom reading: the
-message names the readings that land the pads, and if the CPL was written with one, pass it), and the correction
-stored from it would be that far off. Read from the Gerbers'
+and its courtyard, or, with no courtyard, off its pads and outside the board outline, or further off them and KiCad's
+anchor than 5 mm and the pads' own size): it is usually read from another origin (or, for a bottom part, another
+bottom reading: the message names the readings that land the pads, and if the CPL was written with one, pass it), and
+the correction stored from it would be that far off. Read from the Gerbers'
 (0, 0), or a few mm from the part, a row without presses is off itself, as the check reports it, and a part that came
 out right was moved by JLC: there is nothing to record; with presses, they are what is wrong (miscounted, or of the
 wrong sign): confirm again with those that were made. `confirm` needs the part's EasyEDA
