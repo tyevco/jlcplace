@@ -1651,6 +1651,7 @@ def test_an_empty_record_cache_is_said_before_the_rows(env, capsys):
     code, out, _ = run(capsys, "check", env.board, env.out, "-q", *offline(env, env.empty))
     assert code == 2 and out.count(f"no EasyEDA record in the cache {env.empty}") == 1, out
     assert out.startswith(f"jlcplace: no EasyEDA record in the cache {env.empty} for 2 of the 2 codes"), out
+    assert "so the rows are checked without JLC's footprints" in out and "rows below" not in out, out   # -q: none
     # most records at hand: the note names what is missing where it always was, after the summary
     shutil.copy(Path(env.cache) / "C1001.json", Path(env.empty) / "C1001.json")
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env, env.empty))

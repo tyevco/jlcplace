@@ -142,8 +142,9 @@ def _misses_note(client: EEClient, args=None, looked_up: int = 0) -> tuple[list[
         # the trailing line's words ("no EasyEDA record in the cache DIR for ..."), which the docs and the Claude
         # Code plugin's skills look for
         what = "the one code" if looked_up == 1 else f"{n} of the {looked_up} codes"
+        rows = "the rows" if getattr(args, "quiet", False) else "the rows below"          # -q prints none
         return [(f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {what} JLC places ({codes}), so "
-                 f"the rows below are checked without JLC's footprints (red where a part needs one): {fetch}")], []
+                 f"{rows} are checked without JLC's footprints (red where a part needs one): {fetch}")], []
     return [], [f"jlcplace: no EasyEDA record in the cache {client.cache_dir} for {plural(n, 'code')} ({codes}): "
                 f"{fetch}"]
 
