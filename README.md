@@ -165,10 +165,12 @@ uploaded CPL; `--source manual` does not need one. The rows are read from `--ori
 them without the Gerbers; for a CPL written from the Gerbers' (0, 0) (`cpl --gerbers`), pass the same `--gerbers`
 (`show` takes it too). A row that puts every EasyEDA pad off copper is refused, and so is a row of a part with no
 EasyEDA footprint whose point lies off the part (off its pads where the check calls the row red for that, off its pads
-and its courtyard, or off its pads and outside the board outline): it is usually read from another origin (or, for a
-bottom part, another bottom reading: the message names one that lands the pads), and the correction stored from it would
-be that far off; read from the Gerbers' (0, 0), or a few mm from the part, the row itself is off, as the check reports
-it, and a part that came out right was moved by JLC: there is nothing to record. `confirm` needs the part's EasyEDA
+and its courtyard, or, with no courtyard, off its pads and outside the board outline): it is usually read from another
+origin (or, for a bottom part, another bottom reading: the message names the readings that land the pads, and if the
+CPL was written with one, pass it), and the correction stored from it would be that far off. Read from the Gerbers'
+(0, 0), or a few mm from the part, a row without presses is off itself, as the check reports it, and a part that came
+out right was moved by JLC: there is nothing to record; with presses, they are what is wrong (miscounted, or of the
+wrong sign): confirm again with those that were made. `confirm` needs the part's EasyEDA
 record in the cache (or `--online`): a verification is stored under the EasyEDA footprint it was made with, so that a
 later version of the footprint makes it stale. A verification records the numbers it was of. After `--failed`,
 `check --db` holds the stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at
