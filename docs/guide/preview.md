@@ -244,6 +244,12 @@ Parts that share a database entry (one LCSC code on one KiCad footprint, such as
 `confirm` refuses to record two of them together when their rows give different corrections. Everything is checked
 before anything is written.
 
+`confirm` reads the uploaded CPL's rows from `--origin` (default aux), like the check without Gerbers. A CPL written
+from the Gerbers' own (0, 0), as `jlcplace cpl --gerbers` writes it, is read from there with the same `--gerbers`;
+the check's first line names the origin (`origin 0, 0 from the Gerbers (absolute)`), and `--origin absolute` does
+the same. Read from the wrong origin, every EasyEDA pad of the row lands off copper, and `confirm` refuses it rather
+than store a correction that far off.
+
 ### A decision of your own
 
 On dial-me-spinner's other board, the tactile switch SW1 is numbered 1 to 4 in EasyEDA and 1, 1, 2, 2 in KiCad.
