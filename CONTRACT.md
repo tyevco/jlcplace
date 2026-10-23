@@ -720,6 +720,10 @@ its steps with a local runner.
   a hole is its centre and diameter (a slotted peg hole is read as round). The holes' evidence uses the KiCad part's
   NPTH pads, which `kicad_hash` does not key (the keys must not move): two KiCad footprints alike in copper and pin
   functions, with their peg holes elsewhere, share a database entry.
+* Corrections stored before the fit read holes, trimmers, "_Horizontal" footprints or a mirror image that only
+  renumbers a symmetric land pattern keep their numbers, verdict and `mirror` flag (a mirrored entry: no row) until
+  `jlcplace fit --db` refits them; the check's polarity rule applies at once (a stored entry does not make a trimmer
+  or a right-angle part non-polar again).
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.
 * Gerbers: Excellon drill files are skipped, not read (a set whose copper carries no pads, or a check against the
   drill holes, would need an Excellon reader). Only flips, a half turn and the 25.4 scales are tried: a set turned a
