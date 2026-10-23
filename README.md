@@ -163,15 +163,19 @@ that share a database entry (one code on one footprint) must agree on it, and a 
 numbers until its own row is recorded as failed (`--failed`). `--source board` (the assembled board) also takes the
 uploaded CPL; `--source manual` does not need one. The rows are read from `--origin` (default aux), as `check` reads
 them without the Gerbers; for a CPL written from the Gerbers' (0, 0) (`cpl --gerbers`), pass the same `--gerbers`
-(`show` takes it too). A row that puts every EasyEDA pad off copper is refused: it was read from another origin than
-the CPL's, and the correction stored from it would be that far off. `confirm` needs the part's EasyEDA record in the cache (or
-`--online`): a verification is stored under the EasyEDA footprint it was made with, so that a later version of the
-footprint makes it stale. A verification records the numbers it was of. After `--failed`, `check --db` holds the
-stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at the wrong corner)"),
-for every part that shares its entry, and `cpl --db` writes no CPL with it unless `--force`, until the correction is
-fixed (the presses that put the part right, or `--rot --dx --dy`) and confirmed again, or a later verification of the
-same row goes right; a refit of the same numbers, or of numbers within 0.15 mm and 2 degrees of them, does not clear
-it.
+(`show` takes it too). A row that puts every EasyEDA pad off copper is refused, and so is a row of a part with no
+EasyEDA footprint whose point lies off the part (off its pads where the check calls the row red for that, off its pads
+and its courtyard, or off its pads and outside the board outline): it is usually read from another origin (or, for a
+bottom part, another bottom reading: the message names one that lands the pads), and the correction stored from it would
+be that far off; read from the Gerbers' (0, 0), or a few mm from the part, the row itself is off, as the check reports
+it, and a part that came out right was moved by JLC: there is nothing to record. `confirm` needs the part's EasyEDA
+record in the cache (or `--online`): a verification is stored under the EasyEDA footprint it was made with, so that a
+later version of the footprint makes it stale. A verification records the numbers it was of. After `--failed`,
+`check --db` holds the stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at
+the wrong corner)"), for every part that shares its entry, and `cpl --db` writes no CPL with it unless `--force`, until
+the correction is fixed (the presses that put the part right, or `--rot --dx --dy`) and confirmed again, or a later
+verification of the same row goes right; a refit of the same numbers, or of numbers within 0.15 mm and 2 degrees of
+them, does not clear it.
 
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
@@ -337,7 +341,8 @@ from the CPL's origin. Then, in this order:
   share an item.
 * **odd angle**: rows at angles that are not multiples of 90, one item per code and side (an LED ring of 44 is one
   item), naming the part furthest from a multiple of 90; a part verified itself at its angle is left out, and so are
-  the verified rows of its entry on its side once one of them was verified at an odd angle (C107 for the ring).
+  the verified rows of its entry on its side once one of them was verified at an odd angle (C107 for the ring of
+  capacitors).
 
 Within each (after the bottom reading's first part), red rows come first and are flagged: fix the row before
 looking at it (for a pinout: the LCSC part or the symbol is wrong). The Markdown, CSV, JSON and HTML checklists carry

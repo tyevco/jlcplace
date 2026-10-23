@@ -553,7 +553,7 @@ footprints:
 | `verdict` | `green`, `yellow`, `red` or `verified` |
 | `reasons` | why: the fit's findings first, then what later runs added ("accepted manually (you): ...", "verification failed (preview, you)", "taken from the row of U3 in board-CPL.csv ...") |
 | `status` | `auto` (fitted), `manual` (decided or typed in), `preview-verified` (right in JLC's preview) or `board-verified` (right on an assembled board) |
-| `verifications` | one object per `confirm`: `by`, `date` (YYYY-MM-DD), `source` (`manual`, `preview` or `board`), `ok` (`false` with `--failed`), `board` (the board's file name), `ref`, `layer`, `presses` (`{"space": n, "right": n, "up": n}` or `null`), `note` and `correction` (the numbers it was of: `rot`, `dx`, `dy`, `mirror`; older entries lack it). When the latest verification of the entry's numbers failed, the entry is red and its rows are `verified-wrong` |
+| `verifications` | one object per `confirm`: `by`, `date` (YYYY-MM-DD), `source` (`manual`, `preview` or `board`), `ok` (`false` with `--failed`), `board` (the board's file name), `ref`, `layer`, `presses` (`{"space": n, "right": n, "up": n}` or `null`), `note`, `correction` (the numbers it was of: `rot`, `dx`, `dy`, `mirror`; older entries lack it) and `rotation` (the CPL rotation of the row that was seen, moved by the presses; older entries lack it: a part seen at another angle than its row's now settles no odd-angle item). When the latest verification of the entry's numbers failed, the entry is red and its rows are `verified-wrong` |
 | `tool` | the jlcplace version that stored the entry |
 | `fitted` | the date the entry's correction was stored |
 

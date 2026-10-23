@@ -226,15 +226,16 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
   BELONGS; `extra`: paste pads on no board pad (`extra_origin` / `extra_layers`: whole paste layers that are a shifted
   copy of the board's pads, plotted from another origin than the copper); `mismatched`: with TO.P, copper pads whose
   (ref, pin) is no board pad's at their place, or whose TO.N is another net (parts swapped, nets changed: "R1:1 is where
-  the Gerbers have R2:1"); `stale` = belongs and anything missing, extra or mismatched. `problems` [(verdict, side,
-  message)] about the set as a whole: red for two plots in one set (more than one outer copper or paste layer of a side,
-  profile by attribute, or job file), a side the board has SMD pads on and the set has no copper for, an outline
+  the Gerbers have R2:1"); `stale` = belongs and anything missing, extra or mismatched (on a side with paste but no
+  copper, an SMD pad with no paste pad lowers `coverage` but is not `missing`: it may have none). `problems` [(verdict,
+  side, message)] about the set as a whole: red for two plots in one set (more than one outer copper or paste layer of a
+  side, profile by attribute, or job file), a side the board has SMD pads on and the set has no copper for, an outline
   (profile) that through the copper's map is not the board's `edge` (Edge.Cuts polylines, board frame: moved by one
   vector, plotted from another origin; or another size) or, without `edge`, holds under half of the board's pads; yellow
   for a side with copper but no paste; red for a set with no outline (no profile layer, or an empty one) when `edge` is
-  given; `outline_ok` = no such problem with the outline (the rows may be judged against it). `messages` start with
-  the verdict; a side without layers is a note, not stale; a set whose pads cannot be compared says which files were
-  taken for which layer and names the files nothing names that hold flashes.
+  given; `outline_ok` = no such problem with the outline (the rows may be judged against it). `messages` start with the
+  verdict; a side without layers is a note, not stale; a set whose pads cannot be compared says which files were taken
+  for which layer and names the files nothing names that hold flashes.
 
 ## parts.py — shared by fit, check and the pipeline
 
@@ -748,7 +749,8 @@ def origin_lines(run) -> list[(verdict, text)]
   bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper, or for a part
   without EasyEDA pads its point off the part (`check.unsimulated_off`: off its pads where check calls the row red for
   that, off its pads and its body, or off its pads and outside Edge.Cuts), is bad input: usually read from another
-  origin than the CPL's (the message names --gerbers when not given, --origin when neither is), or, within
+  origin than the CPL's, or, for a bottom part, another bottom reading (the message names --gerbers when not given,
+  --origin when neither is), or, within
   `cli.NEAR_MM` (5 mm) of the part or read from the Gerbers' (0, 0), a row JLC moved (nothing to record; with presses,
   check their signs); for a bottom part it names another reading that lands most of its EasyEDA pads (pass the same
   --reading), else says one may; a --failed row is not tested so, but its refusal as not the stored correction's adds,
