@@ -4,7 +4,8 @@
     entry = {"ee": {"key": parts.ee_key, "title"}, "kicad": {"fpid", "pad_hash": parts.kicad_hash},
              "correction": {"rot", "dx", "dy", "mirror"}, "fit": {"method", "rms", "matched", "score",
              "alternatives", "doubt"?, "polar"?}, "verdict", "reasons", "status", "verifications": [{"by", "date",
-             "source", "ok", "board", "ref", "layer", "presses", "note", "correction"}], "tool", "fitted"}
+             "source", "ok", "board", "ref", "layer", "presses", "note", "correction", "rotation"?}], "tool",
+             "fitted"}
 
 Only derived numbers, hashes and the EasyEDA footprint's title (for people reading the file, and for the check of a
 part the fit judged non-polar when its record is not at hand: BI, a crystal's title) are stored, never pad
@@ -20,6 +21,8 @@ derived at presses_to_correction), and the correction is the moved row's. A veri
 was of: when the latest one of the entry's numbers failed (`confirm --failed`), they were verified wrong, and the
 entry stays red, through refits that give the same numbers or numbers within the check's offset limits of them (the
 same placement), until other numbers replace them or a later verification finds them right (Correction.failure).
+It records the CPL rotation of the row it saw too ("rotation"; older records lack it): a part seen right at a
+multiple of 90 and turned to an odd angle since is no look at that angle (the checklist's odd-angle item).
 """
 
 from __future__ import annotations
@@ -264,7 +267,8 @@ class CorrectionDB:
 
     def confirm(self, code: str, *, ee_key: str, kicad_hash: str, by: str, source: str, board: str = "",
                 ref: str = "", layer: str = "", ok: bool = True, presses=None, note: str = "",
-                part: Part | None = None, correction: Correction | None = None) -> Correction:
+                part: Part | None = None, correction: Correction | None = None,
+                rotation: float | None = None) -> Correction:
         """Record a verification of the entry (ee_key, kicad_hash) and return its correction as now stored.
 
         source: "board" (the assembled board), "preview" (JLC's placement preview) or "manual". ok=True raises the
@@ -278,7 +282,8 @@ class CorrectionDB:
         of other numbers that is no stronger (ValueError: record the failed verification of its own row first).
         presses = {"space": n, "right": n, "up": n} (or a 3-tuple), the keys pressed in JLC's preview to make the
         part right, are recorded with the verification; they are relative to the uploaded row, so they come with
-        that row's `correction` (never folded into the stored numbers, which need not be what was uploaded)."""
+        that row's `correction` (never folded into the stored numbers, which need not be what was uploaded).
+        `rotation`: the CPL rotation of the row that was checked (moved by the presses), recorded when given."""
         if source not in SOURCES:
             raise ValueError(f"source must be one of {sorted(SOURCES)}")
         doc = self._load(code)
@@ -325,7 +330,8 @@ class CorrectionDB:
         entry.setdefault("verifications", []).append(
             {"by": by, "date": _today(), "source": source, "ok": bool(ok), "board": board, "ref": ref,
              "layer": layer, "presses": p if any(p.values()) else None, "note": note,
-             "correction": dict(entry["correction"])})      # the numbers it was of: other numbers are not
+             "correction": dict(entry["correction"]),       # the numbers it was of: other numbers are not
+             **({"rotation": _num(norm_angle(rotation))} if rotation is not None else {})})
         self._save(code, doc)
         return _to_correction(entry)
 

@@ -740,7 +740,7 @@ def cmd_confirm(args) -> int:
     rows = _rows(args.cpl, args.units) if args.cpl else None
     cpl_name = Path(args.cpl).name if args.cpl else ""
     rings = geom.rings(report.board_outline(args.board) or []) if rows is not None else []
-    plans, off = [], {}
+    plans, off, seen_at = [], {}, {}
     for ref in dict.fromkeys(args.ref):
         part = _part(board, ref)
         if not part.lcsc:
@@ -769,7 +769,7 @@ def cmd_confirm(args) -> int:
                 # origin than the CPL's (the Gerbers' (0, 0), when jlcplace cpl --gerbers wrote it), the correction
                 # stored from it would be that far off; or JLC moved the part
                 raise BadInput(_not_seen_right(args, ref, part, ee, seen, board, why, pressed))
-            off[ref] = why
+            off[ref], seen_at[ref] = why, seen.rotation
         stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
         fitted = None
         if (stored is None or stored.status == "stale") and isinstance(ee, EEFootprint):
@@ -817,10 +817,12 @@ def cmd_confirm(args) -> int:
                 stored = fitted or uploaded            # no record to fit: the uploaded row is the correction
                 db.upsert(part.lcsc, stored, footprint=part.footprint, ee_title=title)
             replaced = stored if uploaded is not None and not _close(stored, uploaded) else None
+            # the rotation it was seen at: the uploaded row's, moved by the presses, else the correction's row's
+            at = seen_at.get(ref, None if stored.mirror else cpl_row_for(part, stored, board.origin, args.reading)[2])
             c = db.confirm(part.lcsc, ee_key=stored.ee_key, kicad_hash=stored.kicad_hash, by=args.by,
                            source=args.source, board=Path(board.path).name, ref=ref, layer=part.layer,
                            ok=not args.failed, presses=presses if pressed else None, note=args.note, part=part,
-                           correction=uploaded if replaced is not None else stored if pressed else None)
+                           correction=uploaded if replaced is not None else stored if pressed else None, rotation=at)
         except DBError:
             raise
         except (ValueError, LookupError) as e:

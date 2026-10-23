@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from . import geom
-from .check import check_cpl, check_row, jlc_part, listed_note, nonpolar
+from .check import ANGLE_TOL, check_cpl, check_row, jlc_part, listed_note, nonpolar
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, cpl_to_board, rot
 from .cpl import UNITS, assembled, assembled_refs, jlc_places, natural_key, read_text
 from .easyeda import EEError
@@ -455,18 +455,41 @@ def moves_text(res: RowResult, skip=()) -> str:
     return "; ".join(f"as {' or '.join(names)}, {words}" for words, names in said.items())
 
 
+def _looks(run: Run, res: RowResult) -> list[dict]:
+    """The ok preview and board verifications of the row's numbers that were of this part on this board, on its
+    side, when the row is verified."""
+    info = run.resolved.get(res.ref)
+    if res.verdict != VERIFIED or res.row is None or info is None or info.corr is None:
+        return []
+    stem = Path(run.board.path).stem
+    return [v for v in info.corr.verifications
+            if v.get("ok", True) is not False and v.get("ref") == res.ref and v.get("layer") == res.row.layer
+            and Path(str(v.get("board") or "")).stem == stem
+            and str(v.get("source") or "").removesuffix("-verified") in ("board", "preview")]
+
+
 def _seen(run: Run, res: RowResult) -> str:
     """'board' or 'preview' when the row is verified and an ok verification of its numbers was of this part on this
     board, on its side (the assembled board winning); '' otherwise. A part that shares the entry was verified at its
     own angle, which says nothing of how this one turns under another bottom reading."""
-    info = run.resolved.get(res.ref)
-    if res.verdict != VERIFIED or res.row is None or info is None or info.corr is None:
-        return ""
-    stem = Path(run.board.path).stem
-    srcs = {str(v.get("source") or "").removesuffix("-verified") for v in info.corr.verifications
-            if v.get("ok", True) is not False and v.get("ref") == res.ref and v.get("layer") == res.row.layer
-            and Path(str(v.get("board") or "")).stem == stem}
+    srcs = {str(v.get("source") or "").removesuffix("-verified") for v in _looks(run, res)}
     return "board" if "board" in srcs else "preview" if "preview" in srcs else ""
+
+
+def _seen_at(run: Run, res: RowResult, odd: bool = False) -> bool:
+    """`_seen` at the row's angle: a verification that records the rotation of the row it saw ("rotation") counts
+    when that is within ANGLE_TOL of the row's (a part turned since was not seen so); one that records none (older)
+    counts too. `odd`: as a look at an odd angle for the part's entry (odd_seen): only one that records an odd
+    rotation."""
+    for v in _looks(run, res):
+        a = v.get("rotation")
+        if a is None:
+            if not odd:
+                return True
+        elif abs((float(a) - res.row.rotation + 180.0) % 360.0 - 180.0) <= ANGLE_TOL and (
+                not odd or _off90(float(a)) > 1e-6):
+            return True
+    return False
 
 
 def _entry(run: Run, res: RowResult) -> tuple | None:
@@ -477,11 +500,11 @@ def _entry(run: Run, res: RowResult) -> tuple | None:
 
 
 def odd_seen(run: Run) -> set[tuple]:
-    """The (entry, side) pairs of which a part at an odd angle was shown right itself (`_seen`): the odd-angle item
-    of a code and side asks for one look ("the others are the same part on the same side"), so the parts of that
-    entry on that side whose rows are verified have had it."""
+    """The (entry, side) pairs of which a part was shown right itself at the odd angle of its row (`_seen_at`, from
+    the rotation its verification records): the odd-angle item of a code and side asks for one look ("the others are
+    the same part on the same side"), so the parts of that entry on that side whose rows are verified have had it."""
     return {(_entry(run, r), r.row.layer) for r in run.results
-            if r.row is not None and _off90(r.row.rotation) > 1e-6 and _seen(run, r)}
+            if r.row is not None and _off90(r.row.rotation) > 1e-6 and _seen_at(run, r, odd=True)}
 
 
 def ruled_out(run: Run) -> dict[str, list[str]]:
@@ -551,7 +574,7 @@ def _found(run: Run, res: RowResult, ruled=None, odd=None) -> list[tuple[str, st
                       f"verified {where}")
         out.append(("bottom reading", f"if JLC read the bottom rotation another way: {moves}",
                     f"the bottom reading matters ({moves})"))
-    if row is not None and part is not None and _off90(a) > 1e-6 and not _seen(run, res) and not (
+    if row is not None and part is not None and _off90(a) > 1e-6 and not _seen_at(run, res) and not (
             res.verdict == VERIFIED and (_entry(run, res), row.layer) in odd):
         # a part JLC's preview or the assembled board showed right at its angle has been looked at, and so has a
         # verified row of its entry on its side when one of them was shown right at an odd angle
@@ -607,8 +630,8 @@ def checklist(run: Run) -> list[CheckItem]:
                             a reading under which a verified bottom part (ruled_out) would move is ruled out, and a
                             part that moves only under such readings is settled;
       odd angle             rows at angles that are not multiples of 90, one item per code and side (not a part
-                            verified itself, `_seen`, nor a verified row of an entry a part was shown right with
-                            at an odd angle on that side, `odd_seen`).
+                            verified itself at its angle, `_seen_at`, nor a verified row of an entry a part was shown
+                            right with at an odd angle on that side, `odd_seen`).
     Within a category, red rows (fix the row first) before yellow before green."""
     items: list[CheckItem] = []
     by_ref: dict[str, RowResult] = {}

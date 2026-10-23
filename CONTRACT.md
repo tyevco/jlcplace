@@ -525,14 +525,16 @@ class CorrectionDB:
     def lookup(self, code, *, ee_key="", kicad_hash="") -> Correction | None
     def upsert(self, code, corr: Correction, *, footprint="", ee_title="", tool=TOOL) -> None
     def confirm(self, code, *, ee_key, kicad_hash, by, source, board="", ref="", layer="", ok=True,
-                presses=None, note="", part=None, correction=None) -> Correction
+                presses=None, note="", part=None, correction=None, rotation=None) -> Correction
 def presses_to_row(row: CplRow, *, space=0, right=0, up=0) -> CplRow
 def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> Correction
 ```
 * File `<dir>/<code>.json`: `{"lcsc", "entries": [{ee: {key, title}, kicad: {fpid, pad_hash}, correction: {rot, dx,
   dy, mirror}, fit: {method, rms, matched, score, alternatives (scalars only), doubt?, polar?}, verdict, reasons,
-  status, verifications: [{by, date, source, ok, board, ref, layer, presses, note, correction}], tool, fitted}]}`
-  (a verification's `correction`: the numbers it was of, rot, dx, dy, mirror; older records lack it); `ee.key` is
+  status, verifications: [{by, date, source, ok, board, ref, layer, presses, note, correction, rotation?}], tool,
+  fitted}]}` (a verification's `correction`: the numbers it was of, rot, dx, dy, mirror; older records lack it;
+  `rotation`: the CPL rotation of the row it checked, the uploaded row moved by the presses, else the row of the
+  numbers confirmed, [0, 360), 4 decimals; older records lack it); `ee.key` is
   `parts.ee_key`, `kicad.pad_hash` is `parts.kicad_hash` (pads and pin functions), `ee.title` the EasyEDA
   footprint's title (a package name, for people reading the file; `lookup` returns it as `Correction.ee_title`, which
   the check reads without the record: check.nonpolar). Atomic writes, sorted keys, 1-space indent,
@@ -670,8 +672,10 @@ def origin_lines(run) -> list[(verdict, text)]
   preview or board verification of its numbers for this ref, side and board file stem) would move is ruled out for
   every part: a part that moves only under ruled-out readings has no item, the others leave them out of the pins and
   say "ccw-from-top+180 and jlc-2022+180 are ruled out by U4, verified on the assembled board"), odd angle (row rotation
-  not a multiple of 90; not for a row verified itself, nor for a verified row of an entry and side of which a part was
-  verified itself at an odd angle, `odd_seen`). A part is one item, under its first category; its other
+  not a multiple of 90; not for a row verified itself at its angle (`_seen_at`: a verification whose `rotation` is
+  within ANGLE_TOL of the row's, or that records none), nor for a verified row of an entry and side of which a part
+  was verified itself at the odd angle of its row, `odd_seen`: only a verification that records that rotation counts
+  there, an older one settles at most its own part). A part is one item, under its first category; its other
   categories are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and
   `ref` the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
   `rotation` None; outside the outline per (code, side, row verdict), `ref` the part furthest out, the notes that
