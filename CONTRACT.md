@@ -748,13 +748,17 @@ def origin_lines(run) -> list[(verdict, text)]
   read from --origin, or with --gerbers from the Gerbers' (0, 0) as `jlc_origin` gives it (none, or --origin given too:
   bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper, or for a part
   without EasyEDA pads its point off the part (`check.unsimulated_off`: off its pads where check calls the row red for
-  that, off its pads and its body, or off its pads and outside Edge.Cuts), is bad input: usually read from another
-  origin than the CPL's, or, for a bottom part, another bottom reading (the message names --gerbers when not given,
-  --origin when neither is), or, within
-  `cli.NEAR_MM` (5 mm) of the part or read from the Gerbers' (0, 0), a row JLC moved (nothing to record; with presses,
-  check their signs); for a bottom part it names another reading that lands most of its EasyEDA pads (pass the same
-  --reading), else says one may; a --failed row is not tested so, but its refusal as not the stored correction's adds,
-  for a row read from --origin that is off so, more than NEAR_MM away, that the rows may be read from another origin;
+  that, off its pads and its body, or, without a body, off its pads and outside Edge.Cuts: a body may overhang the
+  board's edge), is bad input: usually read from another origin than the CPL's, or, for a bottom part, another bottom
+  reading (the message names --gerbers when not given, --origin when neither is), or, within
+  `cli.NEAR_MM` (5 mm) of the part or read from the Gerbers' (0, 0), a row JLC moved (nothing to record), or one the
+  presses moved off (whether it is on the part without them is said: they are wrong, confirm again with those made);
+  for a bottom part it names another reading that lands most of its EasyEDA pads (the one landing the most on the KiCad
+  pads of their own numbers, then on copper; readings still tied are all named: pass the one the CPL was written with),
+  else says one may; a --failed row is not tested so, but for a row read from --origin that is off so, more than
+  NEAR_MM away, its refusal as not the stored correction's adds that the rows may be read from another origin, and a
+  part with no EasyEDA footprint and no stored correction (its failure would store that row as its correction) is
+  refused saying so;
   refs of one entry must agree on it, a reference two placed parts carry is refused, the part's
   EasyEDA record must be at hand (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they
   were verified with; EasyEDA's own not-found answer gives an entry with no EasyEDA key), and everything is checked
