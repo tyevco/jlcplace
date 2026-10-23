@@ -15,11 +15,13 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    * which parts looked wrong and how (beside the pads, turned, reversed, missing, or the board does not work), on
      which side, and by roughly how much. A photo or a description of the preview helps;
    * which tool or script wrote the CPL, and whether it applies corrections of its own: a plugin's rotation or offset
-     table, a project script, order notes next to the CPL that mention corrections.
+     table, a project script, order notes next to the CPL that mention corrections. For a CPL from `jlcplace cpl`,
+     with which `--reading` (none given: `jlc-2022`).
 3. Check the uploaded files, the Gerber zip among them when it is at hand (leave out `--gerbers` otherwise): JLC
    laid the CPL over those Gerbers from their (0, 0), and so does the check. Never add `--online`. If the check says
    records are missing, ask before running the `jlcplace fetch` it names. Pass the project's database
-   (`--db jlcplace-db`, or its own path) even if it does not exist yet: a missing directory only warns.
+   (`--db jlcplace-db`, or its own path) even if it does not exist yet: a missing directory only warns. Pass the
+   `--reading` the CPL was written with when it is not `jlc-2022`, here and in steps 5 and 6.
 
    ```sh
    jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist uploaded-checklist.md --json results.json --overlay overlay
@@ -45,7 +47,7 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    the check did: pass the same `--gerbers uploaded-gerbers.zip`, or without the zip the `--origin` the check's first
    line names when it is not aux (`origin 0, 0 from the Gerbers (absolute)`: `--origin absolute`); when the check
    ends with an `origin mismatch` hint, check again with the `--origin` the hint names, and confirm with that same
-   `--origin`.
+   `--origin`. Pass the check's `--reading` too, when it is not the default.
    * A red row off jlcplace's correction (`off-copper`, `wrong-pad`, `reversed`: its `row` differs from `expected`
      in `results.json`, or it says `differs from the row jlcplace writes`) needs no failure record: jlcplace already
      writes another row. `confirm --failed` refuses it with exit 3 (`the row in ... is not the stored correction's
@@ -55,7 +57,11 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
      correction that came out right on the board was put right by JLC. Record nothing for it; the row jlcplace
      writes is the one to upload (`confirm` refuses one that puts every pad off copper: `the row itself is off ...:
      if the part came out right, JLC moved it`). Only a `reversed` row that came out right as uploaded is recorded,
-     as "Reversed" says.
+     as "Reversed" says. A bottom row is the exception when its `results.json` messages say `bottom reading matters
+     ...` with another reading landing its pads on their own numbers (`jlc-2022+180: 1->1, 2->2, ...`), or
+     `confirm` names that reading (`the CPL may have been written with --reading ...`): if it came out right, it is
+     evidence about the bottom reading, not a row JLC moved. See "Only bottom-side parts turned" and "The bottom
+     side on an assembled board": check with that `--reading`, then confirm and write the next CPL with it.
    * A red row that lands as a red correction puts it (`renumbered` red, `ok` red: `the polarity needs a decision`,
      `pinout`) is jlcplace's own row. Settle it with a decision (`confirm --source manual`,
      [write-jlc-cpl](../write-jlc-cpl/SKILL.md)), or, if the board showed it wrong, record it with `--failed`.
@@ -63,11 +69,11 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
      If neither explains it, record it with `--failed` (as under "Reversed"): its row is then red (`verified-wrong`)
      until the correction is fixed.
 6. Write what to upload next time:
-   * a CPL from `jlcplace cpl` that checks clean, with the same `--db` ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)),
-     written with `--gerbers uploaded-gerbers.zip` when the zip is at hand: its rows are then written from the
-     zip's (0, 0) and checked against it. No red `origin` or `gerbers` line means the Gerbers, the drill files and
-     the BOM can be uploaded again as they are, and only the CPL changes. A red `gerbers` line means plotting them
-     again, as [prepare-jlc-order](../prepare-jlc-order/SKILL.md) says:
+   * a CPL from `jlcplace cpl` that checks clean, with the same `--db` and `--reading` (when not `jlc-2022`)
+     ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)), written with `--gerbers uploaded-gerbers.zip` when the zip is at
+     hand: its rows are then written from the zip's (0, 0) and checked against it. No red `origin` or `gerbers` line
+     means the Gerbers, the drill files and the BOM can be uploaded again as they are, and only the CPL changes. A
+     red `gerbers` line means plotting them again, as [prepare-jlc-order](../prepare-jlc-order/SKILL.md) says:
 
      ```sh
      jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md

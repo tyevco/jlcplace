@@ -105,16 +105,25 @@ command) when:
 * the uploaded CPL has no row for the part;
 * the row puts every EasyEDA pad off copper, or, for a part with no EasyEDA footprint, its point lies off the part
   (`... so it is not what was seen right`). It is usually read from another origin (or, for a bottom part, another
-  bottom reading): pass what the message names (`--gerbers`, `--origin` as above, or the `--reading` the CPL was
-  written with). When it says `the row itself is off`, the row is wrong as the check reports it: if the part came out
-  right, JLC moved it and there is nothing to record (with presses, check their signs);
+  bottom reading). Read on in the message:
+  * `the CPL may have been written with --reading X`: ask the user whether it was. If so, check again and confirm
+    again with that `--reading`. What follows `otherwise` applies only when it was not.
+  * `give the Gerbers it was ordered with (--gerbers)`, or `the origin ... (--origin)`: confirm again with them, as
+    above.
+  * `the row itself is off`: the row is wrong as the check reports it. If the part came out right, JLC moved it, and
+    there is nothing to record.
+  * `without the presses the row is on the part`, or `the row is off without the presses too`: the presses are wrong.
+    Ask the user to count them again (their signs; the bottom view is seen from below), and confirm with those;
 * the part's EasyEDA record is not in the cache (ask before running `jlcplace fetch`; never add `--online`);
 * a verified entry would get other numbers before that entry's own row is recorded as failed;
 * `--failed` is given for a row that is not jlcplace's correction: `the row in ... is not the stored correction's
   (...): its failure says nothing about that correction; nothing recorded`. That row is red or off its correction
-  already, and jlcplace writes another one, so there is nothing to record. Leave the part out, or fix its row. But
-  when the message adds that the rows may be read from another origin than the CPL's, the failure is real: record it
-  again with the `--gerbers`, or the `--origin`, the check was given.
+  already, and jlcplace writes another one, so there is nothing to record. Leave the part out, or fix its row. The
+  message may add that the rows may be read from another origin than the CPL's, here or for a part with no EasyEDA
+  footprint and no stored correction (`its failure would store the row in ... as its correction`). If the check was
+  given other Gerbers or another origin than this `confirm`, record the failure again with what the check was given.
+  If `confirm` already used the check's origin, the row is as far off as the check reports it (a red row): there is
+  nothing to record.
 
 Read its message and tell the user. Each successful line says the new status (`preview-verified, verified`), the
 stored correction, the row it gives, and whether it replaced an older correction. For a CPL that `jlcplace cpl`

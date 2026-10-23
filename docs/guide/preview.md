@@ -250,9 +250,11 @@ from the Gerbers' own (0, 0), as `jlcplace cpl --gerbers` writes it, is read fro
 the check's first line names the origin (`origin 0, 0 from the Gerbers (absolute)`), and `--origin absolute` does
 the same. A row that puts every EasyEDA pad off copper, or, for a part with no EasyEDA footprint (R26), whose point
 lies off the part, is refused rather than stored as a correction that far off. It is usually read from another
-origin (or, for a bottom part, another bottom reading: pass the `--reading` the CPL was written with, which the
-message names when one lands the pads). Read from the Gerbers' (0, 0), or a few mm from the part, the row itself is
-off, as the check reports it: if the part came out right, JLC moved it, and there is nothing to record.
+origin (or, for a bottom part, another bottom reading: the message names the readings that land the pads, and if the
+CPL was written with one of them, pass that `--reading`). Read from the Gerbers' (0, 0), or a few mm from the part, a
+row without presses is off itself, as the check reports it: if the part came out right, JLC moved it, and there is
+nothing to record. With presses, the presses are what is wrong (miscounted, or of the wrong sign): confirm again
+with those that were made.
 
 ### A decision of your own
 
