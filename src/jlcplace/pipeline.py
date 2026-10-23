@@ -363,8 +363,9 @@ _BEYOND = re.compile(r"outside the board outline \((.*?)\), ([\d.]+) mm beyond i
 def off_board(run: Run, outline, what: str = "Edge.Cuts") -> list[str]:
     """Rows whose point lies outside the board outline (`outline`: board-frame polylines, chained into closed rings,
     read even-odd: a cutout is outside; nothing is checked when they close none) are yellow at least: JLC puts the
-    part's centre there, which a part overhanging the edge may have, and a row of another part or origin has. A red
-    or verified row only gets the message. Returns the references of those rows."""
+    part's centre there, which a part overhanging the edge may have, and a row of another part or origin has. A green
+    row turns yellow with the message first; a yellow, red or verified row gets it last, after the reason for its
+    status (a part JLC does not place, an offset). Returns the references of those rows."""
     rings = geom.rings(outline or [])
     out = []
     for res in run.results:
@@ -375,7 +376,7 @@ def off_board(run: Run, outline, what: str = "Edge.Cuts") -> list[str]:
             continue
         d = min(geom._dist_to_polygon(q, r) for r in rings)
         msg = f"{_OUTSIDE} ({what}), {d:.2f} mm beyond its edge: look at it in JLC's preview"
-        if res.verdict in (GREEN, YELLOW):
+        if res.verdict == GREEN:
             res.verdict = YELLOW
             res.messages.insert(0, msg)
         else:
