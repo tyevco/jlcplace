@@ -424,7 +424,7 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   is within 0.1 mm of its pads' box (red when it is not), and so for a two-pad trimmer ("trimmer: which pad is the
   rotor", the checklist item it makes), red otherwise, with the reason (a polar two-pad part, a one-pad part, N copper
   pads) and, for such a red one, where its row point lies: "; the row point is the centre of its courtyard" (within
-  BODY_TOL), "; the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of its courtyard: JLC places a part
+  BODY_TOL), "; the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of its courtyard: JLC places a part
   by its centre", or "...is D mm from the centre of its courtyard" ("fabrication-layer drawing" for a fab body).
   Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
@@ -576,7 +576,7 @@ def origin_findings(run, *, given=None, given_kind="", units="mm", origins=None)
 def origin_lines(run) -> list[(verdict, text)]
 ```
 * `fallback`: no EasyEDA footprint and no entry (`cpl`): rot 0, the row at KiCad's angle and at `parts.body_centre`
-  when that is more than BODY_TOL from KiCad's anchor (reason "the row is the centre of its courtyard, 15.55 mm from
+  when that is more than BODY_TOL from KiCad's anchor (reason "the row is the centre of its courtyard, 13.50 mm from
   KiCad's anchor (pin 1), at KiCad's angle"), else at the anchor ("the row is KiCad's own position and angle", adding,
   for a part of several pads whose anchor is a pin and that draws no body, "that anchor is pin 1, not the part's
   centre, and the board draws no courtyard to take the centre from: check the row in JLC's preview").

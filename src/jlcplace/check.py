@@ -132,7 +132,7 @@ def _off_part(part: Part, row: CplRow, origin) -> float | None:
 def _row_point(part: Part, row: CplRow, origin) -> str:
     """Where a row point lies on a part that cannot be simulated, from its body (parts.body_centre) and KiCad's
     anchor: JLC places a part by its centre, and KiCad's anchor is pin 1 on most through-hole connectors.
-    '; the row point is the centre of its courtyard', '; the row point is KiCad's anchor, pin 1, 15.55 mm from the
+    '; the row point is the centre of its courtyard', '; the row point is KiCad's anchor, pin 1, 13.50 mm from the
     centre of its courtyard: JLC places a part by its centre', or ''."""
     lp = board_to_library(part, cpl_to_board((row.x, row.y), origin))
     c, pin = body_centre(part), anchor_pin(part)

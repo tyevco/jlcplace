@@ -135,7 +135,7 @@ jlcplace cpl board.kicad_pcb -o board-CPL.csv
 `cpl` takes each part's correction from the database (`--db`) or fits one, writes the rows, and checks the file it
 wrote. A part with neither an EasyEDA footprint nor a stored correction gets KiCad's angle and the centre of its
 courtyard (else of its fabrication-layer drawing): JLC places a part by its centre, and KiCad's anchor is pin 1 on
-most through-hole connectors (a BNC's is 15.55 mm from its body's centre). Without either drawing the row is KiCad's
+most through-hole connectors (a right-angle coaxial connector's can be over 10 mm from its body's centre). Without either drawing the row is KiCad's
 anchor, and the correction's reason says when that is a pin. With `--gerbers` it writes the rows relative to the Gerbers' (0, 0), the origin JLC will read them from. If
 any row is red, it exits with code 2 and writes no file: a CPL already at that path is left unchanged, and the run
 says so. `--force` writes the file anyway. `-o -` is refused: the CPL is a file (`--json -` prints the

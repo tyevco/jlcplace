@@ -174,38 +174,39 @@ def test_fail_on_yellow_and_reports(env, capsys):
     assert {(r["category"], r["ref"]) for r in rows} >= {("not simulated", "R3"), ("bottom reading", "U2")}
 
 
-def bnc(ref="J1", body=(-7.85, -33.8, 7.85, 2.7)):
-    """A right-angle through-hole BNC as KiCad draws it: the anchor is pin 1, the body (its courtyard) 15.55 mm away."""
+def coax(ref="J1", body=(-8.0, -30.0, 8.0, 3.0)):
+    """A made-up right-angle through-hole coaxial connector drawn as KiCad draws one: the anchor is pin 1, the body (its
+    courtyard) 13.5 mm away."""
     pads = [Pad("1", 0.0, 0.0, 2.0, 2.0, shape="circle", kind="tht", net="SIG")] + [
-        Pad("2", x, y, 3.0, 3.0, shape="circle", kind="tht", net="GND") for x, y in ((-5.08, -5.08), (-2.54, 0.0),
-                                                                                      (5.08, -5.08))]
-    return Part(ref, TOP, 140.0, 60.0, 270.0, footprint="Connector_Coaxial:BNC_Amphenol_B6252HB-NPP3G-50_Horizontal",
+        Pad("2", x, y, 3.0, 3.0, shape="circle", kind="tht", net="GND") for x, y in ((-5.0, -5.0), (-2.5, 0.0),
+                                                                                      (5.0, -5.0))]
+    return Part(ref, TOP, 140.0, 60.0, 270.0, footprint="Connector_Coaxial:Coax_Horizontal",
                 lcsc="C1003", tht=True, pads=pads, body=body, body_layer="courtyard" if body else "")
 
 
 def test_a_part_without_a_footprint_is_written_at_the_centre_of_its_body(env, capsys):
-    """field: a BNC EasyEDA has no footprint for was written at KiCad's anchor, which is its pin 1, 15.55 mm from the
-    courtyard centre a hand-made CPL used: JLC places a part by its centre. The row is at its courtyard's centre, and
+    """field: a coaxial connector EasyEDA has no footprint for was written at KiCad's anchor, which is its pin 1, well
+    over 10 mm from the courtyard centre a hand-made CPL used: JLC places a part by its centre. The row is at its courtyard's centre, and
     the check says where a not-simulated row point lies; with no courtyard drawn, the reason says the anchor is
     pin 1."""
-    board = env.make(bnc())
+    board = env.make(coax())
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force", "--json", env.tmp / "r.json")
     row = next(r for r in read_cpl(env.out) if r.ref == "J1")
-    x, y, a = cv.cpl_row_for(board.part("J1"), Correction(0.0, 0.0, -15.55), ORIGIN)
+    x, y, a = cv.cpl_row_for(board.part("J1"), Correction(0.0, 0.0, -13.5), ORIGIN)
     assert (row.x, row.y, row.rotation) == pytest.approx((x, y, a), abs=1e-4) and (row.x, row.y) != (40.0, 40.0)
     line = next(ln for ln in out.splitlines() if ln.startswith("RED     J1"))
     assert line.endswith("not a two-pad non-polar part (4 copper pads); the row point is the centre of its courtyard")
     j1 = next(r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"] if r["ref"] == "J1")
     assert j1["correction"]["reasons"] == ["no EasyEDA footprint (Component not found): the row is the centre of its "
-                                           "courtyard, 15.55 mm from KiCad's anchor (pin 1), at KiCad's angle"]
+                                           "courtyard, 13.50 mm from KiCad's anchor (pin 1), at KiCad's angle"]
     # a CPL with KiCad's anchor (the position file's row): the check says what that point is
     rows = [CplRow("J1", 40.0, 40.0, TOP, 270.0) if r.ref == "J1" else r for r in read_cpl(env.out)]
     write_cpl(env.out, rows)
     code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
-    assert ("the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of its courtyard: JLC places a part by "
+    assert ("the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of its courtyard: JLC places a part by "
             "its centre") in out
     # nothing drawn to take the centre from: the anchor stays, said to be pin 1
-    env.make(bnc(body=None))
+    env.make(coax(body=None))
     code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force", "--json", env.tmp / "r.json")
     assert next(r for r in read_cpl(env.out) if r.ref == "J1").x == 40.0
     j1 = next(r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"] if r["ref"] == "J1")
