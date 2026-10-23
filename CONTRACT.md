@@ -405,7 +405,7 @@ def jlc_part(board, ref) -> Part | None   # the part JLC places for a ref: first
 def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correction the fit judged polar keeps it so;
                                                    # without the record, one it judged non-polar is judged with its
                                                    # entry's EasyEDA title (corr.ee_title: BI, a crystal's)
-def unsimulated_off(part, row, origin, *, outside=False, corr=None) -> tuple[float, str] | None
+def unsimulated_off(part, row, origin, *, outside=False, near=None, corr=None) -> tuple[float, str] | None
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
   `convention.ee_to_board`, then to the library frame, then onto the copper pad containing it (`LAND_TOL` 1e-3
@@ -437,8 +437,9 @@ def unsimulated_off(part, row, origin, *, outside=False, corr=None) -> tuple[flo
   of its courtyard" ("fabrication-layer drawing" for a fab body). `unsimulated_off` (for `confirm`): such a row's
   point so far off the part that JLC cannot have put a part that came out right there, as (mm, what it is off):
   off its pads' box (+0.1 mm) where the check calls the row red for that ("the part's pads"), off that box and its
-  body's both ("the part's pads and its courtyard"), or off its pads and `outside` the board outline; else None (a
-  part's centre may lie off its pads, a right-angle connector's, but not off its body).
+  body's both ("the part's pads and its courtyard"), or, with no body, off its pads and `outside` the board outline
+  or further off them than `near` and the diagonal of their box both (no outline at hand, or one a wrong origin lands
+  inside); else None (a part's centre may lie off its pads, a right-angle connector's, but not off its body).
   Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
@@ -749,10 +750,11 @@ def origin_lines(run) -> list[(verdict, text)]
   read from --origin, or with --gerbers from the Gerbers' (0, 0) as `jlc_origin` gives it (none, or --origin given too:
   bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper, or for a part
   without EasyEDA pads its point off the part (`check.unsimulated_off`: off its pads where check calls the row red for
-  that, off its pads and its body, or, without a body, off its pads and outside Edge.Cuts: a body may overhang the
-  board's edge), is bad input: usually read from another origin than the CPL's, or, for a bottom part, another bottom
-  reading (the message names --gerbers when not given, --origin when neither is), or, within
-  `cli.NEAR_MM` (5 mm) of the part or read from the Gerbers' (0, 0), a row JLC moved (nothing to record), or one the
+  that, off its pads and its body, or, without a body, off its pads and outside Edge.Cuts, or further off them than
+  `cli.NEAR_MM` (5 mm) and their box's diagonal: a body may overhang the board's edge), is bad input: usually read
+  from another origin than the CPL's, or, for a bottom part, another bottom reading (the message names --gerbers when
+  not given, --origin when neither is), or, within NEAR_MM of the part or read from the Gerbers' (0, 0), a row JLC
+  moved (nothing to record), or one the
   presses moved off (whether it is on the part without them is said: they are wrong, confirm again with those made);
   for a bottom part it names another reading that lands most of its EasyEDA pads (the one landing the most on the KiCad
   pads of their own numbers, then on copper; readings still tied are all named: pass the one the CPL was written with),
