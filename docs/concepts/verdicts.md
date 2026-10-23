@@ -244,8 +244,9 @@ These compare the CPL's list of rows with the board's list of parts JLC assemble
 not board-only, not excluded from the position files), not excluded from the BOM, and have an LCSC code. With
 `--bom`, so is a part the BOM lists that the board excludes from its position files or its BOM (JLC never sees
 KiCad's attributes): `JLC assembles it (the BOM lists it) but the CPL has no row (the board excludes it from the
-position files, so KiCad's position file leaves it out)`. A `no-row` result may add why jlcplace cannot write that row either: `no row is possible: the EasyEDA footprint is a mirror
-image of the KiCad one`, or `no correction to make a row from (...)`.
+position files, so KiCad's position file leaves it out)`. A `no-row` result may add why jlcplace cannot write that
+row either: `no row is possible: the EasyEDA footprint is a mirror image of the KiCad one`, or `no correction to make
+a row from (...)`.
 
 ### `not-placed`
 
