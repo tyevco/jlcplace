@@ -644,6 +644,88 @@ def test_names_against_numbers_wait_for_a_decision(env, capsys):
     assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["D12"] == 0.0, out
 
 
+# a field report's records, reduced to the pads, pin names and "+" the fit reads: an 0805 LED (EasyEDA's pad 1, the
+# anode, at +x, its + beside it; C2296 names its pins + / -, C2297 A / K) and a SOD-323 diode (C20617918: pad 1 = C at
+# -x, pad 2 = A, no +), on KiCad's own footprints (pad 1 = cathode) whose pads have no pin functions
+LED0805 = [("2", -1.05, 0.0, 1.0, 1.4, 0), ("1", 1.05, 0.0, 1.0, 1.4, 0)]
+SOD323 = [("1", -1.14, 0.0, 0.63, 0.83, 90), ("2", 1.14, 0.0, 0.63, 0.83, 90)]
+
+
+def cpl_rotations(capsys, env, *extra):
+    if Path(env.out).exists():
+        os.remove(env.out)
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), *extra)
+    return code, out, ({r.ref: r.rotation for r in read_cpl(env.out)} if Path(env.out).exists() else None)
+
+
+def test_cpl_follows_the_pin_names_and_the_drawn_plus_against_the_pad_numbers(env, capsys):
+    """Field report: C2296 / C2297 on LED_0805 without pin functions. JLC's preview showed the CPL at rot 0 with the +
+    on the anode, but the check called that row red "wrong-pad" and `cpl --force` wrote rot 180, the LED reversed:
+    the pad numbers alone (EasyEDA's anode is its pad 1, KiCad's is pad 2) outvoted EasyEDA's pin names, which were
+    compared with nothing, and its drawn +. `cpl` and `cpl --force` write rot 0 now; a CPL at rot 180 is red, its
+    polarity reversed, and the checklist says to fix that row."""
+    for code_, names in (("C2296", {"1": "+", "2": "-"}), ("C2297", {"1": "A", "2": "K"})):
+        write_records(env, **{code_: record2(LED0805, names=names, plus=[(1.9, 0.0, 0.6)], uuid=code_.lower())})
+        env.make(diode("D2", 121.5, 87.0, code_, names=("", ""), footprint="LED_SMD:LED_0805_2012Metric",
+                       half=0.9375))
+        for force in ((), ("--force",)):
+            code, out, rots = cpl_rotations(capsys, env, *force)
+            assert code == 0 and rots["D2"] == 0.0, out
+            assert "YELLOW  D2" in out and "following the pin names and the drawn +" in out, out
+        rows = read_cpl(env.out)
+        next(r for r in rows if r.ref == "D2").rotation = 180.0
+        write_cpl(env.out, rows)
+        md = env.tmp / "c.md"
+        code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--checklist", md)
+        assert code == 2 and "RED     D2" in out and "polarity reversed: the row puts the part the other way round" \
+            in out and "wrong-pad" not in out, out
+        item = next(ln for ln in md.read_text(encoding="utf-8").splitlines() if "**D2**" in ln)
+        assert "fix the row first" in item, item
+    # the names against the numbers with no + to settle it: red, and --force writes the names' side
+    write_records(env, C2296=record2(LED0805, names={"1": "+", "2": "-"}, uuid="c2296"))
+    env.make(diode("D2", 121.5, 87.0, "C2296", names=("", ""), footprint="LED_SMD:LED_0805_2012Metric", half=0.9375))
+    code, out, rots = cpl_rotations(capsys, env)
+    assert code == 2 and rots is None and "polarity undecided" in out, out
+    code, out, rots = cpl_rotations(capsys, env, "--force")
+    assert rots["D2"] == 0.0, out
+
+
+def test_cpl_follows_a_drawn_plus_against_the_pad_numbers_alone(env, capsys):
+    """No pin names, the + beside EasyEDA's pad 1: the pad numbers and the + disagree, and the + is followed (in JLC's
+    preview data it was right every time they did). `cpl` writes rot 0, its row is yellow, and the run calls it a
+    conflict, not a wrong placement: no wrong-pad, nothing red, nothing to fix in the checklist."""
+    write_records(env, C2296=record2(LED0805, names={"1": "1", "2": "2"}, plus=[(1.9, 0.0, 0.6)], uuid="c2296"))
+    env.make(diode("D2", 121.5, 87.0, "C2296", names=("", ""), footprint="LED_SMD:LED_0805_2012Metric", half=0.9375))
+    for force in ((), ("--force",)):
+        code, out, rots = cpl_rotations(capsys, env, *force)
+        assert code == 0 and rots["D2"] == 0.0, out
+    md = env.tmp / "c.md"
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env), "--checklist", md, "--fail-on", "yellow")
+    assert code == 1 and "YELLOW  D2" in out and "polarity evidence conflicts: the pad numbers put + on pad 2" in out, \
+        out
+    assert "wrong-pad" not in out and "RED " not in out, out
+    item = next(ln for ln in md.read_text(encoding="utf-8").splitlines() if "**D2**" in ln)
+    assert "fix the row first" not in item and "polarity evidence conflicts" in item, item
+
+
+def test_cpl_of_a_diode_whose_pin_names_confirm_the_pad_numbers_is_green(env, capsys):
+    """C20617918 (pins 1 = C, 2 = A) on D_SOD-323 without pin functions: its names, against KiCad's library
+    convention, confirm the pad numbers, so the row is green (it was yellow, "polarity decided by pad numbers
+    only"); the row turned round is red, reversed."""
+    write_records(env, C20617918=record2(SOD323, names={"1": "C", "2": "A"}, title="SOD-323_L1.7-W1.3-LS2.6-RD-1",
+                                         tags=["ESD and Surge Protection (TVS/ESD)"], uuid="sod323"))
+    env.make(diode("D6", 115.0, 70.0, "C20617918", names=("", ""), footprint="Diode_SMD:D_SOD-323", half=1.05))
+    code, out, rots = cpl_rotations(capsys, env, "--fail-on", "yellow")
+    assert code == 0 and rots["D6"] == 0.0 and "D6" not in out, out
+    code, out, _ = run(capsys, "fit", env.board, "--ref", "D6", *offline(env))
+    assert "GREEN   D6" in out and "fits by pad numbers and pin names" in out, out
+    rows = read_cpl(env.out)
+    next(r for r in rows if r.ref == "D6").rotation = 180.0
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
+    assert code == 2 and "RED     D6" in out and "polarity reversed" in out, out
+
+
 def test_offline_summary_keeps_the_finding_first(env, capsys):
     """cli-7: simulated from the database without records, the summary and JUnit showed only "simulated with the
     KiCad pads through ..." and a capped verdict gave no reason."""
@@ -737,7 +819,7 @@ def test_a_part_the_bom_lists_is_checked_though_the_board_leaves_it_out_of_its_b
         == "not-placed"
     code, out, _ = run(capsys, "check", env.board, env.out, "--bom", bom, *offline(env), "--json", env.tmp / "b.json")
     d = {r["ref"]: r for r in json.loads((env.tmp / "b.json").read_text(encoding="utf-8"))["results"]}["D1"]
-    assert code == 2 and (d["status"], d["verdict"]) == ("wrong-pad", RED), d
+    assert code == 2 and (d["status"], d["verdict"]) == ("reversed", RED), d
     assert "the BOM lists it: JLC will place it" in d["messages"][-1]
 
 

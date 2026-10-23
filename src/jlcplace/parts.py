@@ -221,12 +221,14 @@ def pin_diffs(pairs, ee_pins, kicad_pins) -> list[PinDiff]:
     return out
 
 
-def pinout_text(diffs: list[PinDiff], n: int = 4) -> str:
-    """'pad 2 is S on the LCSC part, D on the board; pad 3 (EasyEDA pad 2) is ...' for the first n."""
+def pinout_text(diffs: list[PinDiff], n: int = 4, board: str = "on the board") -> str:
+    """'pad 2 is S on the LCSC part, D on the board; pad 3 (EasyEDA pad 2) is ...' for the first n. `board` says
+    where the KiCad side's names come from when the board's pads have no pin functions ("by KiCad's library
+    convention (pad 1 = cathode)")."""
     def one(d):
         where = f"pad {d.kicad_number}" + (f" (EasyEDA pad {d.ee_number})"
                                            if norm_number(d.ee_number) != norm_number(d.kicad_number) else "")
-        return f"{where} is {d.ee_name} on the LCSC part, {d.kicad_name} on the board"
+        return f"{where} is {d.ee_name} on the LCSC part, {d.kicad_name} {board}"
     return "; ".join(one(d) for d in diffs[:n]) + (f"; {len(diffs) - n} more" if len(diffs) > n else "")
 
 
@@ -288,20 +290,21 @@ def nonpolar(part, ee=None) -> bool:
 
 def kicad_positive_pad(part) -> tuple[str, str] | None:
     """(pad number, how it is known) of a two-terminal KiCad part's positive terminal (a diode's anode, a capacitor's
-    +): from its pin functions or pad numbers (A, K, +, -), else from the KiCad library convention for KiCad's own
-    diode, LED and polarised capacitor libraries. None when nothing says."""
+    +): from its pin functions ("pin names") or pad numbers (A, K, +, -: "pad numbers"), else from the KiCad library
+    convention for KiCad's own diode, LED and polarised capacitor libraries. None when nothing says."""
     kicad = dict(_terminal_names(part))
     if len(kicad) != 2:
         return None
+    how = "pin names" if any(kicad.values()) else "pad numbers"
     for n in kicad:                       # pads numbered A / K / + / - name themselves
         if not kicad[n]:
             kicad[n] = name_tokens(n)
     pos = [n for n, t in kicad.items() if "ANODE" in t and "CATHODE" not in t]
     neg = [n for n, t in kicad.items() if "CATHODE" in t and "ANODE" not in t]
     if len(pos) == 1 and pos != neg:
-        return pos[0], "pin names"
+        return pos[0], how
     if len(neg) == 1:
-        return next(n for n in kicad if n != neg[0]), "pin names"
+        return next(n for n in kicad if n != neg[0]), how
     if set(kicad) == {"1", "2"}:
         if _KLC_DIODE.match(part.footprint or ""):
             return "2", "KiCad's library convention (pad 1 = cathode)"

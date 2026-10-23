@@ -129,7 +129,7 @@ def test_two_terminal_parts_turned_180(ref, footprint, polar):
     assert nonpolar(part) is not polar
     res = check_row(part, turned(row_for(part, corr), 180), ee_for(part, corr), ORIGIN, corr=corr)
     if polar:
-        assert (res.status, res.verdict) == ("wrong-pad", RED)
+        assert (res.status, res.verdict) == ("reversed", RED)
     else:
         assert (res.status, res.verdict) == ("renumbered", GREEN)
         assert res.messages[0] == "the two terminals are swapped (non-polar part): 1->2, 2->1"
@@ -178,9 +178,9 @@ def test_correction_overrules_numbers_for_polarity():
     res = check_row(part, by_number, ee, ORIGIN, corr=fit)
     # a polar part: the fit chose its polarity against the numbers, so the row that follows them reverses it (red
     # even against a fitted correction; a multi-pin part would be yellow, the numbers may be right after all)
-    assert (res.status, res.verdict) == ("wrong-pad", RED)
-    assert res.messages[0] == "the pads land by number, but the correction puts them on other nets: 1 on VBAT, " \
-                              "not SW, 2 on SW, not VBAT"
+    assert (res.status, res.verdict) == ("reversed", RED)
+    assert res.messages[0] == "polarity reversed: the row puts the part the other way round than the correction " \
+                              "does (the pads land by number): 1 on VBAT, not SW, 2 on SW, not VBAT"
     verified = dataclasses.replace(fit, verdict=VERIFIED, status="board-verified")
     assert check_row(part, by_number, ee, ORIGIN, corr=verified).verdict == RED
     # a red correction of a polar part (names against numbers, nothing to settle it) leaves the polarity open: a row
@@ -446,7 +446,7 @@ def test_letter_numbered_pads_keep_their_pin_names():
     assert corr.verdict == YELLOW and corr.rot == 0.0 and any("pin names pick rot 0" in r for r in corr.reasons)
     assert check_row(part, row_for(part, corr), ee, ORIGIN, corr=corr).verdict != RED
     res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
-    assert (res.status, res.verdict) == ("wrong-pad", RED), res.messages
+    assert (res.status, res.verdict) == ("reversed", RED), res.messages
 
 
 def test_reversed_tantalum_on_a_generic_capacitor_footprint_is_not_green():
@@ -462,7 +462,7 @@ def test_reversed_tantalum_on_a_generic_capacitor_footprint_is_not_green():
         corr = fit_part(part, ee)
         assert corr.verdict == YELLOW and any("polarity decided by pad numbers only" in r for r in corr.reasons)
         res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
-        assert (res.status, res.verdict) == ("wrong-pad", RED), (title, res.messages)
+        assert (res.status, res.verdict) == ("reversed", RED), (title, res.messages)
         # even a preview-verified correction did not keep the turned row from passing as a terminal swap
         verified = dataclasses.replace(corr, verdict=VERIFIED, status="preview-verified")
         assert check_row(part, row_for(part, verified), ee, ORIGIN, corr=verified).verdict == VERIFIED
@@ -487,7 +487,7 @@ def test_reversed_two_pin_connector_with_an_x_reference_is_red():
     corr = fit_part(part, ee)
     assert corr.verdict == YELLOW and any("polarity decided by pad numbers only" in r for r in corr.reasons)
     res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
-    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    assert (res.status, res.verdict) == ("reversed", RED)
     res = check_row(part, row_for(part, corr), NotFound("C131337", "Component not found"), ORIGIN)
     assert (res.status, res.verdict) == ("not-simulated", RED)
 
@@ -510,16 +510,17 @@ def test_polar_part_rows_against_the_polarity_decision():
     assert corr.verdict == YELLOW and corr.rot == 0.0
     assert check_row(part, row_for(part, corr), marked, ORIGIN, corr=corr).verdict == YELLOW
     res = check_row(part, by_number, marked, ORIGIN, corr=corr)
-    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    assert (res.status, res.verdict) == ("reversed", RED)
     verified = dataclasses.replace(corr, verdict=VERIFIED, status="preview-verified")
     assert check_row(part, row_for(part, verified), marked, ORIGIN, corr=verified).verdict == VERIFIED
     assert check_row(part, by_number, marked, ORIGIN, corr=verified).verdict == RED
 
 
-def test_polarity_in_doubt_is_red_whichever_way_the_row_goes():
+def test_a_drawn_plus_against_the_numbers_is_followed_and_their_row_is_red():
     """ee-2 (C2286 on KiCad's LED_0603, no pin functions): EasyEDA numbers the LED's anode 1 and draws its + there;
-    KiCad's library puts the cathode on pad 1. The numbers say one way, the + the other: the fit is red, and the row
-    that follows the numbers must not pass because the numbers 'decide' it."""
+    KiCad's library puts the cathode on pad 1. The numbers say one way, the + the other. The fit follows the + (it
+    was right in every such case of JLC's preview data), yellow, with the conflict as its doubt: the row that follows
+    the numbers must not pass because the numbers 'decide' it, and the row the + gives is no wrong-pad."""
     from jlcplace.fit import fit_part
     led = sod123("LED1", footprint="LED_SMD:LED_0603_1608Metric")
     for p, x in zip(led.pads, (-0.7875, 0.7875)):
@@ -527,16 +528,142 @@ def test_polarity_in_doubt_is_red_whichever_way_the_row_goes():
     ee = ee_two(numbers=("2", "1"), half=0.75, w=0.8, h=0.8, title="LED-SMD_L1.6-W0.8-R-RD")
     ee.plus = [(1.35, 0.0, 0.3)]                                        # beside EasyEDA pad 1, the anode
     corr = fit_part(led, ee)
-    assert corr.verdict == RED and corr.doubt == "polarity" and any("drawn" in r or "+ beside" in r
-                                                                    for r in corr.reasons), corr.reasons
-    res = check_row(led, row_for(led, corr), ee, ORIGIN, corr=corr)          # by the numbers
-    assert res.verdict == RED and "the polarity needs a decision" in res.messages[0], res.messages
-    res = check_row(led, turned(row_for(led, corr), 180), ee, ORIGIN, corr=corr)   # as the + says
-    assert (res.status, res.verdict) == ("wrong-pad", RED), res.messages
+    assert (corr.verdict, corr.rot, corr.doubt) == (YELLOW, 0.0, "polarity"), corr.reasons
+    assert corr.reasons[0].startswith("polarity evidence conflicts: the pad numbers put + on pad 2"), corr.reasons
+    res = check_row(led, turned(row_for(led, corr), 180), ee, ORIGIN, corr=corr)   # by the numbers
+    assert (res.status, res.verdict) == ("reversed", RED), res.messages
+    res = check_row(led, row_for(led, corr), ee, ORIGIN, corr=corr)                 # as the + says
+    assert (res.status, res.verdict) == ("renumbered", YELLOW), res.messages
+    assert "polarity evidence conflicts" in res.messages[1], res.messages
     # once someone has looked (JLC's preview), the verified orientation passes and the other does not
-    good = dataclasses.replace(corr, rot=cv.norm_angle(corr.rot + 180.0), verdict=VERIFIED, status="preview-verified")
-    assert check_row(led, row_for(led, good), ee, ORIGIN, corr=good).verdict == VERIFIED
-    assert check_row(led, turned(row_for(led, good), 180), ee, ORIGIN, corr=good).verdict == RED
+    for good in (dataclasses.replace(corr, verdict=VERIFIED, status="preview-verified"),
+                 dataclasses.replace(corr, rot=180.0, verdict=VERIFIED, status="preview-verified")):
+        assert check_row(led, row_for(led, good), ee, ORIGIN, corr=good).verdict == VERIFIED
+        res = check_row(led, turned(row_for(led, good), 180), ee, ORIGIN, corr=good)
+        assert (res.status, res.verdict) == ("reversed", RED), res.messages
+
+
+def led0805(ref="D2", x=121.5, angle=0.0, nets=("LED_K", "LED_A")):
+    """KiCad's LED_0805_2012Metric (pad 1 = cathode by its library convention), no pin functions."""
+    pads = [Pad(n, px, 0.0, 0.975, 1.4, shape="roundrect", rr=0.25, net=net)
+            for n, px, net in (("1", -0.9375, nets[0]), ("2", 0.9375, nets[1]))]
+    return Part(ref, TOP, x, 87.0, angle, footprint="LED_SMD:LED_0805_2012Metric", lcsc="C2296", pads=pads)
+
+
+def ee_led0805(names=None, plus=True):
+    """A field report's 0805 LED records (C2296 names its pads + / -, C2297 A / K), reduced: EasyEDA's pad 1, the
+    anode, at +x and its + drawn beside it."""
+    return EEFootprint("C2296", "LED0805-R-RD", pads=[EEPad("2", -1.0503, 0.0, 1.0, 1.3995, 180.0),
+                                                      EEPad("1", 1.0503, 0.0, 1.0, 1.3995, 180.0)],
+                       pin_names=dict(names or {"1": "1", "2": "2"}), tags=["Light Emitting Diodes (LED)"],
+                       plus=[(1.041, 0.0404, 1.1)] if plus else [])
+
+
+def led_run(part, ee, rows):
+    from jlcplace.fit import fit_part
+    from jlcplace.pipeline import Resolved, check
+    corr = fit_part(part, ee)
+    return corr, check(Board("b.kicad_pcb", ORIGIN, [part]), rows(corr), {part.ref: Resolved(part, ee, corr, "fit")})
+
+
+@pytest.mark.parametrize("names", [{"1": "+", "2": "-"}, {"1": "A", "2": "K"}])
+def test_led_rows_against_its_names_and_drawn_plus(names):
+    """C2296 / C2297 on LED_0805 without pin functions: the names and the drawn + say rot 0, the pad numbers rot 180.
+    The right row (rot 0, as JLC's preview showed the + on the anode) was red "wrong-pad" and `cpl --force` wrote rot
+    180. Now the fit follows the names and the +: the rot 0 row is yellow (renumbered), the rot 180 row red, its
+    polarity reversed, and the CPL jlcplace writes has rot 0."""
+    from jlcplace import report
+    part, ee = led0805(), ee_led0805(names)
+    corr, run = led_run(part, ee, lambda c: [row_for(part, c)])
+    assert (corr.verdict, corr.rot) == (YELLOW, 0.0), corr.reasons
+    assert (run.results[0].status, run.results[0].verdict) == ("renumbered", YELLOW), run.results[0].messages
+    rows, missing = rows_for_board(Board("b.kicad_pcb", ORIGIN, [part]), {part.ref: corr})
+    assert not missing and rows[0].rotation == 0.0 == run.results[0].row.rotation
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert all(lnd.kicad_number == lnd.ee_number for lnd in res.landings)          # by the pad numbers
+    assert (res.status, res.verdict) == ("reversed", RED), res.messages
+    assert res.messages[0] == ("polarity reversed: the row puts the part the other way round than the correction "
+                               "does (the pads land by number): 1 on LED_K, not LED_A, 2 on LED_A, not LED_K")
+    _, run = led_run(part, ee, lambda c: [turned(row_for(part, c), 180)])
+    text = report.summary(run)
+    assert "RED     D2  C2296      top     polarity reversed: the row puts the part" in text, text
+    assert "correction (fit, auto, yellow): pin names pick rot 0" in text and "following the pin names and the " \
+                                                                              "drawn +" in text, text
+
+
+def test_led_rows_when_only_the_drawn_plus_disagrees_with_the_numbers():
+    """No pin names: the pad numbers say rot 180, the drawn + rot 0. The fit follows the + (yellow: the evidence
+    conflicts), so the row that matches the + is never red "wrong-pad", the checklist does not tell its owner to fix
+    it, and the summary calls it a conflict; the row that follows the numbers is the + reversed."""
+    from jlcplace import report
+    part, ee = led0805(), ee_led0805()
+    corr, run = led_run(part, ee, lambda c: [row_for(part, c)])
+    assert (corr.verdict, corr.rot, corr.doubt) == (YELLOW, 0.0, "polarity"), corr.reasons
+    res = run.results[0]
+    assert (res.status, res.verdict) == ("renumbered", YELLOW), res.messages
+    assert any("the fit was unsure of that placement: polarity evidence conflicts: the pad numbers put + on pad 2"
+               in m for m in res.messages), res.messages
+    text = report.summary(run)
+    assert "YELLOW  D2  C2296      top     renumbered: numbering accepted by the correction (auto): 1->2, 2->1" in text
+    assert "correction (fit, auto, yellow): polarity evidence conflicts: the pad numbers put + on pad 2" in text, text
+    assert "wrong-pad" not in text and "RED " not in text, text
+    md = report.checklist_markdown(run)
+    item = next(ln for ln in md.splitlines() if ln.startswith("- [ ] **D2**"))
+    assert "fix the row first" not in item and "polarity evidence conflicts" in item, item
+    assert [it.category for it in run.checklist()] == ["uncertain correction"]
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("reversed", RED) and res.messages[0].startswith("polarity reversed"), \
+        res.messages
+    rows, _ = rows_for_board(Board("b.kicad_pcb", ORIGIN, [part]), {part.ref: corr})
+    assert rows[0].rotation == 0.0
+
+
+def sod323(ref="D6", nets=("TVS_K", "TVS_A")):
+    """KiCad's D_SOD-323 (pad 1 = cathode by its library convention), no pin functions."""
+    pads = [Pad(n, px, 0.0, 0.6, 0.45, shape="roundrect", rr=0.25, net=net)
+            for n, px, net in (("1", -1.05, nets[0]), ("2", 1.05, nets[1]))]
+    return Part(ref, TOP, 115.0, 75.0, 0.0, footprint="Diode_SMD:D_SOD-323", lcsc="C20617918", pads=pads)
+
+
+def ee_sod323(names=None, plus_beside=None, half=1.14, size=(0.63, 0.83, 90.0)):
+    """The field report's SOD-323 diodes, reduced: C20617918 (pad 1 = C at -x, pad 2 = A, no +; the default) and
+    C42413887 (half 1.1999, 0.8 mm square pads, pins named 1 / 2, a + beside pad 2)."""
+    w, h, a = size
+    return EEFootprint("C20617918", "SOD-323_L1.7-W1.3-LS2.6-RD-1",
+                       pads=[EEPad("1", -half, 0.0, w, h, a), EEPad("2", half, 0.0, w, h, a)],
+                       pin_names=dict(names or {"1": "1", "2": "2"}), tokens=["RD"],
+                       plus={None: [], "1": [(-half, 0.0, 0.6)], "2": [(half, 0.0, 0.6)]}[plus_beside])
+
+
+C42413887 = {"half": 1.1999, "size": (0.8, 0.8, 0.0)}
+
+
+@pytest.mark.parametrize("ee, rot, fit_verdict, row_verdict", [
+    (ee_sod323({"1": "C", "2": "A"}), 0.0, GREEN, GREEN),                   # C20617918: names confirm the numbers
+    (ee_sod323(), 0.0, YELLOW, YELLOW),                                      # nothing but the numbers
+    (ee_sod323(plus_beside="2", **C42413887), 0.0, YELLOW, GREEN),           # C42413887: + and numbers agree
+    (ee_sod323(plus_beside="1", **C42413887), 180.0, YELLOW, YELLOW),        # the + alone against the numbers
+], ids=["C20617918", "numbers-only", "C42413887", "plus-against-numbers"])
+def test_sod323_rows_by_their_pin_names_and_drawn_plus(ee, rot, fit_verdict, row_verdict):
+    """The SOD-323 diodes of the field report on D_SOD-323 without pin functions: the row the evidence gives is
+    written and passes (green where the names or the + confirm the numbers; yellow where only the numbers decide, the
+    fit was unsure, or the + is followed against them), and the row turned round is red, its polarity reversed."""
+    from jlcplace import report
+    part = sod323()
+    corr, run = led_run(part, ee, lambda c: [row_for(part, c)])
+    assert (corr.verdict, corr.rot) == (fit_verdict, rot), corr.reasons
+    if rot:
+        assert corr.reasons[0].startswith("polarity evidence conflicts: the pad numbers put + on pad 2 (KiCad's "
+                                          "positive pad, by KiCad's library convention (pad 1 = cathode)), the drawn "
+                                          "+ on pad 1"), corr.reasons
+    rows, _ = rows_for_board(Board("b.kicad_pcb", ORIGIN, [part]), {part.ref: corr})
+    assert rows[0].rotation == rot
+    res = run.results[0]
+    assert res.verdict == row_verdict and res.status in ("ok", "renumbered"), res.messages
+    assert "wrong-pad" not in report.summary(run)
+    res = check_row(part, turned(row_for(part, corr), 180), ee, ORIGIN, corr=corr)
+    assert (res.status, res.verdict) == ("reversed", RED) and res.messages[0].startswith("polarity reversed"), \
+        res.messages
 
 
 def test_rows_off_a_known_correction_are_yellow():
@@ -629,7 +756,7 @@ def test_a_row_the_bom_lists_is_simulated_though_the_board_excludes_it_from_its_
     res = check_cpl(board, [row], lambda code: ee, corrections={"D21": corr})[0]
     assert (res.status, res.verdict) == ("not-placed", YELLOW)
     res = check_cpl(board, [row], lambda code: ee, corrections={"D21": corr}, bom_refs={"D21"})[0]
-    assert (res.status, res.verdict) == ("wrong-pad", RED)
+    assert (res.status, res.verdict) == ("reversed", RED)
     assert "the BOM lists it: JLC will place it" in res.messages[-1]
 
 

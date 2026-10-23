@@ -153,7 +153,7 @@ def summary(run: Run, *, color: bool = False) -> str:
         out.append(f"{paint(r.verdict, f'{r.verdict.upper():<6}')}  "
                    + printable(f"{printable(r.ref):<{w}}  {r.lcsc or '-':<10} {_layer(run, r):<6}  {headline(r)}"))
         info = run.resolved.get(r.ref)
-        if (info is not None and info.corr is not None and r.status in ("renumbered", "wrong-pad")
+        if (info is not None and info.corr is not None and r.status in ("renumbered", "wrong-pad", "reversed")
                 and info.corr.verdict in (RED, YELLOW) and info.corr.reasons):
             out.append(printable(f"{'':6}  {'':<{w}}  correction ({info.source}, {info.corr.status}, "
                                  f"{info.corr.verdict}): {key_reasons(info.corr, 1)[0]}"))
