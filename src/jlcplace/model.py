@@ -166,6 +166,8 @@ class EEFootprint:
     tags: list[str] = field(default_factory=list)    # the record's part categories (result.tags), e.g. "TVS"
     plus: list[tuple[float, float, float]] = field(default_factory=list)  # "+" marks drawn on silkscreen/document:
                                                      # (x, y, bar length), ee frame
+    holes: list[tuple[float, float, float]] = field(default_factory=list)  # unplated holes (HOLE elements, pads with
+                                                     # an unplated drill): (x, y, diameter), ee frame: a peg's hole
 
     def key(self) -> str:
         return f"{self.uuid}:{self.utime}"

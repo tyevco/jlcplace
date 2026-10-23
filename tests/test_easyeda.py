@@ -134,6 +134,17 @@ def test_pads_without_copper_are_left_out():
     assert [p.number for p in parse(shapes).pads] == ["1", "4"]
 
 
+def test_unplated_holes_are_holes():
+    """A connector's peg hole: a HOLE element (`HOLE~x~y~radius~id~locked`, as a right-angle header draws it) or a
+    pad whose drill is unplated. They were dropped; the fit uses them to tell placements apart."""
+    shapes = [pad(number="1", layer=11, hole_r=2), f"HOLE~{HX}~{HY + 17.008}~5.9055~gge14~0",
+              pad(number="", x=HX + 10, layer=11, hole_r=3, plated="N"), "HOLE~x~1~2~gge15~0", "HOLE~1~2"]
+    f = parse(shapes)
+    assert [p.number for p in f.pads] == ["1"]
+    assert f.holes == [approx(0.0, 17.008 * 0.254, 2 * 5.9055 * 0.254), approx(2.54, 0.0, 6 * 0.254)]
+    assert parse([pad()]).holes == []
+
+
 @pytest.mark.parametrize("r", [0, 30, 90, 145, 180, 270, 333.5])
 def test_rotation_is_kept_in_R_sense(r):
     """A pad drawn at rotation r (points in R's sense) parses to angle r, and its outline is EasyEDA's."""

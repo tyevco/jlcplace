@@ -140,7 +140,10 @@ class EEClient:
 * Frame: `e = 0.254 * (p - head)` (mm, y down). `EEPad.angle = r`: EasyEDA's rotation has R's sense, proven from the
   corner order of every rotated RECT pad in the cached records; RECT/OVAL pads at other angles are checked against
   their own point lists. w, h are along the pad's own axes. Pads on layers 1 (top), 2 (bottom), 11 (multi); other
-  layers and unplated holed pads are dropped. Hole = 2 * radius * 0.254. POLYGON pads: poly = the point list.
+  layers are dropped, and unplated holed pads are holes. Hole = 2 * radius * 0.254. POLYGON pads: poly = the point
+  list.
+* `holes`: unplated holes as (x, y, diameter), ee frame: `HOLE~x~y~radius~id~locked` (a connector's peg, a mounting
+  hole) and pads whose drill is unplated (`plated` N); a malformed one is skipped (holes are evidence only).
 * `marks`: CIRCLE on layer 101 (a pin-1 dot: it sits by pad 1 whatever its function, so it says nothing of
   polarity). `plus`: the "+" signs drawn on layers 3 / 12 (two crossing strokes, TRACKs or thin SOLIDREGIONs, alike
   in length, crossing near both middles, no other stroke near), as (x, y, bar length). `tags`: `result.tags`, the
@@ -307,10 +310,20 @@ pads are merged into lands. An EasyEDA number that concatenates a land's numbers
    the rule check uses too; unknown parts are polar).
 5. **+ mark** (polar two-terminal parts): `parts.ee_positive_pad` against `parts.kicad_positive_pad`. Pad numbers,
    names and the + mark are the polarity's evidence: the correction never takes the side most of it rejects.
+   **Holes**: `EEFootprint.holes` against the KiCad part's NPTH pads (kind "npth"): the one member, of those in
+   question, under which every EasyEDA hole lands in an NPTH (a peg goes in one way only) is told apart. A polar
+   two-terminal part's alternative half turn is ruled out by the pad numbers and the holes when they agree (green,
+   "rot A also lands both pads; ruled out by the pad numbers and the holes: the EasyEDA footprint's hole lands in
+   KiCad's unplated holes only at rot B"); the holes and the numbers outvote a drawn + against them (yellow,
+   "polarity evidence conflicts"); holes that fit only the other way round than the numbers place it are red
+   ("polarity undecided", the correction follows the holes). Holes also pick among members on the same numbers and
+   nets (the body's orientation: no doubt) and among members that numbers and names leave equal (yellow, "placed by
+   the holes", doubt "orientation"); holes that land under another member than the chosen one and not under it make
+   the fit yellow ("check the part's pegs", doubt "orientation"). Either side without holes: nothing.
 6. **Verdict**:
    * green = the number fit lands every pad with no numbering conflict, names agree or are uninformative, and every
-     other member of S is equivalent or ruled out by the pad numbers (for a polar two-terminal part, by the names
-     or the + mark as well, neither against them; otherwise yellow "polarity decided by pad numbers only"); the
+     other member of S is equivalent or ruled out by the pad numbers (for a polar two-terminal part, by the names,
+     the + mark or the holes as well, none against them; otherwise yellow "polarity decided by pad numbers only"); the
      first reason "fits by pad numbers: N/M matched" ("fits by pad numbers and pin names" when names agree, none
      differ);
    * yellow = pin names that differ otherwise (the reason names the pads: "N pin name(s) differ (M agree): ...");
@@ -696,7 +709,10 @@ its steps with a local runner.
   library footprint that breaks it (its anode on pad 1, no pin functions) misleads the names and the + alike. An entry
   stored before the names counted against the convention keeps its verdict and numbers until `jlcplace fit --db`
   refits it.
-* `EEPad` has no plated flag (unplated holed pads are dropped); slot geometry is parsed but not exposed.
+* `EEPad` has no plated flag (unplated holed pads are holes, not pads); slot geometry is parsed but not exposed, and
+  a hole is its centre and diameter (a slotted peg hole is read as round). The holes' evidence uses the KiCad part's
+  NPTH pads, which `kicad_hash` does not key (the keys must not move): two KiCad footprints alike in copper and pin
+  functions, with their peg holes elsewhere, share a database entry.
 * pcbnew of KiCad 6-8 (calls without a layer argument) is untested; KiCad 10 variant overrides are ignored.
 * Gerbers: Excellon drill files are skipped, not read (a set whose copper carries no pads, or a check against the
   drill holes, would need an Excellon reader). Only flips, a half turn and the 25.4 scales are tried: a set turned a

@@ -332,17 +332,18 @@ part is the rigid map between the two footprints:
     library = R(rot) · ee + (dx, dy)
 
 It is fitted from pad numbers and pad geometry, with symbol pin names, nets and, for a polar two-terminal part, the
-"+" its EasyEDA footprint draws beside its positive pad as further evidence; a polar part never takes the side that
-most of its evidence (pad numbers, pin names, the "+") rejects. Each fit gets a verdict with reasons, for example
-"polarity decided by pad numbers only" or "ambiguous". A mirrored match is never used: when only the mirror image of
-the EasyEDA footprint lands, the part gets no row ("mirrored footprint or wrong footprint"). When a normal placement
-lands every pad too, that is the correction, red, so that `cpl --force` and `confirm` can write its row: on a
-symmetric land pattern (a trimmer's three pins and two mounting pads) a mirror image that matches the pad numbers
-only renumbers it ("numbering mirrored between the libraries"), and which numbering is the part's is in its
-datasheet. Whether a two-terminal part may be turned round (a resistor) or not (a diode, a tantalum) is decided once,
-for the fit and the check alike: from its reference prefix, its KiCad footprint name and pin functions, and its
-EasyEDA record's title, part categories (tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the
-correction:
+"+" its EasyEDA footprint draws beside its positive pad as further evidence, and the unplated holes both footprints
+have (a connector's peg goes into its hole one way only: a right-angle header whose pins also land turned round is
+placed by its pad numbers and its peg); a polar part never takes the side that most of its evidence (pad numbers, pin
+names, the "+", the holes) rejects. Each fit gets a verdict with reasons, for example "polarity decided by pad
+numbers only" or "ambiguous". A mirrored match is never used: when only the mirror image of the EasyEDA footprint
+lands, the part gets no row ("mirrored footprint or wrong footprint"). When a normal placement lands every pad too,
+that is the correction, red, so that `cpl --force` and `confirm` can write its row: on a symmetric land pattern (a
+trimmer's three pins and two mounting pads) a mirror image that matches the pad numbers only renumbers it ("numbering
+mirrored between the libraries"), and which numbering is the part's is in its datasheet. Whether a two-terminal part
+may be turned round (a resistor) or not (a diode, a tantalum) is decided once, for the fit and the check alike: from
+its reference prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title, part categories
+(tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the correction:
 
 * Mid X, Mid Y = where the EasyEDA origin lies on the board, in the cpl frame.
 * Rotation = theta + rot on the top, and 180 - theta + rot on the bottom.
