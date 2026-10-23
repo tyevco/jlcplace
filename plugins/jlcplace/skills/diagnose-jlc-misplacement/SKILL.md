@@ -15,16 +15,14 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    * which parts looked wrong and how (beside the pads, turned, reversed, missing, or the board does not work), on
      which side, and by roughly how much. A photo or a description of the preview helps;
    * which tool or script wrote the CPL, and whether it applies corrections of its own: a plugin's rotation or offset
-     table, a project script, order notes next to the CPL that mention corrections;
-   * for an assembled board, whether the bottom-side parts came out right, starting with the part the checklist marks
-     `look at this one first` (see "The bottom side on an assembled board" below).
+     table, a project script, order notes next to the CPL that mention corrections.
 3. Check the uploaded files, the Gerber zip among them when it is at hand (leave out `--gerbers` otherwise): JLC
    laid the CPL over those Gerbers from their (0, 0), and so does the check. Never add `--online`. If the check says
    records are missing, ask before running the `jlcplace fetch` it names. Pass the project's database
    (`--db jlcplace-db`, or its own path) even if it does not exist yet: a missing directory only warns.
 
    ```sh
-   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md --json results.json --overlay overlay
+   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist uploaded-checklist.md --json results.json --overlay overlay
    ```
 
    The terminal shows only the first message of each row. For each red or yellow row, read every message in
@@ -35,9 +33,28 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
    does, with the EasyEDA pads where the uploaded rows put them and the problem parts circled: put them beside the
    preview or the photos. `--report report.html` draws every part on its own card. Both draw EasyEDA pad outlines:
    for local viewing only, never publish them.
+
+   For an assembled board, ask whether the bottom-side parts came out right, starting with the part
+   `uploaded-checklist.md` marks `look at this one first` (see "The bottom side on an assembled board" below).
 4. Match each reported symptom to a cause below, using jlcplace's result for that part and the pattern across parts.
    Per part, say the cause, the evidence, and the fix.
-5. Write what to upload next time:
+5. With the user's agreement, record what the assembled board proved, before writing the next CPL (the records
+   change it): the parts that came out **right**, with `jlcplace confirm ... --source board --cpl uploaded-CPL.csv`
+   and no `--failed` ([review-jlc-preview](../review-jlc-preview/SKILL.md)). Read the rows from the CPL's origin, as
+   the check did: pass the same `--gerbers uploaded-gerbers.zip`, or without the zip the `--origin` the check's first
+   line names when it is not aux (`origin 0, 0 from the Gerbers (absolute)`: `--origin absolute`).
+   * A red row off jlcplace's correction (`off-copper`, `wrong-pad`, `reversed`: its `row` differs from `expected`
+     in `results.json`, or it says `differs from the row jlcplace writes`) needs no failure record: jlcplace already
+     writes another row. `confirm --failed` refuses it with exit 3 (`the row in ... is not the stored correction's
+     ...: its failure says nothing about that correction; nothing recorded`), and then records none of the `--ref`s
+     given with it.
+   * A red row that lands as a red correction puts it (`renumbered` red, `ok` red: `the polarity needs a decision`,
+     `pinout`) is jlcplace's own row. Settle it with a decision (`confirm --source manual`,
+     [write-jlc-cpl](../write-jlc-cpl/SKILL.md)), or, if the board showed it wrong, record it with `--failed`.
+   * A part that came out wrong although its row is green: first see the bottom side and the pinout sections below.
+     If neither explains it, record it with `--failed` (as under "Reversed"): its row is then red (`verified-wrong`)
+     until the correction is fixed.
+6. Write what to upload next time:
    * a CPL from `jlcplace cpl` that checks clean, with the same `--db` ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)),
      written with `--gerbers uploaded-gerbers.zip` when the zip is at hand: its rows are then written from the
      zip's (0, 0) and checked against it. No red `origin` or `gerbers` line means the Gerbers, the drill files and
@@ -48,16 +65,9 @@ allowed-tools: Bash(jlcplace check *) Bash(jlcplace show *) Bash(jlcplace cpl *)
      jlcplace cpl board.kicad_pcb -o board-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md
      ```
 
-   * for the next preview, the checklist that `jlcplace cpl --checklist` writes for the new CPL, not the one made
-     from the uploaded CPL ([review-jlc-preview](../review-jlc-preview/SKILL.md)).
-6. With the user's agreement, record what the assembled board proved: the parts that came out **right**, with
-   `jlcplace confirm ... --source board --cpl uploaded-CPL.csv` and no `--failed` ([review-jlc-preview](../review-jlc-preview/SKILL.md)).
-   A part whose uploaded row jlcplace flags red needs no failure record, because jlcplace's correction already
-   differs from that row. `confirm --failed` refuses it with exit 3 (`the row in ... is not the stored correction's
-   ...: its failure says nothing about that correction; nothing recorded`), and then records none of the `--ref`s
-   given with it. A part that came out wrong although its row is green: first see the bottom side and the pinout
-   sections below. If neither explains it, record it with `--failed` (as under "Reversed"): its row is then red
-   (`verified-wrong`) until the correction is fixed.
+   * for the next preview, `checklist.md`, which `jlcplace cpl --checklist` writes for the new CPL after step 5's
+     records, not `uploaded-checklist.md` ([review-jlc-preview](../review-jlc-preview/SKILL.md)). If a record comes
+     later, run the `cpl` again.
 
 ## Shifted: the part sits beside its pads
 
@@ -76,8 +86,8 @@ origin, Y up):
 * U, the uploaded row: `row` in `results.json`, or the CPL;
 * K, KiCad's anchor. `jlcplace show` prints the part's `x:` and `y:` in KiCad's board coordinates (from the page
   origin, Y down). In CPL coordinates that is (x - ox, oy - y), with the origin (ox, oy) from the check's first line
-  (`origin aux 100, 100`, or `origin 100, 100 from the Gerbers (aux)`). The `rows:` that `show` prints are already
-  CPL coordinates from the board's aux origin;
+  (`origin aux 100, 100`, or `origin 100, 100 from the Gerbers (aux)`). The `rows:` that `show` prints are CPL
+  coordinates from `--origin` (default aux), or from the Gerbers' (0, 0) with the check's `--gerbers`;
 * J, jlcplace's row: `expected` in `results.json`, or `show`'s row for the reading in use (`jlc-2022`).
 
 If U is on K, and J is off K by about the distance jlcplace reports, the CPL lacks the EasyEDA origin offset: the
@@ -102,24 +112,25 @@ better, as it fixes the parts' angles and offsets too.
   angle. jlcplace shows `wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other nets: 1->4 ...` or pads
   off copper. Fix: write the CPL with `jlcplace cpl`.
 * **Only bottom-side parts turned, while jlcplace says green.** JLC read the bottom rotation differently from the
-  `jlc-2022` reading jlcplace assumes. JLC does not document it, and nothing offline proves it. The checklist's
-  "bottom reading" items say, for each bottom part, what each other reading would do (`as jlc-2022+180, pin 1 would
-  sit on pad 4`). Compare those predictions with what the preview or the board showed for the part marked "look at
-  this one first". `jlcplace show board.kicad_pcb --ref U10` prints the row under every reading. If one reading
-  explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb uploaded-CPL.csv --reading jlc-2022+180`
-  (with that reading's name) should show red exactly the bottom parts that came out wrong. Then write the next CPL
-  with `jlcplace cpl` and the same `--reading`. Report it at https://github.com/tyevco/jlcplace/issues, because it
-  would change the default for everyone.
+  `jlc-2022` reading jlcplace assumes. JLC does not document it, and nothing offline proves it. The "bottom reading"
+  items of `uploaded-checklist.md` say, for each bottom part, what each other reading would do (`as jlc-2022+180,
+  pin 1 would sit on pad 4`). Compare those predictions with what the preview or the board showed for the part
+  marked "look at this one first". `jlcplace show board.kicad_pcb --ref U10` prints the row under every reading. If
+  one reading explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb uploaded-CPL.csv --reading
+  jlc-2022+180` (with that reading's name) should show red exactly the bottom parts that came out wrong. Then write
+  the next CPL with `jlcplace cpl` and the same `--reading`. Report it at https://github.com/tyevco/jlcplace/issues,
+  because it would change the default for everyone.
 * **Parts at odd angles** (a ring of LEDs) off square: check the row's angle against the board. Angles that are not
   multiples of 90 are allowed. The checklist names one part per code to look at.
 
 ## The bottom side on an assembled board
 
-An assembled board is evidence for the bottom reading too. If the checklist's `look at this one first` part (its row
-green) came out right on the board, JLC read the bottom side as `jlc-2022`, the reading jlcplace writes, and the
-other green bottom parts follow. Record that part with `--source board` (step 6): the readings under which it would
-have moved are then ruled out for every part, and the next checklist has no `bottom reading` item for the parts that
-only those readings moved (the others say which readings it ruled out). Tell the user what it settles.
+An assembled board is evidence for the bottom reading too. If the `look at this one first` part of
+`uploaded-checklist.md` (its row green) came out right on the board, JLC read the bottom side as `jlc-2022`, the
+reading jlcplace writes, and the other green bottom parts follow. Record that part with `--source board` (step 5):
+the readings under which it would have moved are then ruled out for every part, and the next checklist has no
+`bottom reading` item for the parts that only those readings moved (the others say which readings it ruled out).
+Tell the user what it settles.
 
 ## Reversed: a two-terminal part turned 180 degrees
 
@@ -131,7 +142,7 @@ functions and holes:
 
 * `polarity reversed: the row puts the part the other way round than the correction does ...` (red, `reversed`): the
   uploaded row is half a turn from jlcplace's. Write the CPL with `jlcplace cpl`. If the part came out right as
-  uploaded, the correction is wrong: record the uploaded row (`--source board --cpl uploaded-CPL.csv`, step 6), which
+  uploaded, the correction is wrong: record the uploaded row (`--source board --cpl uploaded-CPL.csv`, step 5), which
   replaces it.
 * `polarity decided by pad numbers only ... check the polarity mark in JLC's preview` (yellow), `polarity evidence
   conflicts: ...` (yellow), or `the polarity needs a decision` (red): nothing in the records settles it. If the preview
@@ -140,7 +151,7 @@ functions and holes:
 * jlcplace says green, but the assembled part is reversed. With the user's agreement, record that:
 
   ```sh
-  jlcplace confirm board.kicad_pcb --ref D3 --db jlcplace-db --by NAME --source board --cpl uploaded-CPL.csv --failed --note "reversed on the board"
+  jlcplace confirm board.kicad_pcb --ref D3 --db jlcplace-db --by NAME --source board --cpl uploaded-CPL.csv --gerbers uploaded-gerbers.zip --failed --note "reversed on the board"
   ```
 
   Its row is then red (`verified-wrong`), and `jlcplace cpl --db` refuses it until the correction is fixed: typed in

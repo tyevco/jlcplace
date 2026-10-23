@@ -59,16 +59,19 @@ part nobody looked at.
 7. **odd angle**: one named part stands for all parts of that code and side. Ask whether it sits square on its pads.
 
 An item that stands for several parts names the one to look at. Record that one part. Parts with the same code on the
-same footprint share one database entry, so recording one verifies the others.
+same footprint share one database entry, so recording one verifies the others, and the next check has no `odd angle`
+item left for them.
 
 ## Record each answer
 
-Pass the uploaded CPL every time. Add `--note` with what was seen when it helps the next person.
+Pass the uploaded CPL every time, read from the origin it was written from: the same `--gerbers` as the check (leave
+it out without the zip, and pass the `--origin` the check's first line names when it is not aux: `origin 0, 0 from
+the Gerbers (absolute)` is `--origin absolute`). Add `--note` with what was seen when it helps the next person.
 
 * **Right as shown:**
 
   ```sh
-  jlcplace confirm board.kicad_pcb --ref U10 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv
+  jlcplace confirm board.kicad_pcb --ref U10 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv --gerbers uploaded-gerbers.zip
   ```
 
 * **Right after moving it in the preview**: give the keys that were pressed, counted from the row as uploaded. Each
@@ -76,7 +79,7 @@ Pass the uploaded CPL every time. Add `--note` with what was seen when it helps 
   on screen. `--right` and `--up` take negative numbers for left and down. The bottom view is seen from below.
 
   ```sh
-  jlcplace confirm board.kicad_pcb --ref D21 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv --space 2
+  jlcplace confirm board.kicad_pcb --ref D21 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv --gerbers uploaded-gerbers.zip --space 2
   ```
 
 * **Wrong, and not put right in the preview**: record the failure. Presses cannot go with `--failed`. From then on
@@ -84,7 +87,7 @@ Pass the uploaded CPL every time. Add `--note` with what was seen when it helps 
   CPL with it unless `--force`, until the correction is fixed: see "Afterwards".
 
   ```sh
-  jlcplace confirm board.kicad_pcb --ref U3 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv --failed --note "pin 1 at the wrong corner"
+  jlcplace confirm board.kicad_pcb --ref U3 --db jlcplace-db --by NAME --source preview --cpl uploaded-CPL.csv --gerbers uploaded-gerbers.zip --failed --note "pin 1 at the wrong corner"
   ```
 
 * **Several parts that were all right**: repeat `--ref` (`--ref U11 --ref U12`). Parts that share an entry must agree,
@@ -94,6 +97,8 @@ Pass the uploaded CPL every time. Add `--note` with what was seen when it helps 
 command) when:
 
 * the uploaded CPL has no row for the part;
+* the row, read from that origin, puts every EasyEDA pad off copper (`... so it is not what was seen right`): the
+  origin is wrong; pass `--gerbers` or `--origin` as above;
 * the part's EasyEDA record is not in the cache (ask before running `jlcplace fetch`; never add `--online`);
 * a verified entry would get other numbers before that entry's own row is recorded as failed;
 * `--failed` is given for a row that is not jlcplace's correction: `the row in ... is not the stored correction's
@@ -101,7 +106,9 @@ command) when:
   already, and jlcplace writes another one, so there is nothing to record. Leave the part out, or fix its row.
 
 Read its message and tell the user. Each successful line says the new status (`preview-verified, verified`), the
-stored correction, the row it gives, and whether it replaced an older correction.
+stored correction, the row it gives, and whether it replaced an older correction. For a CPL that `jlcplace cpl`
+wrote with this database, recorded without presses, `replaces the auto correction` usually means the rows were read
+from the wrong origin: tell the user, and do not commit the database until that is settled.
 
 After an assembled board has been inspected, record the parts that came out right the same way, with
 `--source board`, the strongest status. For parts that came out wrong, use
@@ -109,10 +116,10 @@ After an assembled board has been inspected, record the parts that came out righ
 
 ## Afterwards
 
-1. Check again with the database:
+1. Check again with the database, and the same `--gerbers` (or `--origin`) as above:
 
    ```sh
-   jlcplace check board.kicad_pcb uploaded-CPL.csv --db jlcplace-db
+   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db
    ```
 
    Rows the preview proved right are now `verified`. A part moved with presses now has the moved row as its
@@ -123,9 +130,10 @@ After an assembled board has been inspected, record the parts that came out righ
    part that shares its entry. `jlcplace cpl --db` refuses to write it (`... the stored correction of U3 was verified
    wrong: fix it and confirm again`); a refit does not clear it.
 2. Settle every failed part before uploading again. Do one of: move it right in the preview and record the presses
-   (`--source preview --cpl uploaded-CPL.csv` with `--space`, `--right`, `--up`); type the correction in with
-   `jlcplace confirm --rot --dx --dy --source manual` (the user's decision; confirm it in the next preview); choose
-   another part; or fix the pinout or footprint ([diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md)).
+   (`--source preview --cpl uploaded-CPL.csv` with `--space`, `--right`, `--up`, read from its origin as above); type
+   the correction in with `jlcplace confirm --rot --dx --dy --source manual` (the user's decision; confirm it in the
+   next preview); choose another part; or fix the pinout or footprint
+   ([diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md)).
    Then write a new CPL from the database ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)). Check that it is written and
    that its checklist no longer says `verification failed` for the part, upload it, and look at the moved and failed
    parts once more.
