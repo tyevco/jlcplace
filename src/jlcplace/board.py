@@ -71,9 +71,31 @@ def load_board(path, *, origin="aux", lcsc_fields=(), reader: str = "auto") -> B
     except (OSError, RuntimeError) as e:
         if not Path(p).is_file():
             raise
-        why = str(e) if p in str(e) else f"pcbnew could not load {p} ({e})"     # say the file's name once
-        warnings.warn(f"{why}; reading it with the S-expression reader")
+        why = (f"{p}: written by a newer KiCad (version {e.version}) than pcbnew {e.pcbnew} reads"
+               if isinstance(e, NewerFormat) else str(e) if p in str(e) else f"{p}: {e}")
+        warnings.warn(f"{why}; reading it with the S-expression reader")      # the file's name once
         return load_board_sexpr(p, origin=origin, lcsc_fields=lcsc_fields)
+
+
+class NewerFormat(OSError):
+    """A board file pcbnew cannot load because a newer KiCad wrote it: its message names neither path (the caller
+    says it) nor anything but the way out."""
+
+    def __init__(self, version: int, pcbnew: str, reads: int):
+        self.version, self.pcbnew, self.reads = version, pcbnew, reads
+        super().__init__(f"written by a newer KiCad (version {version}); pcbnew {pcbnew} cannot read it (it reads up "
+                         f"to version {reads}); use --reader sexpr or that KiCad's Python")
+
+
+def file_version(path) -> int | None:
+    """The `(version N)` a .kicad_pcb file starts with (its format's date, e.g. 20241229 for KiCad 9), or None."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096).decode("utf-8-sig", "replace")
+    except OSError:
+        return None
+    m = re.match(r"\s*\(\s*kicad_pcb\s*\(\s*version\s+(\d+)\s*\)", head)
+    return int(m.group(1)) if m else None
 
 
 def save_snapshot(board: Board, path) -> None:
@@ -168,8 +190,11 @@ def load_board_pcbnew(path, *, origin="aux", lcsc_fields=()) -> Board:
     if not Path(p).is_file():
         raise FileNotFoundError(p)
     kb = pcbnew.LoadBoard(p)
-    if kb is None:                                 # e.g. a file from a newer KiCad: LoadBoard returns None
-        raise OSError(f"pcbnew {pcbnew.Version()} could not load {p}")
+    if kb is None:                                 # e.g. a file from a newer KiCad: LoadBoard returns None, saying nothing
+        v, reads = file_version(p), getattr(pcbnew, "SEXPR_BOARD_FILE_VERSION", None)
+        if v is not None and isinstance(reads, int) and v > reads:
+            raise NewerFormat(v, pcbnew.Version(), reads)
+        raise OSError(f"pcbnew {pcbnew.Version()} could not load it" + (f" (file format version {v})" if v else ""))
     return board_from_pcbnew(kb, p, origin=origin, lcsc_fields=lcsc_fields)
 
 
