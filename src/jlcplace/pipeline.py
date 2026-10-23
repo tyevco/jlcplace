@@ -470,9 +470,10 @@ def _looks(run: Run, res: RowResult) -> list[dict]:
 
 def _seen(run: Run, res: RowResult) -> str:
     """'board' or 'preview' when the row is verified and an ok verification of its numbers was of this part on this
-    board, on its side (the assembled board winning); '' otherwise. A part that shares the entry was verified at its
-    own angle, which says nothing of how this one turns under another bottom reading."""
-    srcs = {str(v.get("source") or "").removesuffix("-verified") for v in _looks(run, res)}
+    board, on its side, at the row's angle (`_seen_at`; the assembled board winning); '' otherwise. A part that shares
+    the entry was verified at its own angle, and this one at another angle was turned otherwise: neither says how
+    this row turns under another bottom reading."""
+    srcs = {str(v.get("source") or "").removesuffix("-verified") for v in _looks(run, res) if _at(v, res)}
     return "board" if "board" in srcs else "preview" if "preview" in srcs else ""
 
 
@@ -486,19 +487,20 @@ def _rotation(v: dict) -> float | None:
     return a if math.isfinite(a) else None
 
 
+def _at(v: dict, res: RowResult, odd: bool = False) -> bool:
+    """Whether a verification saw the row at its angle: one that records the rotation of the row it saw ("rotation")
+    did when that is within ANGLE_TOL of the row's (a part turned since was not seen so); one that records none
+    (older) counts as having seen it. `odd`: as a look at an odd angle for the part's entry (odd_seen): only one that
+    records an odd rotation."""
+    a = _rotation(v)
+    if a is None:
+        return not odd
+    return abs((a - res.row.rotation + 180.0) % 360.0 - 180.0) <= ANGLE_TOL and (not odd or _off90(a) > 1e-6)
+
+
 def _seen_at(run: Run, res: RowResult, odd: bool = False) -> bool:
-    """`_seen` at the row's angle: a verification that records the rotation of the row it saw ("rotation") counts
-    when that is within ANGLE_TOL of the row's (a part turned since was not seen so); one that records none (older)
-    counts too. `odd`: as a look at an odd angle for the part's entry (odd_seen): only one that records an odd
-    rotation."""
-    for v in _looks(run, res):
-        a = _rotation(v)
-        if a is None:
-            if not odd:
-                return True
-        elif abs((a - res.row.rotation + 180.0) % 360.0 - 180.0) <= ANGLE_TOL and (not odd or _off90(a) > 1e-6):
-            return True
-    return False
+    """Whether an ok verification of the row's numbers (`_looks`) saw this part at the row's angle (`_at`)."""
+    return any(_at(v, res, odd) for v in _looks(run, res))
 
 
 def _entry(run: Run, res: RowResult) -> tuple | None:
@@ -518,10 +520,11 @@ def odd_seen(run: Run) -> set[tuple]:
 
 def ruled_out(run: Run) -> dict[str, list[str]]:
     """The other bottom readings that verified bottom parts rule out, with those parts: a row JLC's preview or the
-    assembled board showed right (`_seen`) would have moved under them, so JLC does not read the bottom so."""
+    assembled board showed right at its angle (`_seen_at`) would have moved under them, so JLC does not read the
+    bottom so."""
     out: dict[str, list[str]] = {}
     for res in run.results:
-        if res.row is not None and res.row.layer == BOTTOM and _seen(run, res):
+        if res.row is not None and res.row.layer == BOTTOM and _seen_at(run, res):
             for name in BOTTOM_READINGS:
                 if res.reading_moves.get(name):
                     out.setdefault(name, []).append(res.ref)
