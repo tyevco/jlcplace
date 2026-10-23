@@ -63,7 +63,7 @@ from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
 from .parts import BODY_TOL, BODY_WORDS, anchor_pin, body_centre, compare_names, ee_positive_pad, kicad_positive_pad, \
-    norm_number, pad_size, pin, pin_diffs, pinout_text, trimmer, uncovered_exemption
+    norm_number, off_centre_pin, pad_size, pin, pin_diffs, pinout_text, trimmer, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 LAND_TOL = 1e-3            # mm: a centre this close outside a pad's edge is on it (CPL values carry 1e-4 mm)
@@ -137,9 +137,11 @@ def _row_point(part: Part, row: CplRow, origin) -> str:
     """Where a row point lies on a part that cannot be simulated, from its body (parts.body_centre) and KiCad's
     anchor: JLC places a part by its centre, and KiCad's anchor is pin 1 on most through-hole connectors.
     '; the row point is the centre of its courtyard', '; the row point is KiCad's anchor, pin 1, 13.50 mm from the
-    centre of its courtyard: JLC places a part by its centre', or ''."""
+    centre of its courtyard: JLC places a part by its centre', or ''. Without a body, the anchor is called a pin only
+    when that pad lies off the middle of the part's copper (parts.off_centre_pin: not an exposed pad)."""
     lp = board_to_library(part, cpl_to_board((row.x, row.y), origin))
-    c, pin = body_centre(part), anchor_pin(part)
+    c = body_centre(part)
+    pin = anchor_pin(part) if c is not None else off_centre_pin(part)
     words = BODY_WORDS.get(part.body_layer, "body")
     if c is not None and math.dist(lp, c) <= BODY_TOL:
         return f"; the row point is the centre of its {words}"

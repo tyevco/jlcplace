@@ -248,6 +248,7 @@ def kicad_positive_pad(part) -> (number, how) | None; def ee_positive_pad(ee) ->
 def uncovered_exemption(pad, covered_pads) -> str   # "inside" | "via" | "same pin" | ""
 def body_centre(part) -> (x, y) | None   # the centre of Part.body, library frame (KiCad's anchor is (0, 0))
 def anchor_pin(part) -> str    # the copper pad centred on KiCad's anchor ("1" on a THT connector), else ""
+def off_centre_pin(part) -> str  # anchor_pin when that pad lies off the middle of the copper (not an exposed pad)
 BODY_TOL = 0.1                 # mm: a body centre this close to the anchor is the anchor
 def pad_size(pad) -> float     # the smaller dimension of a KiCad pad's copper along its own axes
 def norm_number(s) -> str      # upper case, '01' -> '1'
@@ -430,7 +431,8 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   rotor", the checklist item it makes), red otherwise, with the reason (a polar two-pad part, a one-pad part, N copper
   pads) and, for such a red one, where its row point lies: "; the row point is the centre of its courtyard" (within
   BODY_TOL), "; the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of its courtyard: JLC places a part
-  by its centre", or "...is D mm from the centre of its courtyard" ("fabrication-layer drawing" for a fab body).
+  by its centre" (with no body drawn, a pin only when `parts.off_centre_pin` names it), or "...is D mm from the centre
+  of its courtyard" ("fabrication-layer drawing" for a fab body).
   Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
@@ -591,8 +593,9 @@ def origin_lines(run) -> list[(verdict, text)]
 * `fallback`: no EasyEDA footprint and no entry (`cpl`): rot 0, the row at KiCad's angle and at `parts.body_centre`
   when that is more than BODY_TOL from KiCad's anchor (reason "the row is the centre of its courtyard, 13.50 mm from
   KiCad's anchor (pin 1), at KiCad's angle"), else at the anchor ("the row is KiCad's own position and angle", adding,
-  for a part of several pads whose anchor is a pin and that draws no body, "that anchor is pin 1, not the part's
-  centre, and the board draws no courtyard to take the centre from: check the row in JLC's preview").
+  for a part that draws no body whose anchor is a pin off the middle of its copper (`parts.off_centre_pin`: not an
+  exposed pad, nor a one-pad part's pad), "that anchor is pin 1, not the part's centre, and the board draws no courtyard
+  to take the centre from: check the row in JLC's preview").
 * `off_board(run, outline, what="Edge.Cuts") -> refs`: the outline (board-frame polylines) chained into closed rings
   (`geom.rings`; none closed: nothing checked), read even-odd (a cutout is outside); a row of a part on the board whose
   point lies outside is yellow at least, "the row point is outside the board outline (Edge.Cuts), D mm beyond its edge:

@@ -332,6 +332,16 @@ def anchor_pin(part) -> str:
     return next((p.number for p in part.copper_pads() if p.number and math.hypot(p.x, p.y) <= 1e-3), "")
 
 
+def off_centre_pin(part) -> str:
+    """anchor_pin when that pad lies off the middle of the part's copper (the box of its pad centres: pin 1 of a
+    connector), else "": an exposed pad, or a one-pad part's pad, at the anchor is where the part's centre is."""
+    pin, pads = anchor_pin(part), part.copper_pads()
+    if not pin:
+        return ""
+    xs, ys = [p.x for p in pads], [p.y for p in pads]
+    return pin if math.hypot((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2) > BODY_TOL else ""
+
+
 def kicad_positive_pad(part) -> tuple[str, str] | None:
     """(pad number, how it is known) of a two-terminal KiCad part's positive terminal (a diode's anode, a capacitor's
     +): from its pin functions ("pin names") or pad numbers (A, K, +, -: "pad numbers"), else from the KiCad library
