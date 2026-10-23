@@ -333,6 +333,13 @@ The file has sorted keys and a one-space indent. One part from it, R1:
   {
    "angle": 0.0,
    "board_only": false,
+   "body": [
+    -0.93,
+    -0.47,
+    0.93,
+    0.47
+   ],
+   "body_layer": "courtyard",
    "dnp": false,
    "exclude_bom": false,
    "exclude_pos": false,
@@ -397,6 +404,7 @@ Each part:
 | `dnp`, `exclude_pos`, `exclude_bom`, `board_only` | KiCad's attributes: do not populate, exclude from position files, exclude from BOM, not in schematic |
 | `tht` | the footprint type is through-hole |
 | `pads` | the pads, in the footprint's own frame as drawn in its library (mm, Y down) |
+| `body`, `body_layer` | the box `[x0, y0, x1, y1]` of the footprint's courtyard drawing (`body_layer` `courtyard`), else of its fabrication-layer drawing (`fab`), in that frame; `null` and `""` when neither is drawn. `cpl` writes a part with no EasyEDA footprint at its centre |
 
 Each pad:
 

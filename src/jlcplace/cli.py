@@ -45,8 +45,8 @@ from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correcti
     printable
 from .parts import ee_key, kicad_hash
 from .pipeline import Finding, apply_bom_codes, bom_overrides, bom_refs, check, correction, describe, fallback, \
-    gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, offset_hints, offset_tol, origin_findings, resolve, \
-    row_lines
+    gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, off_board, offset_hints, offset_tol, \
+    origin_findings, resolve, row_lines
 from .report import plural
 
 EXIT_OK, EXIT_YELLOW, EXIT_RED, EXIT_INPUT, EXIT_INTERNAL, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
@@ -338,6 +338,14 @@ def _outline(gerbers):
     return report.gerber_outline(*gerbers)
 
 
+def _off_board(args, run, gerbers):
+    """Rows outside the board outline JLC sees (pipeline.off_board): the Gerbers' profile, else the board's Edge.Cuts
+    (none for a snapshot). Returns the Gerbers' outline for the overlays (None: they read Edge.Cuts themselves)."""
+    outline = _outline(gerbers)
+    off_board(run, outline or report.board_outline(args.board), "the Gerbers' outline" if outline else "Edge.Cuts")
+    return outline
+
+
 def cmd_check(args) -> int:
     _stdout_once(args)
     board = _board(args)
@@ -348,6 +356,7 @@ def cmd_check(args) -> int:
     client = _client(args)
     resolved = resolve(board, client, _db(args), snap=args.snap, bom_rows=bom, cpl_refs={r.ref for r in rows})
     run = check(jlc, rows, resolved, reading=args.reading, bom_rows=bom, cpl_path=args.cpl)
+    outline = _off_board(args, run, gerbers)
     if bom is not None:
         run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, rows)
     hints = _judge_origin(args, run, board, gerbers, found)
@@ -360,7 +369,7 @@ def cmd_check(args) -> int:
         except BadInput as e:                  # the summary and the other outputs are written first, then exit 3
             errors.append(str(e))
     run.lead, missing = _misses_note(client, args, _codes(resolved))
-    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + missing, _outline(gerbers), errors)
+    return _finish(args, run, hints + fixed + _codeless_hint(run, bom) + missing, outline, errors)
 
 
 def _codes(resolved) -> int:
@@ -442,6 +451,7 @@ def cmd_cpl(args) -> int:
             raise BadInput(f"{out}: cannot write: {e.strerror or e}") from None
         written = read_cpl(tmp)                    # check what is in the file, not what was meant to be
         run = check(jlc, written, resolved, reading=args.reading, bom_rows=bom)
+        outline = _off_board(args, run, gerbers)
         if bom is not None:
             run.bom_messages = bom_overrides(overrides) + check_bom(board, bom, written)
         hints = _judge_origin(args, run, board, gerbers, found)
@@ -478,7 +488,7 @@ def cmd_cpl(args) -> int:
         if os.path.exists(tmp):
             os.unlink(tmp)
     run.lead, missing = _misses_note(client, args, _codes(resolved))
-    return _finish(args, run, [note] + hints + missing, _outline(gerbers))
+    return _finish(args, run, [note] + hints + missing, outline)
 
 
 # ------------------------------------------------------------------------------------------------------- fit

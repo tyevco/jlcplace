@@ -93,6 +93,11 @@ def resolve_origin(origin, aux, grid) -> ((x, y), kind)
   either reader: number "", kind smd, copper False, shape custom, `poly` the outline, (x, y) its box centre. KiCad
   plots them on the paste layer, so gerber.board_pads(apertures=True) has them; board-level paste graphics are not
   read.
+* `Part.body` = (x0, y0, x1, y1), library frame: the box of the footprint's drawing on its own side's courtyard layer
+  (F.CrtYd, B.CrtYd when flipped), else on its fabrication layer (text left out), from the centre lines of lines,
+  rectangles, circles, arcs (ends and axis extremes), polygons and curves, in either reader (within the board's max
+  error of each other); `Part.body_layer` = courtyard | fab | "" (neither drawn: body None, also in older snapshots).
+  JLC places a part by its centre; KiCad's anchor is pin 1 on most through-hole connectors.
 
 ## lcsc.py — find the LCSC code and other tools' correction fields
 
@@ -240,6 +245,9 @@ def trimmer(part, ee=None) -> bool           # a two-terminal trimmer capacitor:
 def name_tokens(name, number="") -> frozenset[str]; def compare_names(a, b) -> int
 def kicad_positive_pad(part) -> (number, how) | None; def ee_positive_pad(ee) -> str | None
 def uncovered_exemption(pad, covered_pads) -> str   # "inside" | "via" | "same pin" | ""
+def body_centre(part) -> (x, y) | None   # the centre of Part.body, library frame (KiCad's anchor is (0, 0))
+def anchor_pin(part) -> str    # the copper pad centred on KiCad's anchor ("1" on a THT connector), else ""
+BODY_TOL = 0.1                 # mm: a body centre this close to the anchor is the anchor
 def pad_size(pad) -> float     # the smaller dimension of a KiCad pad's copper along its own axes
 def norm_number(s) -> str      # upper case, '01' -> '1'
 def ref_prefix(ref) -> str
@@ -415,7 +423,10 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   message). No EasyEDA footprint: "not-simulated", yellow for a non-polar part with two copper pads whose row point
   is within 0.1 mm of its pads' box (red when it is not), and so for a two-pad trimmer ("trimmer: which pad is the
   rotor", the checklist item it makes), red otherwise, with the reason (a polar two-pad part, a one-pad part, N copper
-  pads). Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
+  pads) and, for such a red one, where its row point lies: "; the row point is the centre of its courtyard" (within
+  BODY_TOL), "; the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of its courtyard: JLC places a part
+  by its centre", or "...is D mm from the centre of its courtyard" ("fabrication-layer drawing" for a fab body).
+  Bottom rows are re-placed under the other readings (`alt_readings`: True, False, or
   names): a changed pin -> net mapping or a pad leaving copper sets `convention_sensitive` (a checklist item,
   verdict unchanged) and, per such reading, `reading_moves[name]` = the moved pads as (EasyEDA number, KiCad pad
   or None off copper), natural order. With `corr`, `expected` = `cpl_row_for(...)`; a row further than 0.05 mm /
@@ -537,11 +548,12 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 
 ```python
 def correction(part, ee, db=None, *, snap=0.5) -> (Correction | None, source)     # db | fit | ""
-def fallback(part, ee) -> Correction          # KiCad's own row (rot 0); yellow for a non-polar 2-pad part or a
-                                              # two-pad trimmer, else red
+def fallback(part, ee) -> Correction          # rot 0 at the body's centre (else KiCad's anchor); yellow for a
+                                              # non-polar 2-pad part or a two-pad trimmer, else red
 def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None, cpl_refs=None)
     -> dict[ref, Resolved]
 def check(board, rows, resolved, *, reading=DEFAULT, bom_rows=None, cpl_path="") -> Run
+def off_board(run, outline, what="Edge.Cuts") -> list[str]   # rows outside the board outline: yellow
 def proxy_footprint(part, corr) -> EEFootprint   # KiCad pads through the inverse correction
 def apply_bom_codes(board, bom_rows) -> list[(ref, board code, BOM code)]; def bom_overrides(changed) -> list[str]
 def bom_listed(part, bom_rows) -> bool; def bom_refs(bom_rows) -> set | None; def lookup_ee(client, code)
@@ -563,6 +575,15 @@ def gerber_findings(check, rows=None) -> list[Finding]
 def origin_findings(run, *, given=None, given_kind="", units="mm", origins=None) -> list[Finding]
 def origin_lines(run) -> list[(verdict, text)]
 ```
+* `fallback`: no EasyEDA footprint and no entry (`cpl`): rot 0, the row at KiCad's angle and at `parts.body_centre`
+  when that is more than BODY_TOL from KiCad's anchor (reason "the row is the centre of its courtyard, 15.55 mm from
+  KiCad's anchor (pin 1), at KiCad's angle"), else at the anchor ("the row is KiCad's own position and angle", adding,
+  for a part of several pads whose anchor is a pin and that draws no body, "that anchor is pin 1, not the part's
+  centre, and the board draws no courtyard to take the centre from: check the row in JLC's preview").
+* `off_board(run, outline, what="Edge.Cuts") -> refs`: the outline (board-frame polylines) chained into closed rings
+  (`geom.rings`; none closed: nothing checked), read even-odd (a cutout is outside); a row of a part on the board whose
+  point lies outside is yellow at least, "the row point is outside the board outline (Edge.Cuts), D mm beyond its edge:
+  look at it in JLC's preview" first; a red or verified row gets it last, its verdict kept.
 * A part with no EasyEDA record (offline miss or not found) but a database correction is simulated with
   `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
   so ("yellow because the stored auto correction is yellow: <its key reason>"); the note on how it was simulated
@@ -683,7 +704,8 @@ def origin_lines(run) -> list[(verdict, text)]
   BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless --force: an existing CPL
   is left unchanged and the note says so, under -q naming the red refs, and naming the refs whose stored correction
   was verified wrong, "fix it and confirm again"; the reports of a run that wrote nothing name no
-  CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint or entry get the fallback row);
+  CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint or entry get the fallback row,
+  at their body's centre);
   `fit BOARD [--ref]... [--db] [--json]`; `fetch [BOARD|CODE]... [--bom CSV] [--refresh]` (the codes of the boards'
   parts a CPL can get placed, the codes given, and with --bom every LCSC code of the BOM; none of them: bad input);
   `confirm BOARD --ref REF --db DIR --by NAME
@@ -706,6 +728,8 @@ def origin_lines(run) -> list[(verdict, text)]
   as --origin (default aux) gives it, and against the board's Edge.Cuts (`report.board_outline`); with `jlc_origin` the
   rows are checked (cpl: written) from the Gerbers' (0, 0); findings from `gerber_findings` (check: with the CPL's rows)
   and `origin_findings` (`given` = the --origin point when --origin was given; origins named by `gerber.board_origins`).
+  `check` and `cpl` (its written rows) run `pipeline.off_board` with the Gerbers' outline (`report.gerber_outline`,
+  when `jlc_origin`), else the board's Edge.Cuts (`report.board_outline`; a snapshot has none: not checked).
   `check --units in|mil`: when the unit changed how the CPL's numbers were read (bare numbers), a red "units" finding
   (JLC reads them in mm; built after the common offset: when the rows sit on their parts read in mm, it says the file is
   in mm already and --units misread it, not that it is in inches). `check --fixed-cpl CSV`: when the run's common offset

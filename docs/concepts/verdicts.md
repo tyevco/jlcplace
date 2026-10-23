@@ -99,6 +99,10 @@ An `ok` row is **yellow** when:
   EasyEDA pad numbers match KiCad's to say the pins are right, and there is no correction to compare with.
 * `yellow because the stored ... correction is yellow: ...`: the row was simulated from a stored correction,
   without the EasyEDA record, and capped ([below](#capped)).
+* `the row point is outside the board outline (Edge.Cuts), 10.00 mm beyond its edge: look at it in JLC's preview`:
+  JLC puts the part's centre off the board (a cutout counts as off it). A part overhanging the edge can have its
+  centre there; a row of another part, or from another origin, too. With `--gerbers` the outline is the Gerbers'.
+  Any other row outside the outline gets the same message, last.
 
 An `ok` row is **red** when the part's correction is red and nothing else vouches for the row:
 
@@ -178,8 +182,8 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv --cache no-r
 
 ```text
 jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
-RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part
-RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads)
+RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part; the row point is the centre of its courtyard
+RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads); the row point is 1.01 mm from the centre of its courtyard
 ...
 YELLOW  C1   C277470    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a two-pad non-polar part, and the row point is on it
 ...
@@ -191,7 +195,11 @@ jlcplace: no EasyEDA record in the cache no-records for 15 codes (C7519, C11702,
 A resistor or capacitor whose row point lies on its pads is yellow: turned either way it is fine, and it is where it
 should be. If its row point is more than 0.1 mm outside its pads (`the row point is ... mm off the part's pads`), it
 is red. A polar
-two-pad part, a one-pad part, or anything with more pads is red. Inside the parentheses, `no EasyEDA record in the
+two-pad part, a one-pad part, or anything with more pads is red, and the message ends with where the row point lies:
+`the row point is the centre of its courtyard`, `the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of
+its courtyard: JLC places a part by its centre` (KiCad's anchor of a through-hole connector is usually pin 1), or how
+far it is from that centre (J1's EasyEDA origin, which the released CPL uses, is 1.01 mm from it). `jlcplace cpl`
+writes such a part at its courtyard's centre. Inside the parentheses, `no EasyEDA record in the
 cache` means `jlcplace fetch` has not been run for it; `Component not found` means EasyEDA has no footprint for the
 code (see [Troubleshooting](../guide/troubleshooting#component-not-found)). A row for a part without an LCSC code is
 not simulated either, and its first message is `the board part has no LCSC code`; with `--bom`, such a part that the

@@ -94,6 +94,9 @@ class Part:
     board_only: bool = False
     tht: bool = False              # footprint type is through-hole
     pads: list[Pad] = field(default_factory=list)
+    body: tuple[float, float, float, float] | None = None  # (x0, y0, x1, y1), library frame: the box of the
+                                   # footprint's courtyard drawing on its side, else of its fabrication-layer drawing
+    body_layer: str = ""           # what `body` is the box of: "courtyard" | "fab" | "" (neither drawn)
 
     @property
     def bottom(self) -> bool:
@@ -130,6 +133,8 @@ class Board:
             p = dict(p)
             p["pads"] = [Pad(**{**q, "poly": [tuple(v) for v in q["poly"]] if q.get("poly") else None})
                          for q in p.get("pads", [])]
+            if p.get("body") is not None:
+                p["body"] = tuple(p["body"])
             parts.append(Part(**p))
         return cls(path=d["path"], origin=tuple(d["origin"]), parts=parts, source=d.get("source", "json"),
                    kicad_version=d.get("kicad_version", ""), origin_kind=d.get("origin_kind", "aux"))

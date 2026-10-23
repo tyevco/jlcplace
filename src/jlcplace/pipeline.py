@@ -32,14 +32,14 @@ import numpy as np
 
 from . import geom
 from .check import check_cpl, check_row, jlc_part, listed_note, nonpolar
-from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, rot
+from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, cpl_to_board, rot
 from .cpl import UNITS, assembled, jlc_places, natural_key, read_text
 from .easyeda import EEError
 from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
-from .parts import ee_key, kicad_hash, norm_number, trimmer
+from .parts import BODY_TOL, BODY_WORDS, anchor_pin, body_centre, ee_key, kicad_hash, norm_number, trimmer
 
 _CODE = re.compile(r"C[1-9][0-9]*", re.I)
 
@@ -227,13 +227,25 @@ def correction(part: Part, ee, db=None, *, snap: float = 0.5) -> tuple[Correctio
 
 
 def fallback(part: Part, ee) -> Correction:
-    """No EasyEDA footprint and no stored correction: KiCad's own position and angle (rot 0, no offset). Right for
-    the usual centred two-pad passive; the check says not-simulated (red unless non-polar with two pads, or a two-pad
-    trimmer)."""
+    """No EasyEDA footprint and no stored correction: the row is at KiCad's angle (rot 0) and at the part's centre,
+    where JLC places a part: the centre of its courtyard (else of its fabrication-layer drawing) when that is not
+    KiCad's anchor, which is pin 1 on most through-hole connectors; else KiCad's own position, and the reason says
+    when that anchor is a pin. Right for the usual centred two-pad passive; the check says not-simulated (red unless
+    non-polar with two pads, or a two-pad trimmer)."""
     why = ee.message if isinstance(ee, NotFound) else "no EasyEDA footprint"
     ok = (nonpolar(part) or trimmer(part)) and len(part.copper_pads()) == 2
-    return Correction(rot=0.0, method="none", verdict=YELLOW if ok else RED, kicad_hash=kicad_hash(part),
-                      reasons=[f"no EasyEDA footprint ({why}): the row is KiCad's own position and angle"])
+    c, pin = body_centre(part), anchor_pin(part)
+    dx = dy = 0.0
+    what = "KiCad's own position and angle"
+    if c is not None and math.hypot(*c) > BODY_TOL:
+        dx, dy = round(c[0], 4) + 0.0, round(c[1], 4) + 0.0
+        what = (f"the centre of its {BODY_WORDS[part.body_layer]}, {math.hypot(*c):.2f} mm from KiCad's anchor"
+                + (f" (pin {pin})" if pin else "") + ", at KiCad's angle")
+    elif pin and c is None and len(part.copper_pads()) > 1:
+        what += (f"; that anchor is pin {pin}, not the part's centre, and the board draws no courtyard to take the "
+                 f"centre from: check the row in JLC's preview")
+    return Correction(rot=0.0, dx=dx, dy=dy, method="none", verdict=YELLOW if ok else RED,
+                      kicad_hash=kicad_hash(part), reasons=[f"no EasyEDA footprint ({why}): the row is {what}"])
 
 
 def bom_refs(bom_rows) -> set[str] | None:
@@ -341,6 +353,31 @@ def check(board: Board, rows: list[CplRow], resolved: dict[str, Resolved], *, re
     if cpl_path:
         run.row_lines = row_lines(cpl_path, results)
     return run
+
+
+def off_board(run: Run, outline, what: str = "Edge.Cuts") -> list[str]:
+    """Rows whose point lies outside the board outline (`outline`: board-frame polylines, chained into closed rings,
+    read even-odd: a cutout is outside; nothing is checked when they close none) are yellow at least: JLC puts the
+    part's centre there, which a part overhanging the edge may have, and a row of another part or origin has. A red
+    or verified row only gets the message. Returns the references of those rows."""
+    rings = geom.rings(outline or [])
+    out = []
+    for res in run.results:
+        if res.row is None or res.status in ("not-on-board", "duplicate-ref") or jlc_part(run.board, res.ref) is None:
+            continue
+        q = cpl_to_board((res.row.x, res.row.y), run.board.origin)
+        if not rings or sum(geom.point_in_polygon(q, r) for r in rings) % 2:
+            continue
+        d = min(geom._dist_to_polygon(q, r) for r in rings)
+        msg = (f"the row point is outside the board outline ({what}), {d:.2f} mm beyond its edge: look at it in JLC's "
+               f"preview")
+        if res.verdict in (GREEN, YELLOW):
+            res.verdict = YELLOW
+            res.messages.insert(0, msg)
+        else:
+            res.messages.append(msg)
+        out.append(res.ref)
+    return out
 
 
 def row_lines(path, results: list[RowResult]) -> list[int | None]:

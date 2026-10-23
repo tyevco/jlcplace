@@ -309,6 +309,26 @@ def trimmer(part, ee=None) -> bool:
         bool(TRIMMER.search(ee.title or "")) or any(TRIMMER.search(t) for t in ee.tags or [])))
 
 
+#: mm: a part's body centre this close to KiCad's anchor is the anchor (a symmetric footprint's courtyard is drawn round
+#: it on a 0.01 mm grid)
+BODY_TOL = 0.1
+BODY_WORDS = {"courtyard": "courtyard", "fab": "fabrication-layer drawing"}
+
+
+def body_centre(part) -> tuple[float, float] | None:
+    """The centre of the part's body (Part.body: the box of its courtyard, else of its fabrication-layer drawing) in
+    the library frame, where KiCad's anchor is (0, 0); None when the board draws neither."""
+    if not part.body:
+        return None
+    x0, y0, x1, y1 = part.body
+    return ((x0 + x1) / 2 + 0.0, (y0 + y1) / 2 + 0.0)
+
+
+def anchor_pin(part) -> str:
+    """The number of the copper pad centred on KiCad's anchor ("1" on most through-hole connectors), else ""."""
+    return next((p.number for p in part.copper_pads() if p.number and math.hypot(p.x, p.y) <= 1e-3), "")
+
+
 def kicad_positive_pad(part) -> tuple[str, str] | None:
     """(pad number, how it is known) of a two-terminal KiCad part's positive terminal (a diode's anode, a capacitor's
     +): from its pin functions ("pin names") or pad numbers (A, K, +, -: "pad numbers"), else from the KiCad library
