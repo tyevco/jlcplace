@@ -51,7 +51,8 @@ Conventions for every module:
 
 ```python
 def load_board(path, *, origin="aux", lcsc_fields=(), reader="auto") -> Board
-def load_board_pcbnew(path, *, origin="aux", lcsc_fields=()) -> Board
+def load_board_pcbnew(path, *, origin="aux", lcsc_fields=()) -> Board   # NewerFormat (OSError) for a newer file
+def file_version(path) -> int | None                                       # the file's (version N)
 def load_board_sexpr(path, *, origin="aux", lcsc_fields=()) -> Board     # no KiCad needed
 def board_from_pcbnew(kb, path="", *, origin="aux", lcsc_fields=()) -> Board   # a pcbnew.BOARD in memory (plugins)
 def save_snapshot(board, path) / load_snapshot(path) -> Board            # JSON (Board.to_dict / from_dict)
@@ -59,8 +60,12 @@ def resolve_origin(origin, aux, grid) -> ((x, y), kind)
 ```
 * `reader`: "auto" (a `.json` path -> snapshot; else pcbnew if importable, else sexpr; a file pcbnew cannot load,
   such as a KiCad 10 file for which `LoadBoard` returns None, falls back to sexpr with a warning naming the file
-  once), "pcbnew",
-  "sexpr", "json".
+  once: "PATH: written by a newer KiCad (version 20260206) than pcbnew 9.0.9 reads; reading it with the S-expression
+  reader"), "pcbnew", "sexpr", "json". When `LoadBoard` returns None, `load_board_pcbnew` raises `NewerFormat` (an
+  OSError) if the file's `(version N)` (`file_version`) is past pcbnew's `SEXPR_BOARD_FILE_VERSION` ("written by a
+  newer KiCad (version 20260206); pcbnew 9.0.9 cannot read it (it reads up to version 20241229); use --reader sexpr
+  or that KiCad's Python"), else OSError ("pcbnew 9.0.9 could not load it (file format version N)"): neither names
+  the path, which the command line says once.
 * `origin`: "aux" (setup `aux_axis_origin`; (0, 0) if absent), "grid", "absolute" (0, 0), an "X,Y" string (also
   "(x;y)", "10 20", and lengths with a unit as `cpl.parse_length` reads them: "10mm,20mm", "4in,-500mil") or a
   tuple in mm; `Board.origin_kind` is aux | grid | absolute | user. A snapshot stores

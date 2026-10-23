@@ -593,6 +593,48 @@ def test_fallback_warning_names_the_file_once(tmp_path, monkeypatch):
     assert msg.count("k10.kicad_pcb") == 1 and "S-expression reader" in msg, msg
 
 
+def _old_pcbnew(monkeypatch):
+    """A pcbnew 9 as far as loading goes: LoadBoard returns None for a file it cannot read, and says nothing."""
+    import sys
+    import types
+    fake = types.ModuleType("pcbnew")
+    fake.LoadBoard, fake.Version, fake.SEXPR_BOARD_FILE_VERSION = (lambda path: None), (lambda: "9.0.9"), 20241229
+    monkeypatch.setitem(sys.modules, "pcbnew", fake)
+
+
+def test_pcbnew_says_a_newer_kicad_wrote_the_file(tmp_path, monkeypatch, capsys):
+    """`--reader pcbnew` on a KiCad 10 file (version 20260206) exited 3 with "jlcplace: PATH: pcbnew 9.0.9 could not
+    load PATH": the path twice and no reason. The file's version says why, and what to do."""
+    from jlcplace.cli import main
+    p = write_board(tmp_path, MINIMAL.replace("(version 20221018)", "(version 20260206)"), "k10.kicad_pcb")
+    assert jb.file_version(p) == 20260206 and jb.file_version(write_board(tmp_path, MINIMAL)) == 20221018
+    _old_pcbnew(monkeypatch)
+    with pytest.raises(OSError) as e:
+        jb.load_board(p, reader="pcbnew")
+    assert str(e.value) == ("written by a newer KiCad (version 20260206); pcbnew 9.0.9 cannot read it (it reads up to "
+                            "version 20241229); use --reader sexpr or that KiCad's Python")
+    cpl = tmp_path / "cpl.csv"
+    cpl.write_text("Designator,Mid X,Mid Y,Layer,Rotation\n", encoding="utf-8")
+    assert main(["check", str(p), str(cpl), "--reader", "pcbnew", "--cache", str(tmp_path)]) == 3
+    err = capsys.readouterr().err
+    assert err == f"jlcplace: {p}: {e.value}\n" and err.count("k10.kicad_pcb") == 1, err
+    with warnings.catch_warnings(record=True) as w:          # auto: read with sexpr, and said once why
+        warnings.simplefilter("always")
+        assert jb.load_board(p).source == "sexpr"
+    assert [str(x.message) for x in w] == [f"{p}: written by a newer KiCad (version 20260206) than pcbnew 9.0.9 reads; "
+                                           "reading it with the S-expression reader"]
+    with pytest.raises(OSError, match=r"^pcbnew 9.0.9 could not load it \(file format version 20221018\)$"):
+        jb.load_board(write_board(tmp_path, MINIMAL), reader="pcbnew")      # not newer: no reason to give
+
+
+@pytest.mark.pcbnew
+def test_real_pcbnew_says_a_newer_kicad_wrote_the_file(tmp_path):
+    pytest.importorskip("pcbnew")
+    p = write_board(tmp_path, MINIMAL.replace("(version 20221018)", "(version 29990101)"), "k99.kicad_pcb")
+    with pytest.raises(OSError, match=r"^written by a newer KiCad \(version 29990101\); pcbnew \S+ cannot read it"):
+        jb.load_board(p, reader="pcbnew")
+
+
 def test_resolve_origin_rejects_garbage():
     for bad in ("1", "1,2,3", "x,y", ""):
         with pytest.raises(ValueError):

@@ -63,7 +63,9 @@ pip install -e .            # Python 3.10+ (CI tests 3.10 to 3.13 on Linux, macO
 
 To read `.kicad_pcb` files, jlcplace uses KiCad's `pcbnew` Python module when it can import it (KiCad's own Python,
 or a virtual environment made with `--system-site-packages` on a machine with KiCad). Without it, a built-in
-S-expression reader handles KiCad 5 to 10 files, so CI does not need KiCad. A board can also be saved once as a JSON
+S-expression reader handles KiCad 5 to 10 files, so CI does not need KiCad; it also reads a file from a newer KiCad
+than the pcbnew at hand, which the default `--reader auto` falls back to (`--reader pcbnew` says which version wrote it
+and that pcbnew cannot read it). A board can also be saved once as a JSON
 snapshot (`jlcplace snapshot`) and checked from that.
 
 ## Quick start
