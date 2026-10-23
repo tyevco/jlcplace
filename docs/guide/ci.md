@@ -83,7 +83,7 @@ jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.cs
 ```
 
 ```text
-jlcplace 0.2.0: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
 RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
 RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
 RED     J40  C160404    bottom  6 of 6 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6 (nearest KiCad pad centre up to 1.40 mm away)
@@ -233,7 +233,7 @@ jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.cs
 ```
 
 ```text
-jlcplace 0.2.0: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only ...
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 0 red, 2 yellow, 182 green, 0 verified
@@ -269,7 +269,7 @@ jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.cs
 ```
 
 ```text
-jlcplace 0.2.0: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: board.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
 jlcplace: no EasyEDA record in the cache no-records for 49 of the 49 codes JLC places (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch hardware/board.kicad_pcb --bom fab/board-BOM.csv --cache no-records` downloads them (rate-limited), or pass --online
 YELLOW  D20  C2500      top     ok: yellow because the stored auto correction is yellow: rms 0.281 mm: the land patterns differ (every pad lands)
 YELLOW  U2   C2681320   top     ok: yellow because the stored auto correction is yellow: rms 0.213 mm: the land patterns differ (every pad lands)
@@ -311,7 +311,7 @@ jlcplace check hardware/board.json fab/board-CPL.csv --bom fab/board-BOM.csv
 
 ```text
 49 codes: 48 footprints, 1 not found, 0 failed; cache .../.cache/jlcplace
-jlcplace 0.2.0: board.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: board.kicad_pcb (pcbnew, 209 parts, origin aux 100, 100) vs board-CPL.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only ...
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 0 red, 2 yellow, 182 green, 0 verified

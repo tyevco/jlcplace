@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jlcplace"
-version = "0.2.0"
+version = "0.2.1"
 description = "Check and correct JLCPCB pick-and-place (CPL) files for KiCad boards by simulating JLC's placement with its own EasyEDA footprints"
 readme = "README.md"
 requires-python = ">=3.10"

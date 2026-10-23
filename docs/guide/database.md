@@ -104,7 +104,7 @@ cat jlcplace-db/C2681320.json
     "rms 0.213 mm: the land patterns differ (every pad lands)"
    ],
    "status": "auto",
-   "tool": "jlcplace 0.2.0",
+   "tool": "jlcplace 0.2.1",
    "verdict": "yellow",
    "verifications": []
   }
@@ -186,7 +186,7 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv --db jlcplac
 ```
 
 ```text
-jlcplace 0.2.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
+jlcplace 0.2.1: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
 RED     SW1  C318884    top     renumbered: the pads land as the correction (auto) puts them, but it is red, so nothing vouches for this numbering: 2->1
              correction (fit, auto, red): numbering conflict: EE 2 -> KiCad 1 (pads on another terminal's net) and no pin names confirm it; check the pinout, or confirm the placement in JLC's preview
 17 results: 1 red, 0 yellow, 15 green, 1 verified
@@ -276,7 +276,7 @@ index 3d0a54d..c44d9ee 100644
     ],
 -   "status": "auto",
 +   "status": "preview-verified",
-    "tool": "jlcplace 0.2.0",
+    "tool": "jlcplace 0.2.1",
 -   "verdict": "green",
 -   "verifications": []
 +   "verdict": "verified",
@@ -314,7 +314,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb old-main-CPL.csv --db jlcplace-db 
 ```
 
 ```text
-jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs old-main-CPL.csv (184 rows), bottom reading jlc-2022
 jlcplace: no EasyEDA record in the cache no-records for 49 of the 49 codes JLC places (C1523, C1525, C1547, C1562, C1779, C2500, C7189, C7519 and 41 more), so the rows below are checked without JLC's footprints (red where a part needs one): `jlcplace fetch dial-me-spinner-main.kicad_pcb --cache no-records` downloads them (rate-limited), or pass --online
 RED     J1   C160411    bottom  14 of 14 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 3.40 mm away)
 RED     J20  C262671    top     11 of 32 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 ... (nearest KiCad pad centre up to 4.48 mm away)
@@ -449,7 +449,7 @@ easyeda:
 db:
   file: jlcplace-db/C39159.json
   entries: 1
-    - correction={"dx": 0.0, "dy": 0.0, "mirror": false, "rot": 0.0}, ... status="preview-verified", tool="jlcplace 0.2.0", verdict="verified", verifications=[{"board": "dial-me-spinner-main.kicad_pcb", "by": "you", ... "ref": "U41", "source": "preview"}, {"board": "dial-me-spinner-main.kicad_pcb", "by": "sam", ... "ref": "U40", "source": "preview"}]
+    - correction={"dx": 0.0, "dy": 0.0, "mirror": false, "rot": 0.0}, ... status="preview-verified", tool="jlcplace 0.2.1", verdict="verified", verifications=[{"board": "dial-me-spinner-main.kicad_pcb", "by": "you", ... "ref": "U41", "source": "preview"}, {"board": "dial-me-spinner-main.kicad_pcb", "by": "sam", ... "ref": "U40", "source": "preview"}]
 ```
 
 And the check runs again, with both drivers verified:
@@ -459,7 +459,7 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-CPL-JLCPCB.cs
 ```
 
 ```text
-jlcplace 0.2.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
+jlcplace 0.2.1: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only ...
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
 184 results: 0 red, 2 yellow, 179 green, 3 verified

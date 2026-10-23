@@ -69,7 +69,7 @@ would move if JLC read a bottom-side rotation another way.
 
 ```text
 $ jlcplace check example.json example-CPL-good.csv --cache cache --report report-good.html
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-good.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-good.csv (7 rows), bottom reading jlc-2022
 7 results: 0 red, 0 yellow, 7 green, 0 verified
 Preview checklist (1 item): look at these in JLC's placement preview
   bottom reading  Q1
@@ -80,7 +80,7 @@ The bad CPL: J1 is off its pads, and U1 sits on copper with every pin on the wro
 
 ```text
 $ jlcplace check example.json example-CPL-bad.csv --cache cache --report report-bad.html
-jlcplace 0.2.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-bad.csv (7 rows), bottom reading jlc-2022
+jlcplace 0.2.1: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL-bad.csv (7 rows), bottom reading jlc-2022
 RED     J1  C1004      top     8 of 8 EasyEDA pads land off copper: 1, 2, 3, 4, 5, 6, 7, 8 (nearest KiCad pad centre up to 1.30 mm away)
 RED     U1  C1001      top     wrong-pad: EasyEDA pads land on other-numbered KiCad pads of other nets: 1->4 (EN, not BST), 2->5 (VIN, not GND), 3->6 (SW, not FB), 4->1 (BST, not EN), 5->2 (GND, not VIN), 6->3 (FB, not SW)
 7 results: 2 red, 0 yellow, 5 green, 0 verified

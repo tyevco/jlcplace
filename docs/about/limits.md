@@ -5,7 +5,7 @@ order, but it is not JLC's machine, and some questions cannot be settled offline
 not look at, what it assumes, and where its data comes from. A CPL is the pick-and-place file you upload to JLCPCB
 with your BOM: one row per part, with its position, side and rotation.
 
-jlcplace is version 0.2.0, alpha software, and has no release tag yet. Pin the commit you use in CI (see
+jlcplace is version 0.2.1, alpha software, and has no release tag yet. Pin the commit you use in CI (see
 [Continuous integration](../guide/ci)), so that a newer jlcplace does not change verdicts under you.
 
 ## What a green row does and does not say
