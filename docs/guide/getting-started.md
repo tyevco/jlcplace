@@ -130,9 +130,10 @@ others read the cache and download nothing unless you pass `--online`. The recor
 Official Library: jlcplace keeps them in your cache, as downloaded, and never redistributes them (see
 [Data and licensing](../about/licensing)).
 
-`fetch` takes the LCSC codes from the board's footprint fields; it does not read a BOM. If your codes are only in
-the BOM, give `fetch` the codes themselves (`jlcplace fetch C7519 C318884 ...`), and pass the BOM to `check` with
-`--bom` (see [Troubleshooting](./troubleshooting#every-row-says-the-board-part-has-no-lcsc-code)).
+`fetch` takes the LCSC codes from the board's footprint fields, and with `--bom` the BOM's too: JLC places the BOM's
+codes. If your codes are only in the BOM, fetch them with `jlcplace fetch board.kicad_pcb --bom board-BOM.csv`, and
+pass the same BOM to `check` with `--bom` (see
+[Troubleshooting](./troubleshooting#every-row-says-the-board-part-has-no-lcsc-code)).
 
 ## Check a CPL
 
