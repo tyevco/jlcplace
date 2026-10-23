@@ -215,8 +215,17 @@ any part with its code), the strongest status wins, and among equals the later e
 **What may replace what.** `fit` never replaces a stronger entry with other numbers: it prints `not stored` and the
 reason instead. `confirm` records the row you uploaded, and when that row's correction differs from the stored one it
 replaces it, except where the stored entry is preview- or board-verified and the new source is no stronger. Here
-the FPC connector J20 was confirmed in the preview from the released CPL, as J1 was, and the old CPL's J20 row,
-4.5 mm off, is refused against its preview-verified entry:
+the FPC connector J20 is confirmed in the preview from the released CPL, as J1 was:
+
+```sh
+jlcplace confirm dial-me-spinner-main.kicad_pcb --ref J20 --db jlcplace-db --by you --source preview --cpl released-main-CPL.csv
+```
+
+```text
+J20 C262671: preview-verified, verified: rot 0, dx -0.0009, dy 1.3405; row X -0.0009 Y -10.8405 rot 0 (jlcplace-db/C262671.json)
+```
+
+Then the old CPL's J20 row, 4.5 mm off, is refused against that preview-verified entry:
 
 ```sh
 jlcplace confirm dial-me-spinner-main.kicad_pcb --ref J20 --db jlcplace-db --by you --source preview --cpl old-main-CPL.csv
@@ -341,9 +350,9 @@ here, MP for its mounting pads, because KiCad's pads stand in for EasyEDA's.) Tw
   yellow until it is confirmed, which stores its uploaded row as its correction. A part without a stored correction
   or a record is red unless it is a two-pad non-polar part whose row point lies on its pads.
 
-The CPL that `jlcplace cpl` wrote gives `0 red, 7 yellow, 176 green, 1 verified` the same way (J1 is the verified
-row). Staleness cannot be seen without the records, so a run that has them, on your machine or in CI with the
-[record cache](./ci#caching-the-easyeda-records), is still worth having.
+The CPL that `jlcplace cpl` wrote gives `0 red, 7 yellow, 175 green, 2 verified` the same way (J1 and J20 are the
+verified rows). Staleness cannot be seen without the records, so a run that has them, on your machine or in CI with
+the [record cache](./ci#caching-the-easyeda-records), is still worth having.
 
 ## Merge conflicts
 
@@ -462,8 +471,8 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-CPL-JLCPCB.cs
 jlcplace 0.2.1: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 YELLOW  BZ1  C910763    bottom  ok: lands as the correction puts it, but the fit was unsure of that placement: polarity decided by pad numbers only ...
 YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (Component not found); a two-pad non-polar part, and the row point is on it
-184 results: 0 red, 2 yellow, 179 green, 3 verified
+184 results: 0 red, 2 yellow, 178 green, 4 verified
 ...
 ```
 
-The three verified rows are J1, U40 and U41.
+The four verified rows are J1, J20, U40 and U41.

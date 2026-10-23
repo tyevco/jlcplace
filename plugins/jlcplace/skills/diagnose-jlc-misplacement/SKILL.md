@@ -132,20 +132,20 @@ better, as it fixes the parts' angles and offsets too.
   marked "look at this one first". `jlcplace show board.kicad_pcb --ref U10 --gerbers uploaded-gerbers.zip` prints
   the row under every reading. If one reading explains the bottom parts, confirm it: `jlcplace check board.kicad_pcb
   uploaded-CPL.csv --gerbers uploaded-gerbers.zip --reading jlc-2022+180` (with that reading's name, and the same
-  `--gerbers` or `--origin` as step 3) should show red exactly the bottom parts that came out wrong. Then write the
-  next CPL with `jlcplace cpl` and the same `--reading`. Report it at https://github.com/tyevco/jlcplace/issues,
-  because it would change the default for everyone.
+  `--gerbers` as step 3, or without the zip the `--origin` step 5 reads the rows from) should show red exactly the
+  bottom parts that came out wrong. Then write the next CPL with `jlcplace cpl` and the same `--reading`. Report it at
+  https://github.com/tyevco/jlcplace/issues, because it would change the default for everyone.
 * **Parts at odd angles** (a ring of LEDs) off square: check the row's angle against the board. Angles that are not
   multiples of 90 are allowed. The checklist names one part per code to look at.
 
 ## The bottom side on an assembled board
 
 An assembled board is evidence for the bottom reading too. If the `look at this one first` part of
-`uploaded-checklist.md` (its row green) came out right on the board, JLC read the bottom side as `jlc-2022`, the
-reading jlcplace writes, and the other green bottom parts follow. Record that part with `--source board` (step 5):
-the readings under which it would have moved are then ruled out for every part, and the next checklist has no
-`bottom reading` item for the parts that only those readings moved (the others say which readings it ruled out).
-Tell the user what it settles.
+`uploaded-checklist.md` (its row green) came out right on the board, JLC read the bottom side as the CPL's reading
+(`jlc-2022`, or the `--reading` the CPL was written with), and the other green bottom parts follow. Record that part
+with `--source board` (step 5): the readings under which it would have moved are then ruled out for every part, and
+the next checklist has no `bottom reading` item for the parts that only those readings moved (the others say which
+readings it ruled out). Tell the user what it settles.
 
 ## Reversed: a two-terminal part turned 180 degrees
 

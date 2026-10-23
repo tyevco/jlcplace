@@ -74,7 +74,8 @@ with step 6 instead of making a second set. Use its file names, and ask before w
    With `--gerbers`, the rows are written from the Gerbers' own (0, 0), the origin JLC reads them from, and Gerbers
    that are not this board's as it is are red (see step 6). Keep `--db jlcplace-db` (or the project's own database)
    even before it exists: `jlcplace confirm` creates it when the first decision is recorded, and until then jlcplace
-   only warns that it does not exist. Resolve every red row as that skill says (a numbering or polarity decision is
+   only warns that it does not exist. When the project's CPLs are written with a `--reading` (not `jlc-2022`), pass
+   it here and to step 6's check too. Resolve every red row as that skill says (a numbering or polarity decision is
    the user's to make) until the file is written.
 6. **Final check** of exactly the files that will be uploaded, the Gerber zip included:
 

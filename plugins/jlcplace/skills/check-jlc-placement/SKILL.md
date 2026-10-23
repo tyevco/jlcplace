@@ -24,7 +24,8 @@ to be installed.
      from their own (0, 0), so pass them whenever they exist;
    * the correction database: a directory of `C<digits>.json` files, often `jlcplace-db/`.
 3. Run the check. Leave out `--bom` or `--gerbers` when there is none. Pass the project's database path
-   (`jlcplace-db` unless it has another) even before it exists: a missing directory only warns.
+   (`jlcplace-db` unless it has another) even before it exists: a missing directory only warns. When the project's
+   CPLs are written with a `--reading` (not `jlc-2022`), pass it too.
 
    ```sh
    jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv --gerbers board-gerbers.zip --db jlcplace-db --checklist checklist.md
