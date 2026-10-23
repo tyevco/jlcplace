@@ -37,12 +37,13 @@ jlcplace check [options] BOARD CPL
 | `--db` `DIR` | correction database directory (one JSON file per LCSC code) |
 | `--reading` `{jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}` | how JLC reads a bottom-side rotation (default jlc-2022) |
 | `--units` `{mm,in,mil}` | unit of bare numbers in the CPL (KiCad's CSV position file does not say; default mm) |
+| `--fixed-cpl` `CSV` | when every row is off by one origin, unit or y axis: write the CPL with that taken out (its rows moved onto the Gerbers' origin, or the CPL origin: then right only for Gerbers plotted from it, which --gerbers checks), and check it |
 
 ### Board
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -65,6 +66,8 @@ jlcplace check [options] BOARD CPL
 | `--checklist` `PATH` | write the preview checklist (.md, or .csv) |
 | `--github-annotations` | print GitHub Actions annotations |
 | `--bom` `CSV` | the JLC BOM: codes for parts that lack one, and consistency checks |
+| `--gerbers` `GERBERS` | the Gerbers ordered with the CPL (a directory, a .zip or one file): JLC lays the CPL over them from their own (0, 0), which becomes the CPL origin; red when the CPL was written from another origin or the Gerbers are not this board's as it is |
+| `--overlay` `DIR` | write top.svg and bottom.svg (and PNGs when a renderer is at hand) of the board as JLC's preview shows it, problem parts circled (draws EasyEDA outlines: for your own review) |
 | `-q`, `--quiet` | no terminal summary |
 
 ## jlcplace cpl
@@ -97,7 +100,7 @@ jlcplace cpl --output CPL [options] BOARD
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -120,6 +123,8 @@ jlcplace cpl --output CPL [options] BOARD
 | `--checklist` `PATH` | write the preview checklist (.md, or .csv) |
 | `--github-annotations` | print GitHub Actions annotations |
 | `--bom` `CSV` | the JLC BOM: codes for parts that lack one, and consistency checks |
+| `--gerbers` `GERBERS` | the Gerbers ordered with the CPL (a directory, a .zip or one file): JLC lays the CPL over them from their own (0, 0), which becomes the CPL origin; red when the CPL was written from another origin or the Gerbers are not this board's as it is |
+| `--overlay` `DIR` | write top.svg and bottom.svg (and PNGs when a renderer is at hand) of the board as JLC's preview shows it, problem parts circled (draws EasyEDA outlines: for your own review) |
 | `-q`, `--quiet` | no terminal summary |
 
 ## jlcplace fit
@@ -151,7 +156,7 @@ jlcplace fit [options] BOARD
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -190,7 +195,7 @@ jlcplace fetch [options] BOARD|CODE [BOARD|CODE ...]
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -235,7 +240,7 @@ jlcplace confirm --ref REF --db DIR --by NAME --source {board,preview,manual} [o
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -275,7 +280,7 @@ jlcplace show [options] CODE|BOARD
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |
 
@@ -312,6 +317,6 @@ jlcplace snapshot --output JSON [options] BOARD
 
 | option | what it does |
 |---|---|
-| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil') |
+| `--origin` `ORIGIN` | CPL origin: aux (default), grid, absolute, or 'X,Y' in mm or with a unit ('4in,-500mil'); check and cpl with --gerbers take the Gerbers' (0, 0), and an --origin elsewhere is red |
 | `--lcsc-field` `NAME` | footprint field holding the LCSC code, searched before the usual names (repeatable) |
 | `--reader` `{auto,pcbnew,sexpr,json}` | how to read BOARD (auto: .json is a snapshot, else pcbnew if it imports, else sexpr) |

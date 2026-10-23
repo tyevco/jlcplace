@@ -17,6 +17,10 @@ its rings joined by zero-width bridges walked both ways (as KiCad fractures poly
 geom.point_in_polygon exact except on the bridge lines themselves; a bridge to a hole runs through copper, one to an
 island crosses the gap. The S-expression reader builds custom pads as the union of the anchor and the primitives
 (strokes included) with arcs to ARC_ERR; pcbnew's outline is its effective polygon (board max error, 5 um default).
+
+A footprint's filled graphics on its paste layer (fp_poly, fp_rect, fp_circle on F.Paste, B.Paste when flipped) are
+stencil openings that KiCad plots as it plots a paste-only pad: both readers add them after the pads, as paste
+apertures (number "", copper False, custom, Pad.poly their outline, (x, y) its box centre).
 """
 
 from __future__ import annotations
@@ -206,6 +210,7 @@ def _pcbnew_part(pcbnew, fp, lcsc_fields) -> Part:
                 exclude_pos=bool(fp.IsExcludedFromPosFiles()), exclude_bom=bool(fp.IsExcludedFromBOM()),
                 board_only=bool(fp.IsBoardOnly()), tht=bool(fp.GetAttributes() & pcbnew.FP_THROUGH_HOLE))
     part.pads = [_pcbnew_pad(pcbnew, pad, part) for pad in fp.Pads()]
+    part.pads += _pcbnew_paste(pcbnew, fp, part)
     return part
 
 
@@ -235,11 +240,44 @@ def _pcbnew_pad(pcbnew, pad, part: Part) -> Pad:
             for ch in chains:
                 rings.append([board_to_library(part, _mm2(ch.CPoint(k))) for k in range(ch.PointCount())])
         poly = _bridge(_clean_rings(rings))
+    cu = _outer(pad.IsOnLayer(pcbnew.F_Cu), pad.IsOnLayer(pcbnew.B_Cu)) if kind != "npth" else ""
     return Pad(number=pad.GetNumber(), x=rel.x / 1e6 + 0.0, y=s * rel.y / 1e6 + 0.0, w=size.x / 1e6, h=size.y / 1e6,
                angle=norm_angle(s * a), shape=shape, kind=kind,
                copper=kind == "tht" or (kind in ("smd", "connect") and on_side), net=pad.GetNetname(),
                pin_name=pad.GetPinFunction(), pin_type=pad.GetPinType(),
-               rr=pad.GetRoundRectRadiusRatio(layer) if shape in ("roundrect", "chamfered") else 0.0, poly=poly)
+               rr=pad.GetRoundRectRadiusRatio(layer) if shape in ("roundrect", "chamfered") else 0.0, poly=poly, cu=cu)
+
+
+def _pcbnew_paste(pcbnew, fp, part: Part) -> list[Pad]:
+    """The footprint's filled graphics on its paste layer as paste apertures (module docstring)."""
+    layer = pcbnew.B_Paste if part.bottom else pcbnew.F_Paste
+    out = []
+    for g in fp.GraphicalItems():
+        if not (isinstance(g, pcbnew.PCB_SHAPE) and g.GetLayer() == layer and g.IsFilled()):
+            continue
+        ps = pcbnew.SHAPE_POLY_SET()
+        g.TransformShapeToPolygon(ps, layer, 0, round(ARC_ERR * 1e6), pcbnew.ERROR_INSIDE)
+        rings = []
+        for i in range(ps.OutlineCount()):
+            for ch in [ps.Outline(i)] + [ps.Hole(i, j) for j in range(ps.HoleCount(i))]:
+                rings.append([board_to_library(part, _mm2(ch.CPoint(k))) for k in range(ch.PointCount())])
+        out += _aperture(_bridge(_clean_rings(rings)))
+    return out
+
+
+def _aperture(poly) -> list[Pad]:
+    """[the paste aperture of outline poly (library frame)], or [] for none."""
+    if not poly:
+        return []
+    a = np.asarray(poly, float)
+    (x0, y0), (x1, y1) = a.min(0), a.max(0)
+    return [Pad(number="", x=float(x0 + x1) / 2 + 0.0, y=float(y0 + y1) / 2 + 0.0, w=float(x1 - x0), h=float(y1 - y0),
+                shape="custom", kind="smd", copper=False, poly=poly)]
+
+
+def _outer(front: bool, back: bool) -> str:
+    """model.Pad.cu: the outer copper a pad has on the board as placed (a flipped footprint's layers are flipped)."""
+    return "both" if front and back else TOP if front else BOTTOM if back else ""
 
 
 # ------------------------------------------------------------------------------------------------------- S-expressions
@@ -409,7 +447,27 @@ def _sexpr_part(fp, version: int, nets: dict, lcsc_fields, err: float) -> Part:
                 fields=fields, dnp=flag("dnp"), exclude_pos=virtual or flag("exclude_from_pos_files"),
                 exclude_bom=virtual or flag("exclude_from_bom"), board_only=flag("board_only"), tht=tht)
     part.pads = [_sexpr_pad(c, part, theta, nets, err) for c in _kids(fp, "pad")]
+    part.pads += _sexpr_paste(fp, part, err)
     return part
+
+
+_PASTE_GRAPHICS = {"fp_poly": "gr_poly", "fp_rect": "gr_rect", "fp_circle": "gr_circle"}
+
+
+def _sexpr_paste(fp, part: Part, err: float) -> list[Pad]:
+    """The footprint's filled graphics on its paste layer as paste apertures (module docstring). Their points are
+    stored as placed (after any flip), in the footprint's unrotated frame, as a pad's position is."""
+    layer = "B.Paste" if part.bottom else "F.Paste"
+    out = []
+    for c in fp:
+        kind = _PASTE_GRAPHICS.get(c[0]) if isinstance(c, list) and c else None
+        if kind is None or (_atoms(_kid(c, "layer")) or [""])[0] != layer or not _filled(c, kind):
+            continue
+        cu = _Copper(err)
+        _add_primitive(cu, [kind] + c[1:], err)
+        rings = [[(x, -y if part.bottom else y) for x, y in r] for r in _union(cu.regions())]
+        out += _aperture(_bridge(_clean_rings(rings)))
+    return out
 
 
 def _sexpr_pad(c, part: Part, theta: float, nets: dict, err: float) -> Pad:
@@ -454,10 +512,12 @@ def _sexpr_pad(c, part: Part, theta: float, nets: dict, err: float) -> Pad:
                            (_atoms(_kid(_kid(geo, "options") or [], "anchor")) or ["rect"])[0],
                            _kid(geo, "primitives") or [], err)
         poly = _bridge(_clean_rings([[_stored_to_library(u, lx, ly, psi, bottom) for u in r] for r in rings]))
+    both = bool(layers & {"*.Cu", "F&B.Cu"})
+    cu = _outer(both or "F.Cu" in layers, both or "B.Cu" in layers) if kind != "npth" else ""
     return Pad(number=number, x=lx, y=ly, w=w, h=h, angle=psi, shape=shape, kind=kind,
                copper=kind == "tht" or (kind in ("smd", "connect") and on_side), net=netname,
                pin_name=(_atoms(_kid(c, "pinfunction")) or [""])[0], pin_type=(_atoms(_kid(c, "pintype")) or [""])[0],
-               rr=rr, poly=poly)
+               rr=rr, poly=poly, cu=cu)
 
 
 def _stored_to_library(u, lx, ly, psi, bottom):
@@ -646,12 +706,7 @@ def _add_primitive(cu: "_Copper", p, err: float) -> None:
     kind = p[0]
     width = _nums(_kid(_kid(p, "stroke") or p, "width"), 1)[0]
     r = width / 2.0
-    fill = _kid(p, "fill")
-    if fill is not None:
-        filled = (_atoms(fill) or ["no"])[0].lower() in ("yes", "solid", "true")
-    else:
-        # legacy files had no fill flag: polygons were filled, rects and circles when their stroke width was 0
-        filled = kind == "gr_poly" or (kind in ("gr_rect", "gr_circle") and width == 0)
+    filled = _filled(p, kind)
     if kind in ("gr_poly", "gr_rect"):
         if kind == "gr_poly":
             pts = _merge_close(_poly_points(_kid(p, "pts"), err), True, err / 4)
@@ -683,6 +738,16 @@ def _add_primitive(cu: "_Copper", p, err: float) -> None:
         if len(q) == 4:
             cu.stroke(_bezier(q, err), False, r)
     # gr_bbox / gr_vector are annotations, not copper
+
+
+def _filled(p, kind: str) -> bool:
+    """Is graphic p (gr_* or fp_* of `kind` gr_poly, gr_rect, gr_circle, ...) filled?"""
+    fill = _kid(p, "fill")
+    if fill is not None:
+        return (_atoms(fill) or ["no"])[0].lower() in ("yes", "solid", "true")
+    # legacy files had no fill flag: polygons were filled, rects and circles when their stroke width was 0
+    width = _nums(_kid(_kid(p, "stroke") or p, "width"), 1)[0]
+    return kind == "gr_poly" or (kind in ("gr_rect", "gr_circle") and width == 0)
 
 
 class _Copper:

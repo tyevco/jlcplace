@@ -45,6 +45,7 @@ env:
   DMS_OLD: 8816f0b662914a1e1aea03265aba6b4ec9f2c327
   KIKIT: 958abd031e3d254d9777f6c192badbdb1c1c3757          # KiCad 5-8 test boards (tests/test_board.py OLDER)
   JLCCHECK: d95f9e0ade6a5d9218bcdeb8b107769be8db0a5f       # z2amiller's JLC-preview ground truth, KiCad 10 boards
+  JLCPCB_TOOLS: 14bf352cc9b1b953aa781c49d9a32805aeb72bd0   # Bouni's golden Gerbers and CPLs (tests/test_gerber.py)
 
 jobs:
   unit:
@@ -218,6 +219,13 @@ jobs:
           path: fixtures/jlc/src/z2amiller_jlccheck
           sparse-checkout: tests/fixtures/jlcfootprint
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bouni/kicad-jlcpcb-tools
+          ref: ${{ env.JLCPCB_TOOLS }}
+          path: fixtures/jlc/src/Bouni_kicad-jlcpcb-tools
+          sparse-checkout: tests/golden
+          persist-credentials: false
       - name: fixture locations
         run: |
           mkdir -p fixtures/jlc/fab-before
@@ -231,6 +239,9 @@ jobs:
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
+          # cairosvg renders the overlay PNGs: the image has no browser, but KiCad brings the cairo library
+          /opt/venv/bin/python -m pip install cairosvg
+          /opt/venv/bin/python -c "import cairosvg"
           /opt/venv/bin/python -c "import pcbnew, jlcplace; print('pcbnew', pcbnew.Version(), 'jlcplace', jlcplace.__version__)"
           echo /opt/venv/bin >> "$GITHUB_PATH"
           kicad-cli version
@@ -302,6 +313,13 @@ jobs:
           path: fixtures/jlc/src/z2amiller_jlccheck
           sparse-checkout: tests/fixtures/jlcfootprint
           persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Bouni/kicad-jlcpcb-tools
+          ref: ${{ env.JLCPCB_TOOLS }}
+          path: fixtures/jlc/src/Bouni_kicad-jlcpcb-tools
+          sparse-checkout: tests/golden
+          persist-credentials: false
       - name: fixture locations
         run: |
           mkdir -p fixtures/jlc/fab-before fixtures/jlc/ee_raw
@@ -315,6 +333,9 @@ jobs:
         run: |
           python3 -m venv --system-site-packages /opt/venv
           /opt/venv/bin/python -m pip install -e ".[test]"
+          # cairosvg renders the overlay PNGs (the PNG test may not skip here): the image has no browser
+          /opt/venv/bin/python -m pip install cairosvg
+          /opt/venv/bin/python -c "import cairosvg"
           echo /opt/venv/bin >> "$GITHUB_PATH"
       - name: restore EasyEDA records
         uses: actions/cache/restore@v4
@@ -332,15 +353,17 @@ jobs:
             ${{ github.event_name == 'schedule' && '--refresh' || '' }} \
             fixtures/dial-me-spinner/hardware/kicad/main/dial-me-spinner-main.kicad_pcb \
             fixtures/dial-me-spinner/hardware/kicad/base/dial-me-spinner-base.kicad_pcb \
-            C20916 C111548 C108023 | tee fetch.log
-          if grep -q "(fetched)" fetch.log; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+            C20916 C111548 C108023 | tee fetch.log || code=$?
+          # what a fetch cut short got is saved too (EasyEDA rate-limits the runners): the next run goes on from it
+          if grep -q "fetched)" fetch.log; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+          exit "${code:-0}"
       - name: the fetch failed
         if: steps.fetch.outcome == 'failure'
         run: >
           echo "::warning title=EasyEDA fetch failed::EasyEDA is down or rate-limits this runner: the record tests and
           the dogfood check below run with the cached records only, and their failures do not fail the job"
       - name: save EasyEDA records (this repository's Actions cache, never an artifact)
-        if: always() && steps.fetch.outcome == 'success' && steps.fetch.outputs.new == 'true' && github.event_name != 'pull_request'
+        if: always() && steps.fetch.outputs.new == 'true' && github.event_name != 'pull_request'
         uses: actions/cache/save@v4
         with:
           path: fixtures/jlc/ee_raw

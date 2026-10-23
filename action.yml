@@ -1,0 +1,302 @@
+# jlcplace as a GitHub Action: check a JLCPCB CPL against its KiCad board, for example after the job that writes the
+# fab outputs. The step fails when a row is red (or yellow, with fail-on: yellow); its outputs say how many.
+#
+#   - uses: tyevco/jlcplace@main               # or a commit SHA (a release tag from the first one with it)
+#     with:
+#       board: hardware/board.kicad_pcb
+#       cpl: fab/board-CPL.csv
+#       bom: fab/board-BOM.csv                  # optional
+#       gerbers: fab/gerbers                    # optional, recommended: the Gerbers the CPL is ordered with
+#       db: jlcplace-db                         # optional: the committed correction database
+#
+# The terminal summary and the preview checklist go to the job summary, and every red or yellow row becomes an
+# annotation on its CPL line. EasyEDA records are kept in the calling repository's Actions cache, keyed on the board,
+# the BOM and the args, and `jlcplace fetch` downloads only what the cache lacks (rate-limited); what a fetch cut
+# short got (EasyEDA down, or rate-limiting the runner) is saved too, and the next run fetches the rest. The check
+# runs with the records at hand: a multi-pin or polar part without its record is red (not simulated) unless `db`
+# holds its correction, so commit one (`jlcplace fit BOARD --db DIR` stores every part's) for a step EasyEDA cannot
+# fail.
+#
+# Licensing: the EasyEDA records (JLCEDA/EasyEDA Official Library) stay on the runner and in the Actions cache. This
+# action uploads nothing and writes no HTML report or overlay image (they draw EasyEDA pad outlines); its JUnit, JSON
+# and checklist files hold derived data only. Do not upload the records as an artifact.
+name: jlcplace
+description: >-
+  Check a JLCPCB pick-and-place (CPL) file against its KiCad board by putting JLC's own EasyEDA footprints where each
+  row tells JLC to put them.
+author: tyevco
+branding:
+  icon: crosshair
+  color: green
+inputs:
+  board:
+    description: The KiCad board (.kicad_pcb), or a JSON snapshot of it (jlcplace snapshot).
+    required: true
+  cpl:
+    description: The CPL to check, from any tool (JLC's CSV columns, or KiCad's position file).
+    required: true
+  bom:
+    description: >-
+      The JLC BOM (CSV). JLC places the BOM's LCSC codes: with it they are the parts simulated, and the BOM is checked
+      against the board and the CPL.
+    required: false
+    default: ""
+  gerbers:
+    description: >-
+      The Gerbers the CPL is ordered with (a directory or a .zip). JLC lays the CPL over them from their own origin:
+      with them the check says when the CPL was written from another origin.
+    required: false
+    default: ""
+  db:
+    description: >-
+      The correction database directory, committed to the repository (manual and verified corrections; `jlcplace fit
+      --db` stores every part's). A part whose EasyEDA record is not at hand is checked through its stored correction;
+      without one, a multi-pin or polar part is red (not simulated).
+    required: false
+    default: ""
+  fail-on:
+    description: red fails the step on a red row; yellow on yellow rows and BOM issues too.
+    required: false
+    default: red
+  args:
+    description: >-
+      More arguments for jlcplace check, split at whitespace (spaces, tabs and newlines: one per line in a block is
+      fine; no quoting), e.g. "--origin absolute" or "--lcsc-field LCSC_PN". The fetch reads the board with the same
+      --lcsc-field and --reader.
+    required: false
+    default: ""
+  python-version:
+    description: >-
+      The Python to run jlcplace on, set up with actions/setup-python for the action alone (the job's PATH and Python
+      stay as they were); empty uses the runner's own.
+    required: false
+    default: "3.12"
+  version:
+    description: >-
+      The jlcplace git ref to install (a release tag or a commit SHA). Empty, the default, is this action's own ref
+      (github.action_ref), installed from the action's own files.
+    required: false
+    default: ""
+outputs:
+  exit-code:
+    description: jlcplace check's exit code (0 clean, 1 yellow with fail-on yellow, 2 red, 3 bad input, 4 a bug).
+    value: ${{ steps.check.outputs.exit-code }}
+  red:
+    description: >-
+      Red results, a red finding about the whole run included (the CPL written from another origin than the
+      Gerbers', Gerbers that are not this board's); empty when the check could not run.
+    value: ${{ steps.check.outputs.red }}
+  yellow:
+    description: Yellow results (empty when the check could not run).
+    value: ${{ steps.check.outputs.yellow }}
+  junit:
+    description: The JUnit XML file (derived data only).
+    value: ${{ steps.check.outputs.junit }}
+  checklist:
+    description: The preview checklist (Markdown).
+    value: ${{ steps.check.outputs.checklist }}
+  json:
+    description: The results as JSON (derived data only).
+    value: ${{ steps.check.outputs.json }}
+runs:
+  using: composite
+  steps:
+    # update-environment false: the caller's PATH, Python and environment stay as they were (setup-python would put
+    # its Python first on the caller's PATH for the rest of the job); the venv is made from its python-path
+    - name: Set up Python
+      id: setup-python
+      if: inputs.python-version != ''
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+
+    # a virtual environment of its own: the caller's Python, PATH and packages stay as they were (a second use of the
+    # action in the job reuses it)
+    - name: Install jlcplace
+      id: install
+      shell: bash
+      env:
+        BASE_PY: ${{ steps.setup-python.outputs.python-path }}
+        VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+      run: |
+        venv="$RUNNER_TEMP/jlcplace-venv"
+        if [ -z "$VERSION" ] || [ "$VERSION" = "$ACTION_REF" ]; then
+          spec="$GITHUB_ACTION_PATH"
+        else
+          spec="jlcplace @ git+https://github.com/${ACTION_REPOSITORY:-tyevco/jlcplace}@$VERSION"
+        fi
+        if [ ! -f "$venv/jlcplace-spec.txt" ] || [ "$(cat "$venv/jlcplace-spec.txt")" != "$spec" ]; then
+          rm -rf "$venv"
+          "${BASE_PY:-$(command -v python || command -v python3)}" -m venv "$venv"
+          bin="$venv/bin"; [ -d "$venv/Scripts" ] && bin="$venv/Scripts"
+          "$bin/python" -m pip install --disable-pip-version-check --quiet "$spec"
+          printf '%s' "$spec" > "$venv/jlcplace-spec.txt"
+        fi
+        bin="$venv/bin"; [ -d "$venv/Scripts" ] && bin="$venv/Scripts"
+        "$bin/jlcplace" --version
+        echo "python=$bin/python" >> "$GITHUB_OUTPUT"
+        echo "jlcplace=$bin/jlcplace" >> "$GITHUB_OUTPUT"
+
+    - name: EasyEDA record cache key (the board, the BOM and the arguments, which may name the code field)
+      id: key
+      shell: bash
+      env:
+        BOARD: ${{ inputs.board }}
+        BOM: ${{ inputs.bom }}
+        ARGS: ${{ inputs.args }}
+        PY: ${{ steps.install.outputs.python }}
+      run: |
+        "$PY" -I - "$BOARD" "$BOM" "$ARGS" >> "$GITHUB_OUTPUT" <<'EOF'
+        import hashlib, pathlib, sys
+        board, bom, args = sys.argv[1:]
+        files = [pathlib.Path(p).read_bytes() if p and pathlib.Path(p).is_file() else p.encode() for p in (board, bom)]
+        if args.split():                           # without args, the key a run before them had
+            files.append(" ".join(args.split()).encode())
+        print("hash=" + hashlib.sha256(b"\0".join(files)).hexdigest()[:24])
+        EOF
+
+    - name: Restore the EasyEDA records (this repository's Actions cache)
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ runner.temp }}/jlcplace-easyeda
+        key: jlcplace-easyeda-${{ steps.key.outputs.hash }}
+        restore-keys: jlcplace-easyeda-
+
+    - name: Fetch the EasyEDA records the cache lacks (rate-limited)
+      id: fetch
+      shell: bash
+      env:
+        BOARD: ${{ inputs.board }}
+        BOM: ${{ inputs.bom }}
+        ARGS: ${{ inputs.args }}
+        PY: ${{ steps.install.outputs.python }}
+        JLCPLACE: ${{ steps.install.outputs.jlcplace }}
+        CACHE: ${{ runner.temp }}/jlcplace-easyeda
+      # the inline Python scripts run isolated (-I): a jlcplace.py or json.py in the caller's workspace, the current
+      # directory, must not shadow the real modules
+      run: |
+        # the BOM's codes too: JLC places what the BOM names, also where the board names another code (a BOM that
+        # cannot be read adds none: the check says what is wrong with it)
+        "$PY" -I - "$BOM" > "$RUNNER_TEMP/jlcplace-codes.txt" <<'EOF'
+        import sys
+        from jlcplace.cpl import read_bom
+        from jlcplace.pipeline import is_code
+        try:
+            codes = {r["lcsc"] for r in read_bom(sys.argv[1]) if is_code(r["lcsc"])} if sys.argv[1] else set()
+        except (OSError, ValueError):
+            codes = set()
+        print(" ".join(sorted(codes)))
+        EOF
+        # without the \r: Python on a Windows runner ends its line with \r\n, which bash would keep on the last code
+        # (and macOS's bash 3.2 turns a lone \r into an empty argument even when \r is in IFS)
+        read -r -a codes <<< "$(tr -d '\r' < "$RUNNER_TEMP/jlcplace-codes.txt")"
+        # the options of `args` that say how the board is read (the field its codes are in), as the check gets them
+        read -r -d '' -a extra <<< "$ARGS" || true
+        board_opts=()
+        for ((i = 0; i < ${#extra[@]}; i++)); do
+          case "${extra[i]}" in
+            --lcsc-field|--reader) board_opts+=("${extra[i]}" "${extra[i + 1]:-}"); i=$((i + 1)) ;;
+            --lcsc-field=*|--reader=*) board_opts+=("${extra[i]}") ;;
+          esac
+        done
+        set +e
+        "$JLCPLACE" fetch --cache "$CACHE" "${board_opts[@]}" "$BOARD" "${codes[@]}" \
+          | tee "$RUNNER_TEMP/jlcplace-fetch.txt"
+        code=${PIPESTATUS[0]}
+        set -e
+        # records downloaded now ("(fetched)", "not found (...; fetched)"): worth saving even when others failed
+        if grep -q 'fetched)' "$RUNNER_TEMP/jlcplace-fetch.txt"; then echo "new=true" >> "$GITHUB_OUTPUT"; fi
+        if [ "$code" = 0 ]; then
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        else
+          if [ "$code" = 2 ]; then                # records that could not be fetched: EasyEDA's doing
+            echo "::warning title=jlcplace::not every EasyEDA record could be fetched (is EasyEDA down or" \
+                 "rate-limiting the runner?): the check names the parts it could not simulate"
+          elif [ "$code" = 3 ]; then              # a board path or file it cannot read: the check reports it too
+            echo "::warning title=jlcplace::jlcplace fetch could not read its input (exit 3): the check says what" \
+                 "is wrong"
+          else
+            echo "::warning title=jlcplace::jlcplace fetch failed (exit $code): the check runs with the records" \
+                 "at hand"
+          fi
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # saved now, not at the end of the job: a red CPL fails the job, and the records are worth keeping all the same
+    - name: Save the EasyEDA records (this repository's Actions cache, never an artifact)
+      if: steps.restore.outputs.cache-hit != 'true' && steps.fetch.outputs.ok == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/jlcplace-easyeda
+        key: jlcplace-easyeda-${{ steps.key.outputs.hash }}
+
+    # a fetch cut short (EasyEDA rate-limits the runners: a board's records may take several runs) keeps what it got
+    # under a key of this run, which the next run restores (restore-keys) and goes on from
+    - name: Save the EasyEDA records fetched so far
+      if: steps.fetch.outputs.ok != 'true' && steps.fetch.outputs.new == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/jlcplace-easyeda
+        key: jlcplace-easyeda-${{ steps.key.outputs.hash }}-partial-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: Check the CPL
+      id: check
+      shell: bash
+      env:
+        BOARD: ${{ inputs.board }}
+        CPL: ${{ inputs.cpl }}
+        BOM: ${{ inputs.bom }}
+        GERBERS: ${{ inputs.gerbers }}
+        DB: ${{ inputs.db }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        ARGS: ${{ inputs.args }}
+        PY: ${{ steps.install.outputs.python }}
+        JLCPLACE: ${{ steps.install.outputs.jlcplace }}
+        CACHE: ${{ runner.temp }}/jlcplace-easyeda
+      run: |
+        out=$(mktemp -d "$RUNNER_TEMP/jlcplace-XXXXXX")
+        opts=(--cache "$CACHE" --fail-on "$FAIL_ON" --github-annotations --junit "$out/junit.xml"
+              --checklist "$out/checklist.md" --json "$out/results.json")
+        if [ -n "$BOM" ]; then opts+=(--bom "$BOM"); fi
+        if [ -n "$GERBERS" ]; then opts+=(--gerbers "$GERBERS"); fi
+        if [ -n "$DB" ]; then opts+=(--db "$DB"); fi
+        # split at every whitespace, newlines too (an `args: |` block), unglobbed; read stops at the end: status 1
+        read -r -d '' -a extra <<< "$ARGS" || true
+        set +e
+        "$JLCPLACE" check "$BOARD" "$CPL" "${opts[@]}" "${extra[@]}" 2> "$out/stderr.txt" | tee "$out/stdout.txt"
+        code=${PIPESTATUS[0]}
+        set -e
+        cat "$out/stderr.txt" >&2
+        {
+          echo "### jlcplace check: exit code $code"
+          echo
+          echo "~~~~text"
+          grep -v '^::' "$out/stdout.txt" || true
+          cat "$out/stderr.txt"
+          echo "~~~~"
+          if [ -s "$out/checklist.md" ]; then
+            printf '\n<details><summary>Preview checklist</summary>\n\n'
+            cat "$out/checklist.md"
+            printf '\n</details>\n'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+        {
+          echo "exit-code=$code"
+          echo "junit=$out/junit.xml"
+          echo "checklist=$out/checklist.md"
+          echo "json=$out/results.json"
+        } >> "$GITHUB_OUTPUT"
+        "$PY" -I - "$out/results.json" >> "$GITHUB_OUTPUT" <<'EOF'
+        import json, pathlib, sys
+        p = pathlib.Path(sys.argv[1])
+        if p.is_file() and p.stat().st_size:      # none when the check could not run (bad input)
+            d = json.loads(p.read_text(encoding="utf-8"))
+            s, found = d["summary"], [f["verdict"] for f in d.get("findings", [])]   # the origin, the Gerbers
+            print(f"red={s['red'] + found.count('red')}")
+            print(f"yellow={s['yellow'] + found.count('yellow')}")
+        EOF
+        exit "$code"

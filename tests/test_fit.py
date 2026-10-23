@@ -156,16 +156,23 @@ def grid(rows, cols, pitch=0.5, missing=(), d=0.25):
 def test_name_tokens_and_comparison():
     t = fit.name_tokens
     assert t("~{RESET}") == t("/RESET") == t("RESET#") == t("nRESET") == {"RESET"}
-    assert t("P0.18/nRESET") == {"P0.18", "RESET"} and t("GND(TEST)") == {"GND", "TEST"}
-    assert t("EP") == t("PAD") == t("THERMAL") == {"GND"}
+    assert t("P0.18/nRESET") == {"P0.18", "RESET", "P0.18NRESET"} and t("GND(TEST)") >= {"GND", "TEST"}
     assert t("DP") == {"D+"} and t("DM") == {"D-"} and t("EH") == t("SHIELD") == {"SHELL"}
     assert t("K") == t("C") == t("-") == {"CATHODE"} and t("A") == t("+") == {"ANODE"}
     assert t("1", "1") == t("~") == t("") == t("PIN3") == t("NC") == frozenset()
     assert t("A1", "A1") == frozenset() and t("A1", "1") == {"A1"}
+    # names that say where a pad is, not what it is: a regulator's tab is often its output
+    assert t("EP") == t("PAD") == t("THERMAL") == t("TAB") == frozenset() and t("GND/EP") == {"GND"}
     c = fit.compare_names
-    assert c(t("GND"), t("EP")) == 1 and c(t("VDD"), t("GND")) == -1
-    assert c(t("CC1"), t("CC2")) == 0 and c(t("DP1"), t("D+")) == 0      # an index apart: unknown, not a mismatch
+    assert c(t("GND"), t("EP")) == 0 and c(t("VDD"), t("GND")) == -1 and c(t("TAB"), t("VO")) == 0
+    assert c(t("CC1"), t("CC2")) == 0 and c(t("1IN+"), t("2IN+")) == 0  # numbered apart: unknown, not a mismatch
+    assert c(t("DP1"), t("D+")) == 1 and c(t("1IN+"), t("+")) == 1      # an index only one side has: the same pin
     assert c(t("SDA/SDI/SDO"), t("SDA")) == 1 and c(t(""), t("GND")) == 0
+    # the two libraries' vocabularies
+    for a, b in (("Input", "VI"), ("Output", "VO"), ("GND", "V-"), ("VSS", "V-"), ("VCC", "V+"), ("IN-", "-"),
+                 ("R-", "RK"), ("P0.00_XL1", "P0.00/XL1")):
+        assert c(t(a), t(b)) == 1, (a, b)
+    assert c(t("G"), t("GND")) == 0 and c(t("G"), t("S")) == -1 and c(t("D+"), t("D-")) == -1
     assert fit.norm_number(" 01 ") == "1" and fit.norm_number("a1") == "A1" and fit.norm_number("0") == "0"
 
 

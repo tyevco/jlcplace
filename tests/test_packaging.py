@@ -92,6 +92,11 @@ def test_ci_tests_what_the_package_claims():
 
     e2e = jobs["e2e"]
     steps = e2e["steps"]
+    # both jobs in KiCad's image run the unmarked PNG overlay test, and their skip gates allow no skip of it: the
+    # image has no browser, so they install cairosvg
+    for job in (kicad, e2e):
+        text = "\n".join(runs(job["steps"]))
+        assert "pip install cairosvg" in text and "import cairosvg" in text
     checkouts = {s["with"].get("repository") for s in steps if s.get("uses", "").startswith("actions/checkout")}
     assert "tyevco/dial-me-spinner" in checkouts
     assert "JLCPLACE_DIAL_ME_SPINNER" in "\n".join(runs(steps))
@@ -103,7 +108,9 @@ def test_ci_tests_what_the_package_claims():
     cache = re.search(r"--cache (\S+)", fetch["run"]).group(1)
     assert restore["with"]["path"] == save["with"]["path"] == cache
     assert fetch["continue-on-error"] is True and fetch["id"] == "fetch"
-    assert "steps.fetch.outcome == 'success'" in save["if"]
+    # what a fetch cut short got is saved too (EasyEDA rate-limits the runners): the step says so before it fails
+    assert "steps.fetch.outputs.new == 'true'" in save["if"] and "outcome" not in save["if"]
+    assert fetch["run"].index('echo "new=true"') < fetch["run"].index('exit "${code:-0}"')
     assert test["continue-on-error"] == "${{ steps.fetch.outcome == 'failure' }}"
     for job in jobs.values():
         for s in job["steps"]:

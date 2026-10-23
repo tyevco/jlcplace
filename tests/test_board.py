@@ -168,7 +168,7 @@ def compare_boards(a: Board, b: Board, max_err: float = 0.005) -> list:
             continue
         for qa, qb in zip(pa.pads, pb.pads):
             tag = f"{pa.ref}.{qa.number}"
-            for f in ("number", "shape", "kind", "copper", "net", "pin_name", "pin_type"):
+            for f in ("number", "shape", "kind", "copper", "cu", "net", "pin_name", "pin_type"):
                 if getattr(qa, f) != getattr(qb, f):
                     bad.append(f"{tag} {f}: {getattr(qa, f)!r} != {getattr(qb, f)!r}")
             for f in ("x", "y", "w", "h", "rr"):
@@ -442,7 +442,9 @@ def test_built_board_pad_kinds_and_copper(built):
         assert not npth.copper and conn.copper
         aperture = next(p for p in part.pads if p.kind == "smd" and p.number == "")
         assert not aperture.copper and aperture.shape == "roundrect"     # paste only
-        assert not pads["FAR"].copper                      # copper only on the far side of the part
+        assert not pads["FAR"].copper                      # copper only on the far side of the part ...
+        assert pads["FAR"].cu == (TOP if part.bottom else BOTTOM)          # ... which is where the Gerbers have it
+        assert (pads["1"].cu, pads["3"].cu, aperture.cu) == (part.layer, "both", "")
         assert (pads["FIB"].shape, pads["FIB"].w, pads["FIB"].copper, pads["FIB"].poly) == ("circle", 1.2, True, None)
 
 
@@ -717,6 +719,8 @@ def test_minimal_board(tmp_path):
     assert (q2.number, q2.kind, q2.copper) == ("", "npth", False)
     assert (q3.kind, q3.copper) == ("smd", False)                           # F.Cu only, on a bottom part
     assert (q4.kind, q4.copper, q4.net) == ("connect", True, "LATE")
+    # the outer copper each pad has on the board as placed: the Gerbers plot q3 on the top
+    assert (p1.cu, q1.cu, q2.cu, q3.cu, q4.cu) == (TOP, "both", "", TOP, BOTTOM)
 
 
 def test_legacy_module_format(tmp_path):
@@ -893,6 +897,32 @@ def test_custom_pad_from_primitives(tmp_path):
     # the line's body from x = -2 to the anchor at -0.5, less the part already in the ring (x < -3 + sqrt(1.21 - y^2))
     overlap = 0.2 * 0.1 - 2 * 0.1 ** 3 / 3 / (2 * 1.1)
     assert area(pad.poly) == pytest.approx(1 + 1.5 + ring + 1.5 * 0.2 - overlap, rel=2e-3)
+
+
+def test_filled_graphics_on_the_paste_layer_are_paste_apertures(tmp_path):
+    """A footprint's filled fp_rect, fp_poly and fp_circle on its own paste layer are stencil openings, which KiCad
+    plots as it plots a paste-only pad: apertures after the pads (number "", no copper), in the library frame. An
+    outline, another layer and the far side's paste are not."""
+    text = """(kicad_pcb (version 20241229)
+  (footprint "L:M" (layer "B.Cu") (at 10 20 90) (property "Reference" "U1")
+    (pad "1" smd rect (at 1 2 90) (size 1 1) (layers "B.Cu" "B.Mask"))
+    (fp_rect (start 0.5 1.5) (end 1.5 2.5) (stroke (width 0) (type solid)) (fill yes) (layer "B.Paste"))
+    (fp_poly (pts (xy 0 0) (xy 1 0) (xy 0 1)) (stroke (width 0) (type solid)) (fill solid) (layer "B.Paste"))
+    (fp_circle (center -2 1) (end -1.5 1) (stroke (width 0) (type solid)) (fill yes) (layer "B.Paste"))
+    (fp_rect (start 3 3) (end 4 4) (stroke (width 0.1) (type solid)) (fill no) (layer "B.Paste"))
+    (fp_rect (start 3 3) (end 4 4) (stroke (width 0) (type solid)) (fill yes) (layer "F.Paste"))
+    (fp_poly (pts (xy 0 0) (xy 1 0) (xy 0 1)) (stroke (width 0) (type solid)) (fill yes) (layer "B.SilkS"))))
+"""
+    part = jb.load_board_sexpr(write_board(tmp_path, text)).parts[0]
+    pad, *apertures = part.pads
+    assert [(p.number, p.kind, p.copper, p.cu, p.shape) for p in apertures] == [("", "smd", False, "", "custom")] * 3
+    # stored as placed (flipped): library = (x, -y), as for a pad; the window is where the pad is
+    rect, tri, disc = apertures
+    assert (rect.x, rect.y, rect.w, rect.h) == (pad.x, pad.y, 1.0, 1.0) == (1.0, -2.0, 1.0, 1.0)
+    assert (tri.x, tri.y) == (0.5, -0.5) and geom.pad_contains(tri, (0.2, -0.2))
+    assert not geom.pad_contains(tri, (0.8, -0.8))
+    assert (disc.x, disc.y, disc.w) == (pytest.approx(-2.0), pytest.approx(-1.0), pytest.approx(1.0, abs=1e-3))
+    assert part.copper_pads() == [pad]
 
 
 def test_missing_files_raise(tmp_path):
