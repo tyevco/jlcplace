@@ -756,9 +756,10 @@ def origin_lines(run) -> list[(verdict, text)]
   mismatch: ..."). `cpl` with a red finding and no red row says "not written: the origin is red". `--overlay DIR`
   (check, cpl): `report.write_overlays` with the Gerbers' outline (else the board's Edge.Cuts), the Gerbers' (0, 0),
   and the findings and offset hints as notes; PNGs when a renderer is at hand, else a note on stderr; a renderer that
-  fails is a warning, a directory that cannot be written bad input (after the other outputs). `-v` is taken before or after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl`
-  and `show` warn on stderr when `--db` does not exist (`fit` and `confirm` create it); a `--db` that exists and is not
-  a directory is bad input. Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch:
+  fails is a warning, a directory that cannot be written bad input (after the other outputs). `-v` is taken before or
+  after the command; `--origin -5,3` is read as `--origin=-5,3`. `check`, `cpl` and `show` warn on stderr when `--db`
+  does not exist (`fit` and `confirm` create it); a `--db` that exists and is not a directory is bad input.
+  Exit codes: 0 clean, 1 yellow (rows or BOM issues) with --fail-on yellow, 2 red (fetch:
   records that could not be fetched), 3 bad input (argparse errors, unreadable or unwritable files and database files
   included; when one output cannot be written the others still are), 4 an internal error (the traceback is printed,
   unless printing it fails too, as when memory ran out): no crash exits 1; 130 interrupted (ctrl-C, "jlcplace:
