@@ -29,6 +29,7 @@ bug, 130, 141) are in [Exit codes and environment](../reference/environment).
 | `wrong-pad` | red; [yellow](#wrong-pad) against a fitted correction | EasyEDA pads land on copper, but on other pins' nets | fix the Rotation: a part turned 180 degrees, or a polar part reversed |
 | `renumbered` | green when the difference is harmless; else the correction's verdict | EasyEDA pads land on KiCad pads of other numbers, and that is accepted | nothing when green; otherwise settle the correction |
 | `offset` | yellow | every pad lands, but the row is off where a known correction puts the part | compare the row with the one jlcplace writes |
+| `verified-wrong` | red | the row is the stored correction's, and JLC's preview, the assembled board or a person showed that correction wrong (`jlcplace confirm --failed`) | fix the correction and confirm it again ([below](#verified-wrong)) |
 | `not-simulated` | yellow for a non-polar two-pad part whose row point is on its pads; red otherwise | no EasyEDA footprint, and no stored correction | `jlcplace fetch` the record; for a part EasyEDA does not know, look in JLC's preview |
 | `no-row` | red | JLC assembles the part (it has an LCSC code and is placed) but the CPL has no row for it | add the row, or take the part out of the assembly |
 | `not-on-board` | red | the row's reference is not on the board | remove the row, or fix the reference |
@@ -153,6 +154,18 @@ pad lying across its land). The first message gives both rows. Use the row jlcpl
 yours differs. A row more than 0.05 mm or 0.5 degrees off, but within those limits, stays green with a message,
 `differs from the row jlcplace writes (...)`.
 
+### `verified-wrong` {#verified-wrong}
+
+The row is where the stored correction puts the part (within the `offset` limits), and the latest verification of
+that correction failed: `verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at the wrong corner): the row
+is the stored correction's; fix the correction (...) and confirm it again`. Red whatever the pads land on: what was
+wrong may be the footprint's numbering, or a body its pads do not orient. The parts that share the entry (one code
+on one footprint) are red alike, and `jlcplace cpl --db` writes no CPL with such a row unless `--force`. Record the
+row that is right (the presses that put it right in the preview, or the correction typed in with `--rot --dx --dy`),
+then confirm it in the preview again; a later verification of the same row that went right ends it too. A row away
+from that correction is yellow, with `the stored correction was verified wrong by ...; this row is ... from its row`:
+it is not the row that was wrong, but nothing verified vouches for it either.
+
 ### `not-simulated`
 
 There is nothing to place: no EasyEDA footprint for the code, and no stored correction. The message says why and
@@ -255,7 +268,7 @@ A correction also has a status, from the [correction database](../guide/database
 | `board-verified` | someone confirmed it on an assembled board (`jlcplace confirm --source board`) |
 | `preview-verified` | someone confirmed it in JLC's preview (`--source preview`) |
 | `manual` | a person decided it or typed it in (`--source manual`); a red correction accepted this way becomes yellow |
-| `auto` | fitted; also a correction whose verification failed (`--failed`), which is then red |
+| `auto` | fitted; also a correction whose verification failed (`--failed`), which is then red, and its row `verified-wrong`, until other numbers replace it or a later verification of it goes right |
 
 When EasyEDA changes a footprint, the stored entries for it go stale: the part is fitted again, and a refit that
 differs from the stored correction is at best yellow (`the refit differs: check it in JLC's preview, then confirm it

@@ -543,7 +543,7 @@ footprints:
 | `verdict` | `green`, `yellow`, `red` or `verified` |
 | `reasons` | why: the fit's findings first, then what later runs added ("accepted manually (you): ...", "verification failed (preview, you)", "taken from the row of U3 in board-CPL.csv ...") |
 | `status` | `auto` (fitted), `manual` (decided or typed in), `preview-verified` (right in JLC's preview) or `board-verified` (right on an assembled board) |
-| `verifications` | one object per `confirm`: `by`, `date` (YYYY-MM-DD), `source` (`manual`, `preview` or `board`), `ok` (`false` with `--failed`), `board` (the board's file name), `ref`, `layer`, `presses` (`{"space": n, "right": n, "up": n}` or `null`) and `note` |
+| `verifications` | one object per `confirm`: `by`, `date` (YYYY-MM-DD), `source` (`manual`, `preview` or `board`), `ok` (`false` with `--failed`), `board` (the board's file name), `ref`, `layer`, `presses` (`{"space": n, "right": n, "up": n}` or `null`), `note` and `correction` (the numbers it was of: `rot`, `dx`, `dy`, `mirror`; older entries lack it). When the latest verification of the entry's numbers failed, the entry is red and its rows are `verified-wrong` |
 | `tool` | the jlcplace version that stored the entry |
 | `fitted` | the date the entry's correction was stored |
 
@@ -714,7 +714,7 @@ One result, U1, turned 180 degrees in the bad CPL:
 | field | what it is |
 |---|---|
 | `ref`, `lcsc`, `layer` | the reference, the LCSC code simulated, and the side of the part on the board (of the row when the part is not on the board) |
-| `status` | `ok`, `offset`, `off-copper`, `wrong-pad`, `renumbered`, `not-simulated`, `no-row`, `not-on-board`, `layer-mismatch`, `not-placed`, `duplicate` or `duplicate-ref` (see [Verdicts and statuses](../concepts/verdicts)) |
+| `status` | `ok`, `offset`, `off-copper`, `wrong-pad`, `reversed`, `renumbered`, `pinout`, `verified-wrong`, `not-simulated`, `no-row`, `not-on-board`, `layer-mismatch`, `not-placed`, `duplicate` or `duplicate-ref` (see [Verdicts and statuses](../concepts/verdicts)) |
 | `verdict` | `red`, `yellow`, `green` or `verified` |
 | `messages` | what the check found, most important first |
 | `uncovered` | KiCad pads that no EasyEDA pad lands on |

@@ -1057,6 +1057,81 @@ def test_a_preview_confirmation_records_the_uploaded_row(env, capsys):
     assert code == 0 and entry_rots(db) == [(180.0, "preview-verified")]
 
 
+def test_a_failed_verification_makes_its_row_red_until_the_correction_is_fixed(env, capsys, monkeypatch):
+    """field: `confirm --failed` changed nothing: `check --db` still showed the row the preview had shown wrong
+    green, and `cpl --db` wrote that correction again with exit 0. Its row is red, from the database alone too (the
+    parts that share the entry with it), and `cpl` writes it only with --force, saying why; a later verification of
+    the same row that went right ends it."""
+    monkeypatch.setattr("jlcplace.db._today", lambda: "2026-10-22")
+    env.make()
+    db = env.tmp / "db"
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    uploaded = Path(env.out).read_text(encoding="utf-8")
+    confirm = ["confirm", env.board, "--ref", "U1", "--db", db, "--by", "ann", "--cpl", env.out]
+    code, out, err = run(capsys, *confirm, "--source", "preview", "--failed", "--note", "pin 1 at the wrong corner",
+                         *offline(env))
+    assert code == 0 and out.splitlines()[1] == (
+        "jlcplace: U1: its stored correction is verified wrong by JLC's preview on 2026-10-22 (U1, ann: pin 1 at the "
+        "wrong corner): `check --db` holds its row red, and `cpl --db` does not write it (unless --force), until the "
+        "correction is fixed and confirmed again"), out + err
+    for cache in (env.cache, env.empty):                 # with the record, and from the database alone
+        code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env, cache), "--json", "-")
+        res = {r["ref"]: r for r in json.loads(out)["results"]}
+        assert code == 2 and {ref: (r["status"], r["verdict"]) for ref, r in res.items() if r["verdict"] == RED} == \
+            {"U1": ("verified-wrong", RED), "U2": ("verified-wrong", RED)}, cache
+        assert res["U2"]["messages"][0].startswith("verified wrong by JLC's preview on 2026-10-22 (U1, ann: pin 1 at "
+                                                   "the wrong corner): the row is the stored correction's; fix")
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    assert code == 2 and out.splitlines()[-1] == (
+        f"jlcplace: {env.out} not written: the rows above are red; the stored corrections of U1, U2 were verified "
+        f"wrong: fix them and confirm again (--force writes it anyway); the existing {env.out} is left unchanged"), out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env), "-q")
+    assert out.strip() == (f"jlcplace: {env.out} not written: U1, U2 are red; their stored corrections were verified "
+                           f"wrong: fix them and confirm again (--force writes it anyway); the existing {env.out} is "
+                           f"left unchanged")
+    assert Path(env.out).read_text(encoding="utf-8") == uploaded
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.tmp / "forced.csv", "--db", db, *offline(env), "--force")
+    assert code == 2 and "red rows included (--force)" in out
+    # the assembled board was right after all: a verification of the same row that went right ends it
+    assert run(capsys, *confirm, "--source", "board", *offline(env))[0] == 0
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+    assert code == 0 and {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == VERIFIED
+
+
+def test_a_verified_bottom_part_settles_the_bottom_reading(env, capsys):
+    """field: a part verified on the assembled board kept its 'bottom reading' item, which asks how JLC reads a
+    bottom rotation: the board has answered that. A reading under which a part shown right would have moved is ruled
+    out for every part; a part that only shares the entry of the verified one, at another angle, rules out nothing."""
+    env.make(sot("U3", BOTTOM, 130.0, 70.0, 30.0), sot("U4", BOTTOM, 125.0, 60.0, 0.0))
+    db = env.tmp / "db"
+    run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+
+    def checklist():
+        code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", "-")
+        return {(i["category"], i["ref"]): i for i in json.loads(out)["checklist"]}
+
+    items = checklist()
+    assert set(items) == {("bottom reading", "U2"), ("bottom reading", "U4")}
+    assert items["bottom reading", "U2"]["first"] and items["bottom reading", "U2"]["refs"] == ["U2", "U3"]
+    assert "record it (`jlcplace confirm --source preview`, or `--source board` on the assembled board) and the " \
+           "other bottom parts' items go" in items["bottom reading", "U2"]["what"]
+    # U4 (row angle 0) moves only under the two +180 readings: verified on the board, it rules them out; U2 and U3,
+    # verified through its entry at another angle, keep the reading that turns them by 2A
+    confirm = ["confirm", env.board, "--db", db, "--by", "ann", "--cpl", env.out, *offline(env)]
+    assert run(capsys, *confirm, "--ref", "U4", "--source", "board")[0] == 0
+    items = checklist()
+    assert set(items) == {("bottom reading", "U2")}
+    what = items["bottom reading", "U2"]["what"]
+    assert "it moves under every other reading still open" in what and "as ccw-from-top, pin 1 would" in what
+    assert "ccw-from-top+180 and jlc-2022+180 are ruled out by U4, verified on the assembled board" in what
+    assert "as jlc-2022+180" not in what
+    # U2, shown right in JLC's preview, moves under every other reading: none is left, for any bottom part; and it was
+    # seen at its odd angle, U3 (folded into U2's item before) was not
+    assert run(capsys, *confirm, "--ref", "U2", "--source", "preview")[0] == 0
+    items = checklist()
+    assert set(items) == {("odd angle", "U3")} and items["odd angle", "U3"]["refs"] == ["U3"]
+
+
 def test_a_preview_or_board_confirmation_needs_the_uploaded_cpl(env, capsys):
     """geo-1: what JLC showed is the uploaded row, which need not be jlcplace's correction: preview and board
     confirmations, and presses, name the CPL."""

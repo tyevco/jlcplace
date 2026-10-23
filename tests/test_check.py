@@ -286,6 +286,37 @@ def test_verified_correction_makes_a_matching_row_verified():
     assert check_row(part, turned(row, 180), ee, ORIGIN, corr=corr).verdict == RED
 
 
+def test_the_row_of_a_correction_verified_wrong_is_red():
+    """A failed verification changed nothing: the row JLC's preview showed wrong landed every pad on its own number
+    against the red entry, so it stayed green (and `cpl` wrote it again). Its row is red, saying by what and when it
+    was found wrong and what to do; a row away from it is yellow, since nothing verified vouches for it either."""
+    part = sot23_6()
+    fitted = Correction(rot=90.0, verdict=GREEN, reasons=["fits by pad numbers: 6/6 matched"])
+    ee, row = ee_for(part, fitted), row_for(part, fitted)
+    failed = dataclasses.replace(fitted, verdict=RED, reasons=fitted.reasons + [
+        "verification failed (preview, ann): pin 1 at the wrong corner"], verifications=[
+        {"by": "ann", "date": "2026-10-22", "source": "preview", "ok": False, "board": "b.kicad_pcb", "ref": "U1",
+         "layer": TOP, "presses": None, "note": "pin 1 at the wrong corner",
+         "correction": {"rot": 90.0, "dx": 0.0, "dy": 0.0, "mirror": False}}])
+    assert failed.failure is not None
+    res = check_row(part, row, ee, ORIGIN, corr=failed)
+    assert (res.status, res.verdict) == ("verified-wrong", RED)
+    assert res.messages[0] == ("verified wrong by JLC's preview on 2026-10-22 (U1, ann: pin 1 at the wrong corner): "
+                               "the row is the stored correction's; fix the correction (`jlcplace confirm` with the "
+                               "presses that put the part right in the preview, or --rot/--dx/--dy) and confirm it "
+                               "again")
+    # a few hundredths off it is still that row; half a millimetre off (on the pads all the same) is another row
+    assert check_row(part, turned(row, dx=0.04), ee, ORIGIN, corr=failed).status == "verified-wrong"
+    res = check_row(part, turned(row, dx=0.5), ee, ORIGIN, corr=failed)
+    assert (res.status, res.verdict) == ("ok", YELLOW)
+    assert "the stored correction was verified wrong by JLC's preview on 2026-10-22" in res.messages[0]
+    assert "this row is 0.500 mm and 0 deg from its row: look at it in JLC's preview" in res.messages[0]
+    # a later verification of the same numbers that went right ends it
+    ok = dataclasses.replace(failed, verdict=VERIFIED, status="board-verified", verifications=failed.verifications + [
+        {**failed.verifications[0], "source": "board", "ok": True, "note": ""}])
+    assert ok.failure is None and check_row(part, row, ee, ORIGIN, corr=ok).verdict == VERIFIED
+
+
 # ------------------------------------------------------------------------------------------------------- readings
 
 def test_alternative_readings_turn_bottom_parts_about_the_row_point():

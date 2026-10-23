@@ -423,6 +423,12 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   from a correction that is not red, with every pad on copper, it is yellow, status "offset", the message first, and
   so is a row a quarter turn (45 to 135 deg) from it whose pads all land as the correction puts them (alike lands:
   one land, whose long pad would lie across it); a row matching a verified correction's expected row is VERIFIED.
+  A correction verified wrong (`corr.failure`): a row within those offset limits of its expected row is red, status
+  "verified-wrong" (an ok or renumbered row; another status keeps its own), whatever its pads land on, the message
+  first: "verified wrong by JLC's preview on 2026-10-22 (U3, ann: pin 1 at the wrong corner): the row is the stored
+  correction's; fix the correction (...) and confirm it again" (`failure_text`: by JLC's preview, the assembled board
+  or a manual check); a row further off is yellow ("the stored correction was verified wrong by ...; this row is D mm
+  and A deg from its row: look at it in JLC's preview, then record it").
 * Pin names (`_pinout`): with the EasyEDA record (not a proxy) and every pad on copper, the symbol's pin names
   through the row are compared with the KiCad pin functions of the pads they land on (`parts.pin_diffs`), whatever
   the correction says. Red, status "pinout" (the message first): names permuted ("swapped") with no placement known
@@ -453,8 +459,8 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   the CPL list it: JLC places it (it never sees KiCad's attributes); untick ..."). A row for a part with no code is
   checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
-* Statuses: ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout | not-simulated | no-row |
-  not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref.
+* Statuses: ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout | verified-wrong | not-simulated |
+  no-row | not-on-board | layer-mismatch | not-placed | duplicate | duplicate-ref.
 
 ## cpl.py — read and write CPL / BOM files
 
@@ -496,7 +502,8 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 ```
 * File `<dir>/<code>.json`: `{"lcsc", "entries": [{ee: {key, title}, kicad: {fpid, pad_hash}, correction: {rot, dx,
   dy, mirror}, fit: {method, rms, matched, score, alternatives (scalars only), doubt?, polar?}, verdict, reasons,
-  status, verifications: [{by, date, source, ok, board, ref, layer, presses, note}], tool, fitted}]}`; `ee.key` is
+  status, verifications: [{by, date, source, ok, board, ref, layer, presses, note, correction}], tool, fitted}]}`
+  (a verification's `correction`: the numbers it was of, rot, dx, dy, mirror; older records lack it); `ee.key` is
   `parts.ee_key`, `kicad.pad_hash` is `parts.kicad_hash` (pads and pin functions), `ee.title` the EasyEDA
   footprint's title (a package name, for people reading the file). Atomic writes, sorted keys, 1-space indent,
   trailing newline. `jlcplace fit --db` does not let a second part with the same keys and other numbers replace the
@@ -506,12 +513,18 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 * `lookup`: board-verified > preview-verified > manual > auto, then the later entry; "" (in the call or the entry)
   matches any. Entries for the pad hash but none for the ee key: the strongest is returned with status "stale",
   verdict red, reason "footprint changed since verified"; the caller refits (pipeline: same numbers -> the refit
-  stands, noted; different -> at best yellow). The returned Correction carries the entry's own keys.
-* `upsert`: the same numbers keep the stored status, verifications and verified verdict; different numbers never
+  stands, noted; different -> at best yellow). The returned Correction carries the entry's own keys and
+  `verifications`, those of its numbers (a record's `correction` equal to them; a record without one counts, a failed
+  one only while the entry still gives its "verification failed (...)" reason); `Correction.failure` = the latest of
+  them when it failed (verified wrong), and then the verdict is red.
+* `upsert`: the same numbers keep the stored status, verifications and verified verdict, and a failure of those
+  numbers (verdict red, its "verification failed" reason): a refit does not make them right; different numbers never
   replace a stronger status (ValueError).
 * `confirm`: ok=True raises the status to the source's; board/preview make the verdict VERIFIED; a red entry
   confirmed manually becomes yellow with the reason "accepted manually (by): note". ok=False: status auto, verdict
-  red. A verification is of the row that was uploaded: `correction` is that row's (`convention.row_correction`),
+  red, verified wrong (`failure`) until other numbers replace the entry's or a later verification of them is ok;
+  every verification records the entry's numbers after it (`correction`). A verification is of the row that was
+  uploaded: `correction` is that row's (`convention.row_correction`),
   and when its numbers differ from the entry's it replaces them (with its reasons and verdict; the status starts
   again from auto), except over a preview- or board-verified entry no weaker than the source (ValueError). Presses
   are recorded with the verification and need `correction`: they are never added to the stored numbers.
@@ -607,14 +620,20 @@ def origin_lines(run) -> list[(verdict, text)]
   row; left out when the row is green or verified and not `needs_preview`; its reasons the preview can settle shown
   first), not simulated (a part with a code: JLC places no other), bottom reading (convention-sensitive, said in pins
   with `moves_text`: "as ccw-from-top or ccw-from-top+180, pin 1 would land off copper; as jlc-2022+180, pins 1 and 2
-  would swap"), odd angle (row rotation not a multiple of 90). A part is one item, under its first category; its other
+  would swap"; `ruled_out(run)`: a reading under which a bottom row verified itself (`_seen`: verdict VERIFIED and an ok
+  preview or board verification of its numbers for this ref, side and board file stem) would move is ruled out for
+  every part: a part that moves only under ruled-out readings has no item, the others leave them out of the pins and
+  say "ccw-from-top+180 and jlc-2022+180 are ruled out by U4, verified on the assembled board"), odd angle (row rotation
+  not a multiple of 90; not for a row verified itself). A part is one item, under its first category; its other
   categories are `also` and their notes follow "; also " in `what`. Alike parts are one item, `refs` naming them all and
   `ref` the one to look at: odd angle per (code, side, row verdict), `ref` the part furthest from a multiple of 90,
   `rotation` None; bottom reading per (code, side, verdict, rotation, what); uncertain correction per (code, side,
   verdict, what); never a not-simulated row or a part without a code. `first`: the bottom-reading item of a green row
-  whose pins move under every other reading (the most of its pads off copper under each, then the most pads), `what`
-  starting "look at this one first": it settles the reading for every bottom part. Sorted by category, then `first`, row
-  verdict (red first), the correction's doubt (polarity, names, orientation), natural ref.
+  whose pins move under every other reading not ruled out (the most of its pads off copper under each, then the most
+  pads), `what` starting "look at this one first" and saying that recording it (`confirm --source preview` or
+  `--source board`) takes the other bottom parts' items away: it settles the reading for every bottom part. Sorted
+  by category, then `first`, row verdict (red first), the correction's doubt (polarity, names, orientation), natural
+  ref.
 
 ## report.py and cli.py
 
@@ -662,7 +681,8 @@ def origin_lines(run) -> list[(verdict, text)]
   [--cache] [--origin] [--reading] [--fail-on red|yellow] [--report] [--overlay DIR] [--json PATH|-] [--junit]
   [--checklist .md|.csv] [--github-annotations] [--lcsc-field]... [--reader] [--units] [--fixed-cpl CSV] [-q]`; `cpl
   BOARD -o CPL [...] [--force]` (writes, checks the written file, keeps no file when red unless --force: an existing CPL
-  is left unchanged and the note says so, under -q naming the red refs; the reports of a run that wrote nothing name no
+  is left unchanged and the note says so, under -q naming the red refs, and naming the refs whose stored correction
+  was verified wrong, "fix it and confirm again"; the reports of a run that wrote nothing name no
   CPL, "the rows jlcplace would write"; `-o -` is bad input; parts without a footprint or entry get the fallback row);
   `fit BOARD [--ref]... [--db] [--json]`; `fetch [BOARD|CODE]... [--bom CSV] [--refresh]` (the codes of the boards'
   parts a CPL can get placed, the codes given, and with --bom every LCSC code of the BOM; none of them: bad input);
@@ -672,10 +692,12 @@ def origin_lines(run) -> list[(verdict, text)]
   correction recorded, refs of one entry must agree on it, a reference two placed parts carry is refused, the part's
   EasyEDA record must be at hand (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they
   were verified with; EasyEDA's own not-found answer gives an entry with no EasyEDA key), and everything is checked
-  before anything is written); `show CODE | BOARD --ref REF [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`,
-  `fit`, `show` and `confirm` read only the record cache (the default, also `--offline`) unless `--online` is given;
-  `check`, `cpl` and `fit` then name the codes the cache lacked and say how to fetch them (the `jlcplace fetch BOARD
-  [--bom BOM]` to type, with the --lcsc-field, --reader and --cache given): after the summary, or, when the cache lacks
+  before anything is written; a part whose entry is then verified wrong gets a line saying that `check --db` holds its
+  row red and `cpl --db` does not write it until the correction is fixed and confirmed again); `show CODE | BOARD --ref
+  REF [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache
+  (the default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache
+  lacked and say how to fetch them (the `jlcplace fetch BOARD [--bom BOM]` to type, with the --lcsc-field, --reader and
+  --cache given): after the summary, or, when the cache lacks
   at least `cli.LEAD_SHARE` (90 %) of the codes a `check` or `cpl` looks up, right after its header (`Run.lead`: "none
   of the 2 codes JLC places (C1001, C1002) has an EasyEDA record in the cache DIR, so the rows below are checked
   without JLC's footprints ..."; the rows and the exit code as they are); `check` and `cpl` print
@@ -769,3 +791,5 @@ its steps with a local runner.
   on such an entry says it changed nothing). An entry stored before the pinout rule keeps its old yellow verdict until
   `jlcplace fit --db` refits it (the check of the row, with the record, is red anyway).
 * The action is tested with a local runner on Linux only: not on GitHub's runners, Windows (Git Bash) or macOS.
+* Verifications recorded before they held their numbers count as of the entry's numbers (a failed one while its reason
+  is still in the entry): one of older numbers that a later verification replaced can still settle a bottom reading.

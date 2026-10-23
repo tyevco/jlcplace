@@ -34,7 +34,7 @@ from pathlib import Path
 
 from . import __version__, geom, report
 from .board import load_board, save_snapshot
-from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row
+from .check import ANGLE_TOL, ROW_TOL, check_bom, check_row, failure_text
 from .convention import BOTTOM_READINGS, DEFAULT, cpl_row_for, norm_angle, row_correction
 from .cpl import atomic_write, jlc_places, natural_key, read_bom, read_cpl, rows_for_board, write_cpl
 from .db import ROW_REASON, SOURCES, STATUS_RANK, CorrectionDB, DBError, presses_to_row
@@ -409,11 +409,15 @@ def _no_dash(args, what: str) -> None:
 _FINDING_WORDS = {"origin": "the origin", "gerbers": "the Gerbers"}
 
 
+def _shown(refs) -> str:
+    """'D1', 'D1, U3 and 2 more'."""
+    return ", ".join(refs[:6]) + (f" and {len(refs) - 6} more" if len(refs) > 6 else "")
+
+
 def _refs(results) -> str:
     """'D1 is red', 'D1, U3 and 2 more are red'."""
     refs = list(dict.fromkeys(r.ref for r in results))
-    shown = ", ".join(refs[:6]) + (f" and {len(refs) - 6} more" if len(refs) > 6 else "")
-    return printable(f"{shown} {'is' if len(refs) == 1 else 'are'} red")
+    return printable(f"{_shown(refs)} {'is' if len(refs) == 1 else 'are'} red")
 
 
 def cmd_cpl(args) -> int:
@@ -447,6 +451,15 @@ def cmd_cpl(args) -> int:
             bad = [r for r in run.results if r.verdict == RED]
             if bad:
                 why = _refs(bad) if args.quiet else "the rows above are red"
+                wrong = list(dict.fromkeys(r.ref for r in bad if r.status == "verified-wrong"))
+                many = len(wrong) > 1
+                if wrong:
+                    # the database's own numbers, shown wrong in the preview or on the board: --db writes them again
+                    whose = (f"{'their' if many else 'its'} stored correction{'s were' if many else ' was'}"
+                             if args.quiet and len(wrong) == len({r.ref for r in bad}) else
+                             f"the stored correction{'s' if many else ''} of {printable(_shown(wrong))} "
+                             f"{'were' if many else 'was'}")
+                    why += f"; {whose} verified wrong: fix {'them' if many else 'it'} and confirm again"
             else:                                  # every row lands, but not on the board JLC is sent
                 what = list(dict.fromkeys(_FINDING_WORDS.get(f.status, f.status) for f in run.findings
                                           if f.verdict == RED))
@@ -718,6 +731,10 @@ def cmd_confirm(args) -> int:
             row = f"; row X {x:.4f} Y {y:.4f} rot {a:g}"
         was = f"; replaces the {replaced.status} correction {describe(replaced)}" if replaced is not None else ""
         print(printable(f"{ref} {part.lcsc}: {c.status}, {c.verdict}: {describe(c)}{row}{was} ({db.file(part.lcsc)})"))
+        if c.failure is not None:
+            print(printable(f"jlcplace: {ref}: its stored correction is {failure_text(c.failure)}: `check --db` "
+                            f"holds its row red, and `cpl --db` does not write it (unless --force), until the "
+                            f"correction is fixed and confirmed again"))
         if args.source == "manual" and not args.failed and STATUS_RANK.get(c.status, 0) > STATUS_RANK["manual"] \
                 and isinstance(ee, EEFootprint) and not c.mirror:
             res = check_row(part, CplRow(ref, x, y, part.layer, a), ee, board.origin, corr=c, reading=args.reading,
@@ -953,7 +970,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--source", required=True, choices=[k for k in SOURCES if "-" not in k],
                    help="what was checked: manual (datasheet), preview (JLC's preview) or board (assembled)")
     s.add_argument("--note", default="", help="free text stored with the verification")
-    s.add_argument("--failed", action="store_true", help="the check showed the placement wrong (marks it red)")
+    s.add_argument("--failed", action="store_true",
+                   help="the check showed the placement wrong: its row is red in `check --db` and `cpl --db` until "
+                        "the correction is fixed and confirmed again")
     s.add_argument("--space", type=int, default=0, help="space presses in JLC's preview (90 deg ccw each)")
     s.add_argument("--right", type=int, default=0, help="right-arrow presses (negative: left)")
     s.add_argument("--up", type=int, default=0, help="up-arrow presses (negative: down)")

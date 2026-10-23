@@ -73,7 +73,7 @@ Open the order's placement preview at JLC and look at each part below. Tick it w
 
 ## Bottom reading
 
-- [ ] **J1** (C160411, bottom, rot 120): look at this one first: it moves under every other reading, so it shows how JLC reads the bottom side; when it sits right, the other bottom parts follow. If JLC read the bottom rotation another way: as ccw-from-top or ccw-from-top+180 or jlc-2022+180, pin 1 would land off copper (14 pins move); also rotation 120 is not a multiple of 90
+- [ ] **J1** (C160411, bottom, rot 120): look at this one first: it moves under every other reading, so it shows how JLC reads the bottom side; when it sits right, record it (\`jlcplace confirm --source preview\`, or \`--source board\` on the assembled board) and the other bottom parts' items go. If JLC read the bottom rotation another way: as ccw-from-top or ccw-from-top+180 or jlc-2022+180, pin 1 would land off copper (14 pins move); also rotation 120 is not a multiple of 90
 - [ ] **J40** (C160404, bottom, rot 138): if JLC read the bottom rotation another way: as ccw-from-top or jlc-2022+180, pin 1 would land off copper (6 pins move); as ccw-from-top+180, pin 1 would land off copper (5 pins move); also rotation 138 is not a multiple of 90
 - [ ] **U10** (C2688382, bottom, rot 235): if JLC read the bottom rotation another way: as ccw-from-top or ccw-from-top+180, pin 1 would land off copper (61 pins move); as jlc-2022+180, pin 2 would sit on pad 34 (57 pins move); also rotation 235 is not a multiple of 90
 ...
@@ -131,9 +131,11 @@ its pin 2 would land on KiCad pad 34.
 The reading is one question for the whole board, and the first item answers it. **Look at J1 first.** Under every
 other reading J1 would sit off its pads, with 13 or 14 of its 14 pads off copper, which is easy to see. If J1 sits on
 its pads with pin 1 where the board wants it, JLC reads the bottom side as jlcplace assumed, and the other bottom
-parts follow. The others
-remain on the list so that you can look at them too. Parts of one code at one rotation share an item (U40 and U41)
-because they move alike.
+parts follow. Record it (see [A part that was right in the preview](#a-part-that-was-right-in-the-preview)): a
+reading under which a part verified in the preview or on the assembled board would have moved is ruled out, for every
+part, so once J1 is verified the bottom reading items go. A part verified at a reading that does not move it rules
+out only the readings that do; the items that remain say which readings are ruled out, and by which part. Parts of
+one code at one rotation share an item (U40 and U41) because they move alike.
 
 ::: warning If J1 is not on its pads
 Then JLC reads bottom rotations another way than jlcplace assumed, and every bottom row on the board is in doubt. Do
@@ -214,15 +216,16 @@ jlcplace check dial-me-spinner-main.kicad_pcb dial-me-spinner-main-CPL-JLCPCB.cs
 ```text
 jlcplace 0.1.0: dial-me-spinner-main.kicad_pcb (sexpr, 209 parts, origin aux 100, 100) vs dial-me-spinner-main-CPL-JLCPCB.csv (184 rows), bottom reading jlc-2022
 184 results: 0 red, 0 yellow, 181 green, 3 verified
-Preview checklist (11 items, 98 parts): look at these in JLC's placement preview
-  bottom reading  J1 (look at it first: it settles the bottom reading), J40, U10, U11, U12, U30, U32, U40 U41, BZ1
-  odd angle       C107 of C102..C112 C114..C124 C126..C136 C138..C148 (C1525, 44 parts at 8 to 353 deg: look at C107)
-                  D107 of D102..D112 D114..D124 D126..D136 D138..D148 (C55109522, 44 parts at 8 to 353 deg: look at D107)
+Preview checklist (4 items, 90 parts): look at these in JLC's placement preview
+  odd angle  C107 of C102..C112 C114..C124 C126..C136 C138..C148 (C1525, 44 parts at 8 to 353 deg: look at C107)
+             D107 of D102..D112 D114..D124 D126..D136 D138..D148 (C55109522, 44 parts at 8 to 353 deg: look at D107)
+             J40 (138), U10 (235)
 ```
 
-The yellow rows are gone and three rows are verified. A confirmed part leaves the uncertain correction and not
-simulated categories. The bottom reading and odd angle items stay on every run, verified or not, and BZ1 now
-appears under its next reason, the bottom reading.
+The yellow rows are gone and three rows are verified. A confirmed part leaves the checklist. J1, verified, would
+have moved under every other bottom reading, so none of them is left: the bottom reading items are gone, and the
+odd angles of J40 and U10, folded into their bottom reading items before, are items of their own. An odd angle item
+stays until its part is looked at: a part verified at its angle (BZ1, J1) has been.
 
 `confirm` needs the part's EasyEDA record in the cache, because a verification is stored under the EasyEDA footprint
 it was made with: when EasyEDA later changes that footprint, the verification no longer applies. If the record is
@@ -342,8 +345,8 @@ example-CPL.csv:U1,8.0000mm,7.5000mm,Top,180
 
 When the preview or the boards show a part wrong and you do not put it right there, record the failure with
 `--failed`. It marks the stored correction red and drops its status to `auto`, and the verification is kept with
-`"ok": false`. Suppose the preview had shown U1 of the example board with its pin-1 mark at the wrong corner, though
-it was uploaded with the good CPL:
+`"ok": false` and the numbers it was of. Suppose the preview had shown U1 of the example board with its pin-1 mark at
+the wrong corner, though it was uploaded with the good CPL:
 
 ```sh
 jlcplace confirm example.json --ref U1 --db jlcplace-db --by you --source preview --cpl example-CPL-good.csv --failed --note "pin-1 dot at the wrong corner" --cache cache
@@ -351,27 +354,37 @@ jlcplace confirm example.json --ref U1 --db jlcplace-db --by you --source previe
 
 ```text
 U1 C1001: auto, red: rot 180, dx 0.0000, dy 0.0000; row X 8.0000 Y 7.5000 rot 180 (jlcplace-db/C1001.json)
+jlcplace: U1: its stored correction is verified wrong by JLC's preview on 2026-10-23 (U1, you: pin-1 dot at the wrong corner): `check --db` holds its row red, and `cpl --db` does not write it (unless --force), until the correction is fixed and confirmed again
 ```
 
-The failure does not change the row by itself. Where the pad numbers put every pad on its own pin, the row stays
-green, and `cpl` writes it as before. The part goes on the checklist with the failure as its reason:
+From then on, the stored correction's row is red (status `verified-wrong`), even where the pad numbers put every pad
+on its own pin: what the preview showed wrong may be the footprint's numbering, or a body its pads do not orient. So
+are the rows of the parts that share its entry (one code on one footprint). `cpl --db` writes no CPL with that row,
+unless `--force`:
 
 ```sh
 jlcplace cpl example.json -o example-CPL.csv --db jlcplace-db --cache cache
 ```
 
 ```text
-jlcplace 0.1.0: example.json (json, 14 parts, origin aux 100, 118) vs example-CPL.csv (7 rows), bottom reading jlc-2022
-7 results: 0 red, 0 yellow, 7 green, 0 verified
+jlcplace 0.1.0: example.json (json, 14 parts, origin aux 100, 118) vs the rows jlcplace would write (7 rows), bottom reading jlc-2022
+RED     U1  C1001      top     verified wrong by JLC's preview on 2026-10-23 (U1, you: pin-1 dot at the wrong corner): the row is the stored correction's; fix the correction (`jlcplace confirm` with the presses that put the part right in the preview, or --rot/--dx/--dy) and confirm it again
+7 results: 1 red, 0 yellow, 6 green, 0 verified
 Preview checklist (2 items): look at these in JLC's placement preview
   uncertain correction  U1: red db correction (auto): verification failed (preview, you): pin-1 dot at the wrong corner
   bottom reading        Q1
-jlcplace: wrote example-CPL.csv (7 rows)
+jlcplace: example-CPL.csv not written: the rows above are red; the stored correction of U1 was verified wrong: fix it and confirm again (--force writes it anyway); the existing example-CPL.csv is left unchanged
 ```
 
-Then record what is right: the presses that put the part right on the next upload, or, if you know the numbers,
-the correction typed in with `--rot`, `--dx` and `--dy` and `--source manual` (see the
-[command reference](../reference/cli#jlcplace-confirm)).
+`check --db` says the same of a CPL from another tool whose row is that correction's. A row away from it (more than
+0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees) is yellow instead: it is not the row that was
+wrong, but nothing verified vouches for it either.
+
+Then fix the correction: record what is right, the presses that put the part right on the next upload, or, if you
+know the numbers, the correction typed in with `--rot`, `--dx` and `--dy` and `--source manual` (see the
+[command reference](../reference/cli#jlcplace-confirm)), and confirm it in the preview again. Other numbers end the
+failure, and so does a later verification of the same row that went right (`--source board` when the assembled
+board was right after all).
 
 A failure says something only about the row that was checked, so `--failed` needs the uploaded row to be the stored
 correction's row. Otherwise nothing is recorded:

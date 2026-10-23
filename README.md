@@ -159,7 +159,11 @@ that share a database entry (one code on one footprint) must agree on it, and a 
 numbers until its own row is recorded as failed (`--failed`). `--source board` (the assembled board) also takes the
 uploaded CPL; `--source manual` does not need one. `confirm` needs the part's EasyEDA record in the cache (or
 `--online`): a verification is stored under the EasyEDA footprint it was made with, so that a later version of the
-footprint makes it stale.
+footprint makes it stale. A verification records the numbers it was of. After `--failed`, `check --db` holds the
+stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at the wrong corner)"),
+for every part that shares its entry, and `cpl --db` writes no CPL with it unless `--force`, until the correction is
+fixed (the presses that put the part right, or `--rot --dx --dy`) and confirmed again, or a later verification of the
+same row goes right; a refit of the same numbers does not clear it.
 
 `jlcplace fit board.kicad_pcb --db jlcplace-db` stores fitted corrections. `jlcplace show C2040` and
 `jlcplace show board.kicad_pcb --ref U3` show what jlcplace knows about a code or a part.
@@ -251,8 +255,8 @@ Every CPL row gets a verdict:
 
 | verdict | meaning |
 |---|---|
-| red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it (status `reversed`), or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; a row for a part that is not on the board, is DNP or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); a part JLC places (assembled, or listed by the BOM whatever the board excludes it from) with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, or a two-pad trimmer capacitor (the checklist asks which pad is its rotor, which turned round it is on the other one); a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board excludes from its BOM or position files that nothing else lists (JLC does not place it); a part the board excludes from its position files that the BOM or the CPL lists (it is checked, and JLC places it: it never sees KiCad's attributes); or a BOM inconsistency. |
+| red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it (status `reversed`), or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; the row of a stored correction verified wrong (`confirm --failed`, status `verified-wrong`), whatever its pads land on; a row for a part that is not on the board, is DNP or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); a part JLC places (assembled, or listed by the BOM whatever the board excludes it from) with no row. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, or a two-pad trimmer capacitor (the checklist asks which pad is its rotor, which turned round it is on the other one); a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; a row away from a stored correction verified wrong (nothing verified vouches for it); numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board excludes from its BOM or position files that nothing else lists (JLC does not place it); a part the board excludes from its position files that the BOM or the CPL lists (it is checked, and JLC places it: it never sees KiCad's attributes); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -315,10 +319,14 @@ from the CPL's origin. Then, in this order:
   not place it, so its preview never shows it); a trimmer capacitor's item asks which pad is its rotor.
 * **bottom reading**: bottom parts whose pins would move if JLC read the bottom rotation differently (see below),
   said in pins ("as jlc-2022+180, pin 1 would sit on pad 4"). The reading is one question for the whole board: a
-  green part that moves under every other reading comes first, and when it sits right the others follow. Parts of
-  one code at one rotation move alike and share an item.
+  green part that moves under every other reading comes first, and when it sits right the others follow. Recorded
+  with `jlcplace confirm` (`--source preview`, or `--source board` on the assembled board), a bottom part shown right
+  rules out every reading under which it would have moved, for every part (only its own verification counts, not one
+  of a part that shares its entry at another angle): a part that moves only under readings ruled out has no item,
+  and the others say which readings are ruled out, by which part. Parts of one code at one rotation move alike and
+  share an item.
 * **odd angle**: rows at angles that are not multiples of 90, one item per code and side (an LED ring of 44 is one
-  item), naming the part furthest from a multiple of 90.
+  item), naming the part furthest from a multiple of 90; a part verified itself at its angle is left out.
 
 Within each (after the bottom reading's first part), red rows come first and are flagged: fix the row before
 looking at it (for a pinout: the LCSC part or the symbol is wrong). The Markdown, CSV, JSON and HTML checklists carry
