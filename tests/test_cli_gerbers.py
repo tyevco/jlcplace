@@ -19,7 +19,7 @@ from jlcplace.gerber import board_pads
 from jlcplace.model import BOTTOM, RED, TOP, Board, CplRow, EEFootprint, EEPad, Pad, Part
 from jlcplace.pipeline import Resolved, check
 
-from test_cli import ORIGIN, env, offline, run  # noqa: F401  (env is a fixture)
+from test_cli import ORIGIN, coax, env, offline, run, two  # noqa: F401  (env is a fixture)
 
 PAGE = (0.0, 0.0)
 
@@ -468,9 +468,20 @@ def test_confirm_and_show_read_the_rows_from_the_gerbers_origin(made, capsys):
     assert code == 3 and not db.exists(), out
     assert err.strip() == (f"jlcplace: U1: read from the aux origin (100, 100), the row in {page.name} puts every "
                            "EasyEDA pad off copper (the nearest 138.47 mm from a KiCad pad centre), so it is not "
-                           "what was seen right: give the Gerbers it was ordered with (--gerbers), or the origin "
-                           "`jlcplace check` names on its first line (--origin); nothing recorded"), err
+                           "what was seen right: the rows are usually read from another origin than the CPL's: give "
+                           "the Gerbers it was ordered with (--gerbers), or the origin `jlcplace check` names on its "
+                           "first line (--origin); nothing recorded"), err
+    code, out, err = run(capsys, *confirm, "--origin", "aux")              # an --origin given is not asked for
+    assert code == 3 and err.strip().endswith("usually read from another origin than the CPL's: give the Gerbers it "
+                                              "was ordered with (--gerbers); nothing recorded"), err
     assert run(capsys, *confirm, "--gerbers", e.aux, "--origin", "aux")[0] == 3
+    # a failure of a row read so is refused as not the correction's, saying the rows may be read from another origin
+    code, out, err = run(capsys, *confirm, "--failed")
+    assert code == 3 and not db.exists() and err.strip().endswith(
+        "its failure says nothing about that correction; read from the aux origin (100, 100), it puts every EasyEDA "
+        "pad off copper (the nearest 138.47 mm from a KiCad pad centre): the rows may be read from another origin "
+        "than the CPL's (give the Gerbers it was ordered with, --gerbers, or the origin `jlcplace check` names on its "
+        "first line, --origin); nothing recorded"), err
     code, out, _ = run(capsys, *confirm, "--gerbers", e.page)
     row = next(r for r in read_cpl(page) if r.ref == "U1")
     assert code == 0 and f"; row X {row.x:.4f} Y {row.y:.4f} rot {row.rotation:g} " in out, out
@@ -481,6 +492,77 @@ def test_confirm_and_show_read_the_rows_from_the_gerbers_origin(made, capsys):
             {"x": row.x, "y": row.y, "rotation": row.rotation}, abs=2e-4), out
     code, out, _ = run(capsys, "check", e.board, page, "--gerbers", e.page, "--db", db, *offline(e))
     assert code == 0 and "2 green, 2 verified" in out, out             # U1, and U2 of its entry
+
+
+def test_confirm_says_why_a_row_seen_right_puts_every_pad_off_copper(made, capsys):
+    """The refusal blamed the origin and asked for --gerbers also when they were given: read from the Gerbers' (0, 0),
+    JLC's own origin, a row that puts every pad off copper is off itself (JLC moved the part), or, for a bottom part,
+    of the --reading the CPL was written with, which the refusal names when it lands the pads."""
+    e = made
+    gerbers = plot(e.make(two("R7", BOTTOM, 105.0, 70.0, 45.0, "C1002")), PAGE, e.tmp / "g-page-2")
+    page = e.tmp / "from-page.csv"
+    assert run(capsys, "cpl", e.board, "-o", page, "--gerbers", gerbers, *offline(e))[0] == 0
+    db = e.tmp / "db"
+    confirm = ["confirm", e.board, "--db", db, "--by", "ann", "--source", "preview", "--gerbers", gerbers, *offline(e)]
+    moved = e.tmp / "moved.csv"
+    write_cpl(moved, [CplRow(r.ref, r.x + 3.0, r.y, r.layer, r.rotation) if r.ref == "U1" else r
+                      for r in read_cpl(page)])
+    code, out, err = run(capsys, *confirm, "--ref", "U1", "--cpl", moved)
+    assert code == 3 and not db.exists() and err.strip() == (
+        "jlcplace: U1: read from the Gerbers' (0, 0), the row in moved.csv puts every EasyEDA pad off copper (the "
+        "nearest 0.72 mm from a KiCad pad centre), so it is not what was seen right: the row itself is off "
+        "(`jlcplace check` reports it so): if the part came out right, JLC moved it and there is nothing to record; "
+        "nothing recorded"), err
+    code, out, err = run(capsys, *confirm, "--ref", "U1", "--cpl", page, "--right", "47")
+    assert code == 3 and "read from the Gerbers' (0, 0) and moved by the presses" in err and err.strip().endswith(
+        "JLC moved it and there is nothing to record; check the presses' signs; nothing recorded"), err
+    # R7 at 45 on the bottom: the other reading turns its row a quarter turn, and every pad off copper
+    other = e.tmp / "ccw.csv"
+    assert run(capsys, "cpl", e.board, "-o", other, "--gerbers", gerbers, "--reading", "ccw-from-top",
+               *offline(e))[0] == 0
+    code, out, err = run(capsys, *confirm, "--ref", "R7", "--cpl", other)
+    assert code == 3 and not db.exists() and ("so it is not what was seen right: the CPL may have been written with "
+                                              "--reading ccw-from-top, under which the row lands every EasyEDA pad on "
+                                              "copper: pass the same --reading; otherwise the row itself") in err, err
+    code, out, _ = run(capsys, *confirm, "--ref", "R7", "--cpl", other, "--reading", "ccw-from-top")
+    assert code == 0 and out.startswith("R7 C1002: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
+
+
+def test_confirm_refuses_a_row_off_a_part_without_an_easyeda_footprint(made, capsys):
+    """field: the refusal of a row seen right that puts every pad off copper ran only for parts with an EasyEDA
+    footprint: one with none (the checklist's 'not simulated' item, which only the preview can check), read from the
+    aux origin, was stored preview-verified 141 mm off with exit 0. Its row point is refused off the part as check's
+    rule for it says (a two-pad non-polar part off its pads), or off its pads and its body; cpl's row of a connector
+    at the centre of its courtyard, off its pads, is taken. When one --ref is refused, none is recorded."""
+    e = made
+    board = e.make(two("R3", TOP, 115.0, 70.0, 0.0, "C1005"), coax())
+    gerbers = plot(board, PAGE, e.tmp / "g-page-2")
+    page = e.tmp / "from-page.csv"
+    assert run(capsys, "cpl", e.board, "-o", page, "--gerbers", gerbers, "--force", *offline(e))[0] == 2   # J1 red
+    db = e.tmp / "db"
+    confirm = ["confirm", e.board, "--db", db, "--by", "ann", "--source", "preview", *offline(e)]
+    for ref, what in (("R3", "140.52 mm off the part's pads"), ("J1", "124.10 mm off the part's pads and its "
+                                                                       "courtyard")):
+        code, out, err = run(capsys, *confirm, "--ref", ref, "--cpl", page)
+        assert code == 3 and not db.exists() and err.strip() == (
+            f"jlcplace: {ref}: read from the aux origin (100, 100), the row in from-page.csv puts the row point "
+            f"{what}, so it is not what was seen right: the rows are usually read from another origin than the CPL's: "
+            f"give the Gerbers it was ordered with (--gerbers), or the origin `jlcplace check` names on its first "
+            f"line (--origin); nothing recorded"), err
+    moved = e.tmp / "moved.csv"
+    write_cpl(moved, [CplRow(r.ref, r.x + 3.0, r.y, r.layer, r.rotation) if r.ref == "R3" else r
+                      for r in read_cpl(page)])
+    code, out, err = run(capsys, *confirm, "--ref", "U1", "--ref", "J1", "--ref", "R3", "--cpl", moved, "--gerbers",
+                         gerbers)
+    assert code == 3 and not db.exists() and err.strip() == (
+        "jlcplace: R3: read from the Gerbers' (0, 0), the row in moved.csv puts the row point 2.14 mm off the part's "
+        "pads, so it is not what was seen right: the row itself is off (`jlcplace check` reports it so): if the part "
+        "came out right, JLC moved it and there is nothing to record; nothing recorded"), err
+    code, out, _ = run(capsys, *confirm, "--ref", "R3", "--ref", "J1", "--cpl", page, "--gerbers", gerbers)
+    assert code == 0 and out.startswith("R3 C1005: preview-verified, verified: rot 0, dx 0.0000, dy 0.0000;"), out
+    assert out.splitlines()[1].startswith("J1 C1003: preview-verified, verified: rot 0, dx 0.0000, dy -13.5000;"), out
+    code, out, _ = run(capsys, "check", e.board, page, "--gerbers", gerbers, "--db", db, *offline(e), "--json", "-")
+    assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["R3"] == "verified", out
 
 
 def test_without_gerbers_the_origin_is_a_reminder_said_once(made, capsys):

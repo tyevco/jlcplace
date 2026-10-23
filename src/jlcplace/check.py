@@ -120,17 +120,36 @@ def _not_harmless(part: Part) -> str:
     return f"not a two-pad non-polar part ({len(pads)} copper pad{'' if len(pads) == 1 else 's'})"
 
 
-def _off_part(part: Part, row: CplRow, origin) -> float | None:
+def _off_part(part: Part, row: CplRow, origin, body: bool = False) -> float | None:
     """How far the row's point lies outside the part's copper (its pads' bounding box grown by UNSIM_MARGIN), in mm;
-    None when it is on the part."""
+    None when it is on the part. `body`: outside the box of its copper and its body (Part.body) both."""
     l = board_to_library(part, cpl_to_board((row.x, row.y), origin))
     pts = [q for p in part.copper_pads() for q in geom.pad_outline(p)]
+    if body and part.body:
+        pts += [part.body[:2], part.body[2:]]
     if not pts:
         return None
     x0, y0 = min(q[0] for q in pts) - UNSIM_MARGIN, min(q[1] for q in pts) - UNSIM_MARGIN
     x1, y1 = max(q[0] for q in pts) + UNSIM_MARGIN, max(q[1] for q in pts) + UNSIM_MARGIN
     d = math.hypot(max(x0 - l[0], 0.0, l[0] - x1), max(y0 - l[1], 0.0, l[1] - y1))
     return d if d > 0 else None
+
+
+def unsimulated_off(part: Part, row: CplRow, origin, *, outside: bool = False, corr: Correction | None = None
+                    ) -> tuple[float, str] | None:
+    """For a part without EasyEDA pads, where its row point lies off the part so far that JLC cannot have put the
+    part right there: (mm, what it is off) when check calls the row red for it (a two-pad non-polar part off its
+    pads), when it is off its pads and its body both, or off its pads and `outside` the board outline; else None.
+    JLC places a part by its centre, which may lie off its pads (a right-angle connector) but on its body."""
+    far = _off_part(part, row, origin)
+    if far is None:
+        return None
+    if _harmless_unsimulated(part, corr):
+        return far, "the part's pads"
+    wide = _off_part(part, row, origin, body=True) if part.body else None
+    if wide is not None:
+        return wide, f"the part's pads and its {BODY_WORDS.get(part.body_layer, 'body')}"
+    return (far, "the part's pads, outside the board outline") if outside else None
 
 
 def _row_point(part: Part, row: CplRow, origin) -> str:
