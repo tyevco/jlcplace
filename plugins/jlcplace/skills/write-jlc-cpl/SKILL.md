@@ -62,7 +62,8 @@ Read the message, and for detail `jlcplace show board.kicad_pcb --ref REF`. The 
     each EasyEDA pad's landing on hover; local only, never publish it).
   * Check that the KiCad pads at the positions of each joined pair share one number and net. The `landings` in
     `show` (EasyEDA pad, KiCad pad, net) then say which EasyEDA pad sits on which of them, and whether every one
-    lands. Alternatives listed as `equivalent=true` in `show` land the same way.
+    lands. An alternative `show` lists as `equivalent=true` puts every pad on the same net, or only swaps a
+    non-polar part's two terminals (then `nets_changed` lists their pads); either way the part works the same.
   * Getting the datasheet: lcsc.com, search the code. The PDF link can be a page that redirects to the real file, and
     many datasheets are drawings with no text layer, so render the page and look at it.
 
