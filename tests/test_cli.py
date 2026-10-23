@@ -1284,11 +1284,17 @@ def test_one_part_shown_right_at_an_odd_angle_settles_its_code_and_side(env, cap
     (v,) = json.loads((db / "C1002.json").read_text(encoding="utf-8"))["entries"][0]["verifications"]
     assert (v["ref"], v["rotation"]) == ("R1", 90.0)
     assert odd() == {("R5", ("R1", "R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
-    # a verification recorded before they held the rotation settles the part itself only
-    doc = json.loads((db / "C1002.json").read_text(encoding="utf-8"))
-    del doc["entries"][0]["verifications"][0]["rotation"]
-    (db / "C1002.json").write_text(json.dumps(doc), encoding="utf-8")
-    assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
+    # a verification recorded before they held the rotation settles the part itself only, as does one whose
+    # rotation was edited by hand into no number (not an internal error)
+    for rotation in (None, "fifteen"):
+        doc = json.loads((db / "C1002.json").read_text(encoding="utf-8"))
+        v = doc["entries"][0]["verifications"][0]
+        if rotation is None:
+            del v["rotation"]
+        else:
+            v["rotation"] = rotation
+        (db / "C1002.json").write_text(json.dumps(doc), encoding="utf-8")
+        assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}, rotation
     assert run(capsys, *confirm, "--ref", "R5")[0] == 0
     assert odd() == {("R6", ("R6",)), ("U2", ("U2",))}
 
