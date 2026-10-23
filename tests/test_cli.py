@@ -249,6 +249,14 @@ def test_a_row_point_outside_the_board_outline_is_yellow(env, capsys):
     r1 = next(r for r in json.loads(out)["results"] if r["ref"] == "R1")
     assert code == 2 and r1["status"] == "off-copper" and r1["messages"][-1].startswith(
         "the row point is outside the board outline (Edge.Cuts), 5.00 mm beyond its edge")
+    # so does a yellow row: the terminal shows the reason for its status (an offset; a row of a part JLC does not
+    # place, which the outline's message hid), not the outline's
+    write_cpl(env.out, [dataclasses.replace(r, y=r.y + 0.2) if r.ref == "R2" else r for r in read_cpl(env.out)
+                        if r.ref != "R1"])
+    code, out, _ = run(capsys, "check", path, env.out, "--reader", "sexpr", *offline(env), "--json", "-")
+    r2 = next(r for r in json.loads(out)["results"] if r["ref"] == "R2")
+    assert r2["status"] == "offset" and r2["messages"][0].startswith("differs from the row jlcplace writes") and \
+        r2["messages"][-1].startswith("the row point is outside the board outline (Edge.Cuts), 10."), r2
 
 
 def test_fixed_cpl_counts_rows_outside_the_board_outline(env, capsys):

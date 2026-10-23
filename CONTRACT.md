@@ -600,7 +600,8 @@ def origin_lines(run) -> list[(verdict, text)]
 * `off_board(run, outline, what="Edge.Cuts") -> refs`: the outline (board-frame polylines) chained into closed rings
   (`geom.rings`; none closed: nothing checked), read even-odd (a cutout is outside); a row of a part on the board whose
   point lies outside is yellow at least, "the row point is outside the board outline (Edge.Cuts), D mm beyond its edge:
-  look at it in JLC's preview" first; a red or verified row gets it last, its verdict kept.
+  look at it in JLC's preview", first on a green row (made yellow); a yellow, red or verified row gets it last, its
+  verdict kept.
 * A part with no EasyEDA record (offline miss or not found) but a database correction is simulated with
   `proxy_footprint`; its verdict is capped by the correction's, and when the cap lowers it the first message says
   so ("yellow because the stored auto correction is yellow: <its key reason>"); the note on how it was simulated
