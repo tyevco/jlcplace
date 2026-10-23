@@ -122,6 +122,9 @@ def test_swaps_within_a_net_are_harmless():
     ("C7", "Capacitor_Tantalum_SMD:CP_EIA-3216-18_Kemet-A", True),
     ("D1", "Diode_SMD:D_SOD-123", True),
     ("LED1", "LED_SMD:LED_0603_1608Metric", True),
+    ("JP1", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Horizontal", True),      # right-angle: oriented
+    ("SW2", "Button_Switch_SMD:SW_Push_1P1T-MP_NO_Horizontal", True),
+    ("R5", "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal", False),    # lies flat: may be turned
 ])
 def test_two_terminal_parts_turned_180(ref, footprint, polar):
     part = two_pad(ref, footprint=footprint)

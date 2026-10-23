@@ -341,8 +341,9 @@ lands, the part gets no row ("mirrored footprint or wrong footprint"). When a no
 that is the correction, red, so that `cpl --force` and `confirm` can write its row: on a symmetric land pattern (a
 trimmer's three pins and two mounting pads) a mirror image that matches the pad numbers only renumbers it ("numbering
 mirrored between the libraries"), and which numbering is the part's is in its datasheet. Whether a two-terminal part
-may be turned round (a resistor) or not (a diode, a tantalum) is decided once, for the fit and the check alike: from
-its reference prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title, part categories
+may be turned round (a resistor) or not (a diode, a tantalum, a jumper or switch on a right-angle "_Horizontal"
+footprint, whose body would face the other way) is decided once, for the fit and the check alike: from its reference
+prefix, its KiCad footprint name and pin functions, and its EasyEDA record's title, part categories
 (tantalum, electrolytic, diode, LED, TVS, ...) and pin names. From the correction:
 
 * Mid X, Mid Y = where the EasyEDA origin lies on the board, in the cpl frame.

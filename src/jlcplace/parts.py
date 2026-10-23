@@ -27,8 +27,14 @@ POLAR_EE_TAGS = re.compile(r"tantal|electrolytic|polymer|diode|(?<![a-z])leds?(?
 POLAR_EE_CAP_TITLE = re.compile(r"^(CAP-SMD|CASE-[A-E]_|CP[-_])", re.I)
 NONPOLAR_EE_TAGS = re.compile(r"ceramic|mlcc|resistor|inductor|ferrite|crystal|oscillator|thermistor|fuse|varistor",
                               re.I)
-#: KiCad footprint names of right-angle parts: turned round, the body faces the other way, which is never harmless
-ORIENTED_FOOTPRINT = re.compile(r"(?<![a-z])angled|right.?angle", re.I)
+#: KiCad footprint names of right-angle parts: turned round, the body faces the other way, which is never harmless.
+#: KiCad names its right-angle connectors, terminal blocks and switches, and its crystals lying flat, "_Horizontal"
+#: (in their libraries, or under such a name in another library); its axial passives lie flat between their leads
+#: and its fuse clips are alike at both ends, so "Horizontal" alone says nothing there
+ORIENTED_FOOTPRINT = re.compile(r"(?<![a-z])angled|right.?angle"
+                                r"|^(?:(?:Connector|TerminalBlock|Button_Switch|Rotary_Encoder|Potentiometer|Crystal)"
+                                r"[^:]*:|(?:[^:]*:)?(?:SW|Switch|Button|PinHeader|PinSocket|Header|Socket|Conn"
+                                r"|Connector|Jack|TerminalBlock|Crystal)[_-]).*horizontal", re.I)
 #: what makes an X-referenced two-terminal part a crystal
 CRYSTAL = re.compile(r"crystal|xtal|resonator|(?<![a-z])osc", re.I)
 

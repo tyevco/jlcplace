@@ -248,10 +248,13 @@ def pinout_text(diffs, n=4, board="on the board") -> str   # "pad 2 is S on the 
 * `nonpolar`: two KiCad terminals, and either alike (pin functions equal up to an index, A1 / A2; EasyEDA token BI)
   or a non-polar reference prefix (X only when the footprint or EasyEDA title says crystal / xtal / osc: IEC 81346
   designates connectors X) with nothing that says polar: the KiCad footprint name (polar words as words, not
-  "Angled" or "KOHERelec"; a right-angle body), anode / cathode pin functions, and with `ee` its title (LED, SOD,
-  diode, tant, elec; a polarised capacitor's CAP-SMD_ / CASE-x_ / CP- unless its categories name a non-polar class),
-  its categories (tantalum, electrolytic, polymer, diode, LED, zener, schottky, TVS, rectifier) and its symbol's
-  anode / cathode pin names. Unknown parts are polar.
+  "Angled" or "KOHERelec"; a right-angle body, `ORIENTED_FOOTPRINT`: Angled, right angle, or "Horizontal" in
+  KiCad's Connector*, TerminalBlock*, Button_Switch*, Rotary_Encoder, Potentiometer* and Crystal libraries or on a
+  footprint named SW_, PinHeader_, PinSocket_, Conn_, Crystal_, ...: not an axial passive lying flat, nor fuse clips),
+  anode / cathode pin functions, and with `ee` its title (LED, SOD, diode, tant, elec; a polarised capacitor's
+  CAP-SMD_ / CASE-x_ / CP- unless its categories name a non-polar class), its categories (tantalum, electrolytic,
+  polymer, diode, LED, zener, schottky, TVS, rectifier) and its symbol's anode / cathode pin names. Unknown parts are
+  polar.
 * `name_tokens`: as fit.py describes; a name that only repeats its pad number is uninformative unless it means
   something of its own (K on a pad numbered K), and so are LOCATION_NAMES (EP, PAD, EPAD, TAB, THERMAL, THERMALPAD:
   where a pad is, not what it is; a regulator's tab is often its output). A name split at '/' also gives its parts
