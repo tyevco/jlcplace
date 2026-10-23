@@ -62,8 +62,8 @@ from .cpl import assembled, correction_for, jlc_places, natural_key
 from .lcsc import normalize as normalize_lcsc
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, PadLanding, Part, RowResult
-from .parts import compare_names, ee_positive_pad, kicad_positive_pad, norm_number, pad_size, pin, pin_diffs, \
-    pinout_text, trimmer, uncovered_exemption
+from .parts import BODY_TOL, BODY_WORDS, anchor_pin, body_centre, compare_names, ee_positive_pad, kicad_positive_pad, \
+    norm_number, pad_size, pin, pin_diffs, pinout_text, trimmer, uncovered_exemption
 from .parts import nonpolar as _nonpolar
 
 LAND_TOL = 1e-3            # mm: a centre this close outside a pad's edge is on it (CPL values carry 1e-4 mm)
@@ -127,6 +127,25 @@ def _off_part(part: Part, row: CplRow, origin) -> float | None:
     x1, y1 = max(q[0] for q in pts) + UNSIM_MARGIN, max(q[1] for q in pts) + UNSIM_MARGIN
     d = math.hypot(max(x0 - l[0], 0.0, l[0] - x1), max(y0 - l[1], 0.0, l[1] - y1))
     return d if d > 0 else None
+
+
+def _row_point(part: Part, row: CplRow, origin) -> str:
+    """Where a row point lies on a part that cannot be simulated, from its body (parts.body_centre) and KiCad's
+    anchor: JLC places a part by its centre, and KiCad's anchor is pin 1 on most through-hole connectors.
+    '; the row point is the centre of its courtyard', '; the row point is KiCad's anchor, pin 1, 15.55 mm from the
+    centre of its courtyard: JLC places a part by its centre', or ''."""
+    lp = board_to_library(part, cpl_to_board((row.x, row.y), origin))
+    c, pin = body_centre(part), anchor_pin(part)
+    words = BODY_WORDS.get(part.body_layer, "body")
+    if c is not None and math.dist(lp, c) <= BODY_TOL:
+        return f"; the row point is the centre of its {words}"
+    if math.hypot(*lp) <= BODY_TOL and (pin or c is not None):
+        said = ["KiCad's anchor"] + ([f"pin {pin}"] if pin else []) + (
+            [f"{math.dist(lp, c):.2f} mm from the centre of its {words}"] if c is not None else [])
+        return f"; the row point is {', '.join(said)}: JLC places a part by its centre"
+    if c is not None:
+        return f"; the row point is {math.dist(lp, c):.2f} mm from the centre of its {words}"
+    return ""
 
 
 def _ee_pads(ee: EEFootprint):
@@ -263,7 +282,8 @@ def check_row(part: Part, row: CplRow, ee, origin, *, corr: Correction | None = 
                 "preview" if trimmer(part) else "; a two-pad non-polar part, and the row point is on it"))
         else:
             res.verdict = RED
-            res.messages.insert(0, f"placement not simulated: {why}; {_not_harmless(part)}")
+            res.messages.insert(0, f"placement not simulated: {why}; {_not_harmless(part)}"
+                                   + _row_point(part, row, origin))
         return res
 
     placed = _place(part, row, ee, origin, reading)

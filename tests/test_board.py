@@ -163,6 +163,9 @@ def compare_boards(a: Board, b: Board, max_err: float = 0.005) -> list:
                 bad.append(f"{pa.ref} {f}: {getattr(pa, f)!r} != {getattr(pb, f)!r}")
         if math.dist((pa.x, pa.y), (pb.x, pb.y)) > 1e-4 or adiff(pa.angle, pb.angle) > 1e-3:
             bad.append(f"{pa.ref} placement: {(pa.x, pa.y, pa.angle)} != {(pb.x, pb.y, pb.angle)}")
+        if pa.body_layer != pb.body_layer or (pa.body is None) != (pb.body is None) or pa.body and max(
+                abs(u - v) for u, v in zip(pa.body, pb.body)) > max_err:
+            bad.append(f"{pa.ref} body: {pa.body_layer} {pa.body} != {pb.body_layer} {pb.body}")
         if len(pa.pads) != len(pb.pads):
             bad.append(f"{pa.ref}: {len(pa.pads)} pads != {len(pb.pads)}")
             continue
@@ -346,6 +349,15 @@ def build_library_footprint(pcbnew, board, rnd):
     for anchor, prims in customs:
         add(S.PAD_ATTRIB_SMD, S.PAD_SHAPE_CUSTOM, (0.8, 0.8 if anchor == S.PAD_SHAPE_CIRCLE else 0.6), SMD,
             anchor=anchor, prims=prims)
+    # the body: a courtyard of a rectangle, a half circle bulging out to x = 18 and a circle down to y = -19 (BODY);
+    # a fabrication drawing that the courtyard wins over
+    for layer, sh in ((S.F_CrtYd, _shape(T, T.SHAPE_T_RECTANGLE, 0.05, s=(-16, -16), e=(14, 16))),
+                      (S.F_CrtYd, _shape(T, T.SHAPE_T_ARC, 0.05, s=(14, -4), m=(18, 0), e=(14, 4))),
+                      (S.F_CrtYd, _shape(T, T.SHAPE_T_CIRCLE, 0.05, c=(0, -17), r=2)),
+                      (S.F_Fab, _shape(T, T.SHAPE_T_SEGMENT, 0.1, s=(-30, 0), e=(30, 0)))):
+        sh.SetLayer(layer)
+        fp.Add(sh)
+        sh.thisown = False
     # a front/inner/back padstack whose back copper is a bigger, offset rounded rectangle
     p = add(S.PAD_ATTRIB_PTH, S.PAD_SHAPE_CIRCLE, (1.2, 1.2), PTH, name="FIB")
     p.Padstack().SetMode(S.PADSTACK.MODE_FRONT_INNER_BACK)
@@ -360,6 +372,7 @@ def build_library_footprint(pcbnew, board, rnd):
 
 PLACEMENTS = [("top", 0.0), ("top", 90.0), ("top", 37.5), ("tb", 0.0), ("tb", 90.0), ("tb", 213.25), ("lr", 0.0),
               ("lr", 301.7)]
+BODY = (-16.0, -19.0, 18.0, 16.0)          # the box of build_library_footprint's courtyard, library frame
 
 
 @pytest.fixture(scope="module")
@@ -409,6 +422,8 @@ def test_flipped_footprints_read_back_in_the_library_frame(built):
                 assert adiff(pad.angle, a) <= 1e-6, where
                 # the front/inner/back pad too: a part's own side always carries the library's front entry
                 assert (pad.w, pad.h) == pytest.approx(size, abs=1e-9), where
+            # its body too, the courtyard's box, whichever side and angle (KiCad moves the courtyard with a flip)
+            assert part.body_layer == "courtyard" and part.body == pytest.approx(BODY, abs=2e-6), part.ref
 
 
 @pytest.mark.pcbnew
@@ -965,6 +980,36 @@ def test_filled_graphics_on_the_paste_layer_are_paste_apertures(tmp_path):
     assert not geom.pad_contains(tri, (0.8, -0.8))
     assert (disc.x, disc.y, disc.w) == (pytest.approx(-2.0), pytest.approx(-1.0), pytest.approx(1.0, abs=1e-3))
     assert part.copper_pads() == [pad]
+
+
+def test_the_body_is_the_box_of_the_courtyard_else_of_the_fab_drawing(tmp_path):
+    """A part's body (where JLC wants its centre: KiCad's anchor is pin 1 on a through-hole connector) is the box of its
+    courtyard drawing on its own side, arcs by their ends and axis extremes, in the library frame; without a courtyard
+    the fabrication layer's drawing (text left out); with neither, none."""
+    text = """(kicad_pcb (version 20241229)
+  (footprint "Connector_Coaxial:BNC" (layer "F.Cu") (at 10 20 270) (property "Reference" "J1")
+    (pad "1" thru_hole circle (at 0 0 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask"))
+    (pad "2" thru_hole circle (at -5.08 -5.08 270) (size 3 3) (drill 2) (layers "*.Cu" "*.Mask"))
+    (fp_line (start -7.85 2.7) (end 7.85 2.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_line (start 7.85 2.7) (end 7.85 -33.8) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_arc (start 7.85 -33.8) (mid 0 -41.65) (end -7.85 -33.8) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_line (start -7.85 -33.8) (end -7.85 2.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+    (fp_rect (start -50 -50) (end 50 50) (stroke (width 0.1) (type solid)) (fill no) (layer "B.CrtYd"))
+    (fp_rect (start -7 -30) (end 7 2) (stroke (width 0.1) (type solid)) (fill no) (layer "F.Fab")))
+  (footprint "L:Bottom" (layer "B.Cu") (at 30 40 90) (property "Reference" "U1")
+    (pad "1" smd rect (at 1 2 90) (size 1 1) (layers "B.Cu" "B.Mask"))
+    (fp_circle (center 1 -3) (end 3 -3) (stroke (width 0.1) (type solid)) (fill no) (layer "B.Fab"))
+    (fp_text user "${REFERENCE}" (at 0 9 90) (layer "B.Fab"))
+    (fp_rect (start -9 -9) (end 9 9) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd")))
+  (footprint "L:Bare" (layer "F.Cu") (at 50 40 0) (property "Reference" "R1")
+    (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu"))
+    (fp_line (start -2 -1) (end 2 -1) (stroke (width 0.12) (type solid)) (layer "F.SilkS"))))
+"""
+    j1, u1, r1 = jb.load_board_sexpr(write_board(tmp_path, text)).parts
+    assert (j1.body, j1.body_layer) == ((-7.85, -41.65, 7.85, 2.7), "courtyard")
+    # flipped: stored as placed, library = (x, -y); the other side's courtyard is not this part's
+    assert (u1.body, u1.body_layer) == ((-1.0, 1.0, 3.0, 5.0), "fab")
+    assert (r1.body, r1.body_layer) == (None, "")
 
 
 def test_missing_files_raise(tmp_path):

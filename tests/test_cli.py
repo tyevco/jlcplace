@@ -1,6 +1,7 @@
 """The command line, the pipeline and the reports on a synthetic board with hand-made EasyEDA records: no KiCad, no
 EasyEDA data and no network needed."""
 import csv
+import dataclasses
 import errno
 import io
 from html.parser import HTMLParser
@@ -171,6 +172,81 @@ def test_fail_on_yellow_and_reports(env, capsys):
     assert ET.fromstring((env.tmp / "j.xml").read_text(encoding="utf-8")).get("failures") == "1"
     rows = list(csv.DictReader((env.tmp / "c.csv").open(encoding="utf-8")))
     assert {(r["category"], r["ref"]) for r in rows} >= {("not simulated", "R3"), ("bottom reading", "U2")}
+
+
+def bnc(ref="J1", body=(-7.85, -33.8, 7.85, 2.7)):
+    """A right-angle through-hole BNC as KiCad draws it: the anchor is pin 1, the body (its courtyard) 15.55 mm away."""
+    pads = [Pad("1", 0.0, 0.0, 2.0, 2.0, shape="circle", kind="tht", net="SIG")] + [
+        Pad("2", x, y, 3.0, 3.0, shape="circle", kind="tht", net="GND") for x, y in ((-5.08, -5.08), (-2.54, 0.0),
+                                                                                      (5.08, -5.08))]
+    return Part(ref, TOP, 140.0, 60.0, 270.0, footprint="Connector_Coaxial:BNC_Amphenol_B6252HB-NPP3G-50_Horizontal",
+                lcsc="C1003", tht=True, pads=pads, body=body, body_layer="courtyard" if body else "")
+
+
+def test_a_part_without_a_footprint_is_written_at_the_centre_of_its_body(env, capsys):
+    """field: a BNC EasyEDA has no footprint for was written at KiCad's anchor, which is its pin 1, 15.55 mm from the
+    courtyard centre a hand-made CPL used: JLC places a part by its centre. The row is at its courtyard's centre, and
+    the check says where a not-simulated row point lies; with no courtyard drawn, the reason says the anchor is
+    pin 1."""
+    board = env.make(bnc())
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force", "--json", env.tmp / "r.json")
+    row = next(r for r in read_cpl(env.out) if r.ref == "J1")
+    x, y, a = cv.cpl_row_for(board.part("J1"), Correction(0.0, 0.0, -15.55), ORIGIN)
+    assert (row.x, row.y, row.rotation) == pytest.approx((x, y, a), abs=1e-4) and (row.x, row.y) != (40.0, 40.0)
+    line = next(ln for ln in out.splitlines() if ln.startswith("RED     J1"))
+    assert line.endswith("not a two-pad non-polar part (4 copper pads); the row point is the centre of its courtyard")
+    j1 = next(r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"] if r["ref"] == "J1")
+    assert j1["correction"]["reasons"] == ["no EasyEDA footprint (Component not found): the row is the centre of its "
+                                           "courtyard, 15.55 mm from KiCad's anchor (pin 1), at KiCad's angle"]
+    # a CPL with KiCad's anchor (the position file's row): the check says what that point is
+    rows = [CplRow("J1", 40.0, 40.0, TOP, 270.0) if r.ref == "J1" else r for r in read_cpl(env.out)]
+    write_cpl(env.out, rows)
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
+    assert ("the row point is KiCad's anchor, pin 1, 15.55 mm from the centre of its courtyard: JLC places a part by "
+            "its centre") in out
+    # nothing drawn to take the centre from: the anchor stays, said to be pin 1
+    env.make(bnc(body=None))
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env), "--force", "--json", env.tmp / "r.json")
+    assert next(r for r in read_cpl(env.out) if r.ref == "J1").x == 40.0
+    j1 = next(r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"] if r["ref"] == "J1")
+    assert "that anchor is pin 1, not the part's centre" in j1["correction"]["reasons"][0]
+    assert "the row point is KiCad's anchor, pin 1: JLC places a part by its centre" in out
+
+
+OUTLINED = """(kicad_pcb (version 20241229)
+  (setup (aux_axis_origin 100 100))
+  (net 0 "")
+{parts}
+  (gr_rect (start 100 80) (end 120 100) (stroke (width 0.1) (type solid)) (fill no) (layer "Edge.Cuts"))
+  (gr_circle (center 115 85) (end 117 85) (stroke (width 0.1) (type solid)) (fill no) (layer "Edge.Cuts")))
+"""
+R0402 = """  (footprint "Resistor_SMD:R_0402_1005Metric" (layer "F.Cu") (at {x} {y} 0)
+    (property "Reference" "{ref}") (property "LCSC" "C1002")
+    (pad "1" smd rect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Paste" "F.Mask") (net 0 ""))
+    (pad "2" smd rect (at 0.48 0) (size 0.56 0.62) (layers "F.Cu" "F.Paste" "F.Mask") (net 0 "")))"""
+
+
+def test_a_row_point_outside_the_board_outline_is_yellow(env, capsys):
+    """field: nothing said that a row point lay outside the board (a part's centre beyond its edge, a row of another
+    part): it is yellow, from the board's Edge.Cuts read even-odd (inside a cutout is outside the board)."""
+    path = env.tmp / "outlined.kicad_pcb"
+    path.write_text(OUTLINED.format(parts="\n".join(R0402.format(ref=r, x=x, y=y) for r, x, y in (
+        ("R1", 110, 90), ("R2", 130, 90), ("R3", 115, 85)))), encoding="utf-8")
+    code, out, _ = run(capsys, "cpl", path, "-o", env.out, "--reader", "sexpr", *offline(env))
+    lines = [ln for ln in out.splitlines() if ln.startswith(("RED", "YELLOW"))]
+    assert code == 0 and lines == [
+        "YELLOW  R2  C1002      top     ok: the row point is outside the board outline (Edge.Cuts), 10.00 mm beyond "
+        "its edge: look at it in JLC's preview",
+        "YELLOW  R3  C1002      top     ok: the row point is outside the board outline (Edge.Cuts), 2.00 mm beyond "
+        "its edge: look at it in JLC's preview"], out
+    assert "wrote" in out and len(read_cpl(env.out)) == 3
+    assert run(capsys, "check", path, env.out, "--reader", "sexpr", *offline(env), "--fail-on", "yellow")[0] == 1
+    # a red row keeps its own first message; the outline's comes last
+    write_cpl(env.out, [dataclasses.replace(r, x=25.0) if r.ref == "R1" else r for r in read_cpl(env.out)])
+    code, out, _ = run(capsys, "check", path, env.out, "--reader", "sexpr", *offline(env), "--json", "-")
+    r1 = next(r for r in json.loads(out)["results"] if r["ref"] == "R1")
+    assert code == 2 and r1["status"] == "off-copper" and r1["messages"][-1].startswith(
+        "the row point is outside the board outline (Edge.Cuts), 5.00 mm beyond its edge")
 
 
 def test_cpl_refuses_red_rows(env, capsys):

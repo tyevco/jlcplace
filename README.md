@@ -133,7 +133,10 @@ jlcplace cpl board.kicad_pcb -o board-CPL.csv
 ```
 
 `cpl` takes each part's correction from the database (`--db`) or fits one, writes the rows, and checks the file it
-wrote. With `--gerbers` it writes the rows relative to the Gerbers' (0, 0), the origin JLC will read them from. If
+wrote. A part with neither an EasyEDA footprint nor a stored correction gets KiCad's angle and the centre of its
+courtyard (else of its fabrication-layer drawing): JLC places a part by its centre, and KiCad's anchor is pin 1 on
+most through-hole connectors (a BNC's is 15.55 mm from its body's centre). Without either drawing the row is KiCad's
+anchor, and the correction's reason says when that is a pin. With `--gerbers` it writes the rows relative to the Gerbers' (0, 0), the origin JLC will read them from. If
 any row is red, it exits with code 2 and writes no file: a CPL already at that path is left unchanged, and the run
 says so. `--force` writes the file anyway. `-o -` is refused: the CPL is a file (`--json -` prints the
 results).
@@ -256,7 +259,7 @@ Every CPL row gets a verdict:
 | verdict | meaning |
 |---|---|
 | red | An EasyEDA pad lands off copper or on another pin's net. Also: the LCSC part's pin names, through the row, a permutation of the symbol's pin functions that no placement fixes (status `pinout`: a MOSFET whose pins are G, S, D on a G, D, S symbol is wired wrong whatever the rotation); a polar two-terminal part the other way round than its correction puts it (status `reversed`), or whose polarity needs a decision; a row nothing vouches for (the pad numbers do not decide it and the correction is red, or differs from it); no EasyEDA footprint for a polar or multi-pin part, or a two-pad part's row point off its pads; the row of a stored correction verified wrong (`confirm --failed`, status `verified-wrong`), whatever its pads land on; a row for a part that is not on the board, is DNP or board-only, or is on the wrong layer; a duplicate row; a reference two placed parts carry (JLC cannot tell them apart); a part JLC places (assembled, or listed by the BOM whatever the board excludes it from) with no row. |
-| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, or a two-pad trimmer capacitor (the checklist asks which pad is its rotor, which turned round it is on the other one); a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; a row away from a stored correction verified wrong (nothing verified vouches for it); numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board excludes from its BOM or position files that nothing else lists (JLC does not place it); a part the board excludes from its position files that the BOM or the CPL lists (it is checked, and JLC places it: it never sees KiCad's attributes); or a BOM inconsistency. |
+| yellow | Probably fine, but look: no EasyEDA footprint for a two-pad non-polar part, or a two-pad trimmer capacitor (the checklist asks which pad is its rotor, which turned round it is on the other one); a row off where a known correction puts the part ("offset": more than 0.15 mm and a quarter of the smallest pad it lands on, or 2 degrees, or a quarter turn that only alike lands let land); a row that lands as a fitted correction does whose choice of placement is uncertain (a polarity only the pad numbers decide, or whose evidence conflicts: a "+" against the pad numbers; an orientation the pads do not fix); KiCad pads that no EasyEDA pad lands on; a row point outside the board outline (the Gerbers' outline with `--gerbers`, else the board's Edge.Cuts, a cutout counting as outside); a row away from a stored correction verified wrong (nothing verified vouches for it); numbering vouched for only by a manual decision; pin names that differ from the symbol's otherwise, more of them than agree (check the LCSC part's pinout); a row for a part the board excludes from its BOM or position files that nothing else lists (JLC does not place it); a part the board excludes from its position files that the BOM or the CPL lists (it is checked, and JLC places it: it never sees KiCad's attributes); or a BOM inconsistency. |
 | green | Every pad lands on its own pin. Harmless differences are allowed: a resistor's terminals swapped, pads of the same net, or numbers that only one side has (MP, A1B12). |
 | verified | Green, and the row matches a correction verified in JLC's preview or on an assembled board. |
 
@@ -511,7 +514,9 @@ checklist files hold derived data only.
   names before the main symbol's; on three real records (two 324-ball BGAs, a 3-unit module) they name exactly
   the footprint's pads.
 * A part EasyEDA has no record for is not simulated: yellow for a two-pad non-polar part or trimmer capacitor (its
-  rotor is a checklist item), red otherwise, unless a stored correction exists.
+  rotor is a checklist item), red otherwise, unless a stored correction exists. For a red one the check says where
+  its row point lies: the centre of its courtyard, or KiCad's anchor and the pin that is; `cpl` writes it at the
+  courtyard's centre, which is a guess at where JLC's footprint has its origin.
 * The EasyEDA API is not a documented, stable interface. Only `fetch` and `--online` use it. jlcplace waits at least
   0.7 s between requests, backs off on errors (honouring Retry-After up to 5 minutes), and stops using it for the
   run after 5 failures in a row or once its retry waits add up to 10 minutes.

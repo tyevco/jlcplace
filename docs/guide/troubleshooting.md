@@ -126,8 +126,8 @@ jlcplace check dial-me-spinner-base.kicad_pcb released-base-CPL.csv
 
 ```text
 jlcplace 0.1.0: dial-me-spinner-base.kicad_pcb (sexpr, 25 parts, origin aux 100, 100) vs released-base-CPL.csv (17 rows), bottom reading jlc-2022
-RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part
-RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads)
+RED     D1   C151296    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a polar two-pad part; the row point is the centre of its courtyard
+RED     J1   C165948    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); not a two-pad non-polar part (20 copper pads); the row point is 1.01 mm from the centre of its courtyard
 ...
 YELLOW  C1   C277470    top     placement not simulated: no EasyEDA footprint (no EasyEDA record in the cache (`jlcplace fetch` or --online downloads it)); a two-pad non-polar part, and the row point is on it
 ...
@@ -286,7 +286,8 @@ YELLOW  R26  C4167968   top     placement not simulated: no EasyEDA footprint (C
 for 7 days before `fetch` asks again (`fetch --refresh` asks now). For a two-pad non-polar part like R26, jlcplace
 can still check that the row point lies on its pads, so the row is yellow. A polar part (a diode, an LED) or a part
 with more pads is red: its orientation cannot be checked at all. Either way the part goes on the preview checklist
-under "not simulated", and `jlcplace cpl` gives it KiCad's own position and angle.
+under "not simulated", and `jlcplace cpl` gives it KiCad's angle at the centre of its courtyard (KiCad's own position
+for a centred part like R26; a through-hole connector's anchor is usually pin 1, off its centre).
 
 **Fix.** Look at the part in JLC's placement preview. When it sits right, record that with the CPL you uploaded:
 

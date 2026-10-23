@@ -21,6 +21,11 @@ island crosses the gap. The S-expression reader builds custom pads as the union 
 A footprint's filled graphics on its paste layer (fp_poly, fp_rect, fp_circle on F.Paste, B.Paste when flipped) are
 stencil openings that KiCad plots as it plots a paste-only pad: both readers add them after the pads, as paste
 apertures (number "", copper False, custom, Pad.poly their outline, (x, y) its box centre).
+
+Part.body is the box, in the library frame, of the footprint's drawing on its courtyard layer (F.CrtYd, B.CrtYd when
+flipped), else on its fabrication layer (text left out): the centre lines of lines, rectangles, circles, arcs (their
+ends and axis extremes), polygons and curves. KiCad's anchor is pin 1 on many through-hole footprints; JLC places a
+part by its centre, which a part with no EasyEDA footprint has only from its body (pipeline.fallback).
 """
 
 from __future__ import annotations
@@ -236,6 +241,7 @@ def _pcbnew_part(pcbnew, fp, lcsc_fields) -> Part:
                 board_only=bool(fp.IsBoardOnly()), tht=bool(fp.GetAttributes() & pcbnew.FP_THROUGH_HOLE))
     part.pads = [_pcbnew_pad(pcbnew, pad, part) for pad in fp.Pads()]
     part.pads += _pcbnew_paste(pcbnew, fp, part)
+    part.body, part.body_layer = _pcbnew_body(pcbnew, fp, part)
     return part
 
 
@@ -288,6 +294,68 @@ def _pcbnew_paste(pcbnew, fp, part: Part) -> list[Pad]:
                 rings.append([board_to_library(part, _mm2(ch.CPoint(k))) for k in range(ch.PointCount())])
         out += _aperture(_bridge(_clean_rings(rings)))
     return out
+
+
+def _pcbnew_body(pcbnew, fp, part: Part) -> tuple[tuple | None, str]:
+    """(Part.body, Part.body_layer) from the footprint's graphics (module docstring)."""
+    side = "B" if part.bottom else "F"
+    layers = {getattr(pcbnew, f"{side}_{name}"): name for name, _ in _BODY_LAYERS}
+    textbox = getattr(pcbnew, "PCB_TEXTBOX", ())
+    found: dict[str, list] = {}
+    for g in fp.GraphicalItems():
+        if not isinstance(g, pcbnew.PCB_SHAPE) or isinstance(g, textbox) or g.GetLayer() not in layers:
+            continue
+
+        def lib(v):
+            return board_to_library(part, _mm2(v))
+
+        k = g.GetShape()
+        if k == pcbnew.SHAPE_T_SEGMENT:
+            pts = [lib(g.GetStart()), lib(g.GetEnd())]
+        elif k == pcbnew.SHAPE_T_RECTANGLE:
+            pts = [lib(v) for v in g.GetRectCorners()]
+        elif k == pcbnew.SHAPE_T_CIRCLE:
+            c, r = lib(g.GetCenter()), g.GetRadius() / 1e6
+            pts = [(c[0] + dx, c[1] + dy) for dx, dy in ((r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r))]
+        elif k == pcbnew.SHAPE_T_ARC:
+            s, m, e = lib(g.GetStart()), lib(g.GetArcMid()), lib(g.GetEnd())
+            arc = _three_point_arc(s, m, e)
+            pts = _arc_extent(*arc) if arc else [s, e]
+        elif k == pcbnew.SHAPE_T_POLY:
+            ps = g.GetPolyShape()
+            pts = [lib(ps.Outline(i).CPoint(j)) for i in range(ps.OutlineCount())
+                   for j in range(ps.Outline(i).PointCount())]
+        elif k == pcbnew.SHAPE_T_BEZIER:
+            pts = _bezier([lib(g.GetStart()), lib(g.GetBezierC1()), lib(g.GetBezierC2()), lib(g.GetEnd())], ARC_ERR)
+        else:
+            continue
+        found.setdefault(layers[g.GetLayer()], []).extend(pts)
+    return _body(found)
+
+
+#: the drawings a footprint's body is taken from (Part.body), in order: its courtyard, else its fabrication layer
+_BODY_LAYERS = (("CrtYd", "courtyard"), ("Fab", "fab"))
+
+
+def _body(found: dict[str, list]) -> tuple[tuple | None, str]:
+    """(box, layer word) of the first _BODY_LAYERS layer with points in `found` (library frame), else (None, "")."""
+    for name, word in _BODY_LAYERS:
+        if found.get(name):
+            a = np.asarray(found[name], float)
+            (x0, y0), (x1, y1) = a.min(0), a.max(0)
+            return tuple(round(float(v), 6) + 0.0 for v in (x0, y0, x1, y1)), word
+    return None, ""
+
+
+def _arc_extent(c, r: float, a0: float, a1: float) -> list:
+    """An arc's ends and its axis extremes within its sweep (angles in radians, either direction): its box, exactly."""
+    lo, hi = min(a0, a1), max(a0, a1)
+    pts = [(c[0] + r * math.cos(a), c[1] + r * math.sin(a)) for a in (a0, a1)]
+    k = math.ceil(lo / (math.pi / 2))
+    while k * math.pi / 2 <= hi:
+        pts.append((c[0] + r * math.cos(k * math.pi / 2), c[1] + r * math.sin(k * math.pi / 2)))
+        k += 1
+    return pts
 
 
 def _aperture(poly) -> list[Pad]:
@@ -473,7 +541,40 @@ def _sexpr_part(fp, version: int, nets: dict, lcsc_fields, err: float) -> Part:
                 exclude_bom=virtual or flag("exclude_from_bom"), board_only=flag("board_only"), tht=tht)
     part.pads = [_sexpr_pad(c, part, theta, nets, err) for c in _kids(fp, "pad")]
     part.pads += _sexpr_paste(fp, part, err)
+    part.body, part.body_layer = _sexpr_body(fp, part, err)
     return part
+
+
+def _sexpr_body(fp, part: Part, err: float) -> tuple[tuple | None, str]:
+    """(Part.body, Part.body_layer) from the footprint's graphics (module docstring). Their points are stored as
+    placed (after any flip), in the footprint's unrotated frame: the library frame up to the flip."""
+    side = "B." if part.bottom else "F."
+    layers = {side + name: name for name, _ in _BODY_LAYERS}
+    found: dict[str, list] = {}
+    for c in fp:
+        if not (isinstance(c, list) and c and isinstance(c[0], str) and c[0].startswith("fp_")):
+            continue
+        layer = layers.get((_atoms(_kid(c, "layer")) or [""])[0])
+        kind = c[0][3:]
+        if layer is None or kind not in ("line", "rect", "circle", "arc", "poly", "curve"):
+            continue
+        if kind in ("line", "rect"):
+            (x0, y0), (x1, y1) = _xy(_kid(c, "start")), _xy(_kid(c, "end"))
+            pts = [(x0, y0), (x1, y1)] + ([(x1, y0), (x0, y1)] if kind == "rect" else [])
+        elif kind == "circle":
+            o = _xy(_kid(c, "center"))
+            r = math.dist(o, _xy(_kid(c, "end")))
+            pts = [(o[0] + dx, o[1] + dy) for dx, dy in ((r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r))]
+        elif kind == "arc":
+            arc = _arc_params(c)
+            pts = _arc_extent(*arc) if arc else [_xy(_kid(c, "start")), _xy(_kid(c, "end"))]
+        elif kind == "poly":
+            pts = _poly_points(_kid(c, "pts"), err)
+        else:
+            q = [_xy(v) for v in _kids(_kid(c, "pts"), "xy")]
+            pts = _bezier(q, err) if len(q) == 4 else q
+        found.setdefault(layer, []).extend((x, -y if part.bottom else y) for x, y in pts)
+    return _body(found)
 
 
 _PASTE_GRAPHICS = {"fp_poly": "gr_poly", "fp_rect": "gr_rect", "fp_circle": "gr_circle"}

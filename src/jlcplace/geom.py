@@ -1,4 +1,5 @@
-"""Geometry: rigid fits, assignment, pad outlines and point-in-pad tests. Pure Python + numpy, no KiCad needed.
+"""Geometry: rigid fits, assignment, pad outlines, point-in-pad tests and outline rings. Pure Python + numpy, no KiCad
+needed.
 
 Pads (model.Pad and model.EEPad) share the fields used here: x, y, w, h, angle, shape, rr, poly. A pad's outline
 point u (in the pad's own axes, w along x) sits at  (x, y) + R(angle) . u  in the pad's frame.
@@ -215,3 +216,27 @@ def pad_hash(pads) -> str:
 def centroid(pts):
     pts = list(pts)
     return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+
+
+def rings(lines, tol: float = 0.01) -> list[list]:
+    """The polylines chained end to end, either way round, into closed rings (an outline drawn as separate segments
+    and arcs, as KiCad's Edge.Cuts and the Gerbers' profile are); pieces that close no ring are left out."""
+    todo = [list(ln) for ln in lines if len(ln) >= 2]
+    out = []
+    while todo:
+        ring = todo.pop()
+        while ring and math.dist(ring[0], ring[-1]) > tol:
+            for i, ln in enumerate(todo):              # noqa: B007 - i is the line used, deleted after the break
+                if math.dist(ring[-1], ln[0]) <= tol:
+                    ring += ln[1:]
+                    break
+                if math.dist(ring[-1], ln[-1]) <= tol:
+                    ring += ln[-2::-1]
+                    break
+            else:
+                ring = None
+                break
+            del todo[i]
+        if ring and len(ring) > 3:
+            out.append(ring)
+    return out
