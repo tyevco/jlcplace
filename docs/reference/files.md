@@ -238,7 +238,9 @@ U1,8.0000mm,7.5000mm,Top,180^M$
 * The header is exactly `Designator,Mid X,Mid Y,Layer,Rotation`, and lines end in CRLF. The file is UTF-8 without a
   byte order mark.
 * There is one row for each part JLC assembles that has an LCSC code: not DNP, not excluded from the position files
-  or the BOM, not board-only. Rows are sorted naturally (R2 before R10). A part whose only match is a mirror image of
+  or the BOM, not board-only. With `--bom`, also for each part the BOM lists that the board excludes from its position
+  files or its BOM (JLC never sees KiCad's attributes), unless an assembled part carries its reference. Rows are
+  sorted naturally (R2 before R10). A part whose only match is a mirror image of
   KiCad's footprint gets no row, and the check calls it red.
 * The rows go to a temporary file next to the target first. jlcplace reads that file back and checks it, so the
   check is of what is in the file, and then renames it over the target.

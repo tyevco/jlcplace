@@ -471,10 +471,11 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
   parts JLC does not place is checked against the placed one). Rows for refs not on the board
   ("not-on-board"), on the wrong layer ("layer-mismatch"), repeated ("duplicate", every copy) are red; "not-placed"
   is red for DNP and board-only parts ("JLC must not place it") and yellow for a part the board excludes from its BOM
-  or position files that nothing else lists ("... and the BOM does not list it: JLC does not place it"). A part JLC
-  places that is not assembled is simulated like any other row, with a message: for an exclude_pos part, first when
-  the row is green, and the row is yellow at least ("the board excludes it from the position files, but the BOM and
-  the CPL list it: JLC places it (it never sees KiCad's attributes); untick ..."). A row for a part with no code is
+  or position files that nothing else lists ("...: JLC does not place it unless the BOM lists it"; with a BOM, "... and
+  the BOM does not list it: JLC does not place it"). A part JLC places that is not assembled is simulated like any
+  other row, with a message: for an exclude_pos part, first when the row is green, and the row is yellow at least ("the
+  board excludes it from the position files, but the BOM and the CPL list it: JLC places it (it never sees KiCad's
+  attributes); untick ..."). A row for a part with no code is
   checked without a footprint. `corrections` is keyed by ref or by code (the ref wins). Lookups
   happen once per code; an exception from `ee_lookup` becomes NotFound("lookup failed (...)").
 * Statuses: ok | offset | off-copper | wrong-pad | reversed | renumbered | pinout | verified-wrong | not-simulated |

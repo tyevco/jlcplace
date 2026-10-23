@@ -109,7 +109,8 @@ C1,16.9889mm,-18.7280mm,Bottom,180^M$
   three decimals). Rows are sorted by reference, R2 before R10.
 * **Rows**: one for every part JLC assembles that has an LCSC code: placed (not DNP, not excluded from position files,
   not board-only, KiCad's "Not in schematic" attribute) and not excluded from the BOM. On this board that is 184 of its 209 footprints. With `--bom`, the
-  BOM's code decides the correction, since JLC places the part the BOM names.
+  BOM's code decides the correction, since JLC places the part the BOM names, and a part the BOM lists gets its row
+  though the board excludes it from its position files or its BOM (not a DNP or board-only part).
 * **Origin**: the board's drill/place file origin (KiCad's auxiliary origin, at (100, 100) mm on this board), unless
   `--origin` names another one. The CPL's coordinates have to match your Gerbers', so plot the Gerbers from the same
   origin (KiCad's "Use drill/place file origin" plot option).
