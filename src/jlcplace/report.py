@@ -34,8 +34,8 @@ from . import __version__, geom
 from . import board as _kb
 from .convention import BOTTOM_READINGS, cpl_to_board, ee_to_board, library_to_board, rot
 from .cpl import assembled, atomic_write, natural_key
-from .model import BOTTOM, FORMULA_START, GREEN, RED, TOP, VERIFIED, YELLOW, CplRow, EEFootprint, NotFound, \
-    RowResult, printable
+from .model import BOTTOM, FORMULA_START, GREEN, RED, TOP, VERDICT_ORDER, VERIFIED, YELLOW, CplRow, EEFootprint, \
+    NotFound, RowResult, printable
 from .parts import norm_number
 from .check import jlc_part
 from .pipeline import CheckItem, Finding, Run, gerber_notes, key_reasons, origin_lines, proxy_footprint
@@ -161,10 +161,14 @@ def summary(run: Run, *, color: bool = False) -> str:
     for m in run.bom_messages:
         out.append(f"{paint(YELLOW, 'BOM   ')}  {printable(m)}")
     c = run.counts()
+    found: dict[str, str] = {}                        # each kind of finding once, at its worst
+    for f in run.findings:
+        if f.status not in found or VERDICT_ORDER.get(f.verdict, 0) < VERDICT_ORDER.get(found[f.status], 0):
+            found[f.status] = f.verdict
     out.append(f"{len(run.results)} results: "
                + ", ".join(paint(v, f"{c[v]} {v}") for v in (RED, YELLOW, GREEN, VERIFIED))
                + (f"; {plural(len(run.bom_messages), 'BOM issue')}" if run.bom_messages else "")
-               + "".join(f"; {f.status} {paint(f.verdict, f.verdict)}" for f in run.findings))
+               + "".join(f"; {k} {paint(v, v)}" for k, v in found.items()))
     if run.gerbers is None and not run.findings:      # once, short: the most common way to ruin every row
         out.append(printable(f"Gerbers not checked: plot them from this CPL's origin ({_origin(run)}), as JLC lays the "
                              f"CPL over them from their own 0, 0 (--gerbers checks it)"))

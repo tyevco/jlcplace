@@ -376,6 +376,27 @@ def test_unreadable_gerbers_are_bad_input(made, capsys):
     assert run(capsys, "check", e.board, e.out, "--gerbers", zipped, *offline(e))[0] == 3
 
 
+def test_a_side_without_its_copper_layer_is_not_called_older_than_the_board(made, capsys):
+    """field: a set without its top copper layer was also 'older than the board, re-plot them', for the top pads
+    with no paste (test points, fiducials), which its paste layer alone cannot show; and the count line said
+    'gerbers red' once per finding."""
+    e = made
+    (e.aux / "board-top_Cu.gbr").unlink()
+    paste = e.aux / "board-top_Paste.gbr"
+    text = paste.read_text(encoding="utf-8").splitlines()
+    first = next(i for i, ln in enumerate(text) if ln.endswith("D03*"))
+    paste.write_text("\n".join(text[:first] + text[first + 1:]) + "\n", encoding="utf-8")      # a pad with no paste
+    code, out, _ = run(capsys, "check", e.board, e.out, "--gerbers", e.aux, *offline(e))
+    assert code == 2 and lines(out)[1].startswith("RED     the Gerbers have no top copper layer: "), out
+    assert "older than the board" not in out and out.count("; gerbers red") == 1, out
+    # a part moved since the plot is still said; the count line names the kind of finding once
+    old = plot(e.board_obj, ORIGIN, e.tmp / "g-old", move={"R2": (1.0, 0.0)})
+    (old / "board-top_Cu.gbr").unlink()
+    code, out, _ = run(capsys, "check", e.board, e.out, "--gerbers", old, *offline(e))
+    assert "older than the board" in lines(out)[1] and "no top copper layer" in lines(out)[2], out
+    assert next(ln for ln in lines(out) if " results: " in ln).endswith(" verified; gerbers red"), out
+
+
 def test_a_side_missing_from_the_gerbers_is_said(made, capsys):
     """A set without the bottom copper and paste: the bottom was never checked, and JLC could not make it: red. A
     set without the bottom paste: the bottom parts would get no paste, yellow while the CPL places parts there."""
