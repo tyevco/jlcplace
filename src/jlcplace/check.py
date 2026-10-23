@@ -139,8 +139,9 @@ def unsimulated_off(part: Part, row: CplRow, origin, *, outside: bool = False, c
                     ) -> tuple[float, str] | None:
     """For a part without EasyEDA pads, where its row point lies off the part so far that JLC cannot have put the
     part right there: (mm, what it is off) when check calls the row red for it (a two-pad non-polar part off its
-    pads), when it is off its pads and its body both, or off its pads and `outside` the board outline; else None.
-    JLC places a part by its centre, which may lie off its pads (a right-angle connector) but on its body."""
+    pads), when it is off its pads and its body both, or, for a part without a body, off its pads and `outside` the
+    board outline; else None. JLC places a part by its centre, which may lie off its pads (a right-angle connector)
+    but on its body, and beyond the board's edge (an edge-mount connector, whose body overhangs it)."""
     far = _off_part(part, row, origin)
     if far is None:
         return None
@@ -149,7 +150,7 @@ def unsimulated_off(part: Part, row: CplRow, origin, *, outside: bool = False, c
     wide = _off_part(part, row, origin, body=True) if part.body else None
     if wide is not None:
         return wide, f"the part's pads and its {BODY_WORDS.get(part.body_layer, 'body')}"
-    return (far, "the part's pads, outside the board outline") if outside else None
+    return (far, "the part's pads, outside the board outline") if outside and not part.body else None
 
 
 def _row_point(part: Part, row: CplRow, origin) -> str:

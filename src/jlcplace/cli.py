@@ -43,7 +43,7 @@ from .fit import ee_landings, fit_part
 from .gerber import board_origins, gerber_origin, read_gerbers
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Correction, CplRow, EEFootprint, NotFound, \
     printable
-from .parts import ee_key, kicad_hash
+from .parts import ee_key, kicad_hash, norm_number
 from .pipeline import Finding, apply_bom_codes, bom_overrides, bom_refs, check, correction, describe, fallback, \
     gerber_findings, is_code, jlc_origin, key_reasons, lookup_ee, off_board, offset_hints, offset_tol, \
     origin_findings, resolve, row_lines
@@ -694,33 +694,63 @@ def _seen_off(part, ee, seen: CplRow, uploaded: Correction, board, rings) -> tup
     return None if off is None else (f"puts the row point {off[0]:.2f} mm off {off[1]}", off[0])
 
 
-def _not_seen_right(args, ref, part, ee, seen: CplRow, board, why: tuple[str, float], pressed: bool) -> str:
+def _not_seen_right(args, ref, part, ee, seen: CplRow, board, why: tuple[str, float], pressed: bool,
+                    bare_off: bool = False) -> str:
     """confirm's refusal of a row seen right that `_seen_off` rules out, with what applies: a row near its part (or
-    read from the Gerbers' (0, 0), JLC's own origin) is off as `check` reports it, and JLC moved the part; one far off
-    is usually read from another origin. A bottom part's row may be of another --reading: named when one of them
-    lands most of its EasyEDA pads on copper."""
+    read from the Gerbers' (0, 0), JLC's own origin) is off as `check` reports it, and JLC moved the part; moved so
+    by the presses, they are wrong (`bare_off`: the row is off without them too); one far off is usually read from
+    another origin. A bottom part's row may be of another --reading: named when one of them lands most of its
+    EasyEDA pads on copper, the one landing the most on the KiCad pads of their own numbers first (a land pattern
+    that looks the same turned half a turn lands under two readings: its numbers give a polar part's polarity), then
+    on copper; readings that still tie are all named."""
     moved = " and moved by the presses" if pressed else ""
     head = f"{ref}: read from {_origin_words(board)}{moved}, the row in {Path(args.cpl).name} {why[0]}, so it is not " \
            f"what was seen right: "
-    if board.origin_kind == "gerber" or why[1] <= NEAR_MM:
+    near = board.origin_kind == "gerber" or why[1] <= NEAR_MM
+    if near and pressed:
+        wrong = ("the presses are probably miscounted or of the wrong sign" + (
+            " (on the bottom, a right press moves the part right as seen from below)" if part.layer == BOTTOM else "")
+            + ": confirm again with those that were made")
+        out = (f"the row is off without the presses too (`jlcplace check` reports it so), and they do not put it on "
+               f"the part: {wrong}" if bare_off else f"without the presses the row is on the part, and they move it "
+                                                     f"off: {wrong}")
+    elif near:
         out = ("the row itself is off (`jlcplace check` reports it so): if the part came out right, JLC moved it and "
-               "there is nothing to record" + ("; check the presses' signs" if pressed else ""))
+               "there is nothing to record")
     else:
         out = ("the rows are usually read from another origin than the CPL's: give the Gerbers it was ordered with "
                "(--gerbers)" + ("" if args.origin else ", or the origin `jlcplace check` names on its first line "
                                                        "(--origin)"))
     if part.layer == BOTTOM and isinstance(ee, EEFootprint) and ee.pads:
-        on = {n: sum(lnd.kicad_number is not None for lnd in ee_landings(
-            part, ee, row_correction(part, seen, board.origin, n))) for n in BOTTOM_READINGS if n != args.reading}
-        best = max(on, key=on.get)
         n = len(ee.pads)
-        if 2 * on[best] > n:                       # most of them: not a turn that puts a pad or two on copper by chance
-            lands = "every EasyEDA pad" if on[best] == n else f"{on[best]} of its {n} EasyEDA pads"
-            out = (f"the CPL may have been written with --reading {best}, under which the row lands {lands} on "
-                   f"copper: pass the same --reading; otherwise {out}")
+        on = {}                                    # reading -> (pads on their own number, pads on copper)
+        for name in BOTTOM_READINGS:
+            got = ee_landings(part, ee, row_correction(part, seen, board.origin, name))
+            hits = sum(lnd.kicad_number is not None for lnd in got)
+            if name != args.reading and 2 * hits > n:   # most of them: not a turn that puts a pad or two on copper
+                on[name] = (sum(lnd.kicad_number is not None and norm_number(lnd.kicad_number)
+                                == norm_number(lnd.ee_number) for lnd in got), hits)
+        if on:
+            best = max(on.values())
+            names = [name for name in on if on[name] == best]
+            lands = ("every EasyEDA pad on the KiCad pad of its number" if best[0] == n else
+                     "every EasyEDA pad on copper" if best[1] == n else f"{best[1]} of its {n} EasyEDA pads on copper")
+            out = (f"the CPL may have been written with --reading {' or '.join(names)}, under which the row lands "
+                   f"{lands}: pass " + ("the same --reading" if len(names) == 1 else "the one it was written with")
+                   + f"; otherwise {out}")
         else:
             out += "; a bottom part's row may also be of another --reading: pass the one the CPL was written with"
     return head + out + "; nothing recorded"
+
+
+def _origin_hint(args, board, why: tuple[str, float] | None) -> str:
+    """--failed: that a row far off its part (`_seen_off`) may be read from another origin than the CPL's; '' for one
+    near it, or read from the Gerbers' (0, 0). A row seen wrong may well be off the part, but not tens of mm."""
+    if why is None or why[1] <= NEAR_MM or board.origin_kind == "gerber":
+        return ""
+    return (f"read from {_origin_words(board)}, it {why[0]}: the rows may be read from another origin than the CPL's "
+            f"(give the Gerbers it was ordered with, --gerbers"
+            + ("" if args.origin else ", or the origin `jlcplace check` names on its first line, --origin") + ")")
 
 
 def _close(a: Correction, b: Correction) -> bool:
@@ -758,7 +788,8 @@ def cmd_confirm(args) -> int:
         uploaded = None
         if rows is not None:
             # what was checked: the uploaded row, moved by the presses in the preview, and its correction
-            seen = presses_to_row(_uploaded_row(rows, part, args.cpl), **presses)
+            row = _uploaded_row(rows, part, args.cpl)
+            seen = presses_to_row(row, **presses)
             how = f"; presses: space {args.space}, right {args.right}, up {args.up}" if pressed else ""
             uploaded = replace(row_correction(part, seen, board.origin, args.reading), method="manual",
                                status="manual", verdict=YELLOW, ee_key=key, kicad_hash=h,
@@ -767,8 +798,10 @@ def cmd_confirm(args) -> int:
             if why is not None and not args.failed:
                 # nothing that was seen right puts every pad off copper, or its point off the part: read from another
                 # origin than the CPL's (the Gerbers' (0, 0), when jlcplace cpl --gerbers wrote it), the correction
-                # stored from it would be that far off; or JLC moved the part
-                raise BadInput(_not_seen_right(args, ref, part, ee, seen, board, why, pressed))
+                # stored from it would be that far off; or JLC moved the part, or the presses are wrong
+                bare_off = pressed and _seen_off(part, ee, row, row_correction(part, row, board.origin, args.reading),
+                                                 board, rings) is not None
+                raise BadInput(_not_seen_right(args, ref, part, ee, seen, board, why, pressed, bare_off))
             off[ref], seen_at[ref] = why, seen.rotation
         stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
         fitted = None
@@ -789,17 +822,17 @@ def cmd_confirm(args) -> int:
             raise BadInput(f"{other[0]} and {ref} share a database entry ({part.lcsc} on the same footprints), but "
                            f"their rows give {describe(other[1])} and {describe(uploaded)}: confirm only the parts "
                            f"whose rows were right")
+        hint = _origin_hint(args, board, off.get(ref)) if args.failed else ""
+        if base is uploaded and hint:
+            # nothing to fit and nothing stored: the failed row would become the entry's correction, that far off
+            raise BadInput(f"{ref}: with no EasyEDA footprint and no stored correction, its failure would store the "
+                           f"row in {cpl_name} as its correction; {hint}; nothing recorded")
         if _close(base, uploaded):
             continue
         if args.failed:
-            # a row seen wrong may well be off the part; one read from another origin than the CPL's is far off it
-            far = off.get(ref) and off[ref][1] > NEAR_MM and board.origin_kind != "gerber"
-            hint = (f"; read from {_origin_words(board)}, it {off[ref][0]}: the rows may be read from another origin "
-                    f"than the CPL's (give the Gerbers it was ordered with, --gerbers"
-                    + ("" if args.origin else ", or the origin `jlcplace check` names on its first line, --origin")
-                    + ")" if far else "")
             raise BadInput(f"{ref}: the row in {cpl_name} is not the stored correction's ({describe(base)}): its "
-                           f"failure says nothing about that correction{hint}; nothing recorded")
+                           f"failure says nothing about that correction{'; ' + hint if hint else ''}; nothing "
+                           f"recorded")
         rank = STATUS_RANK.get(base.status, 0)
         if rank >= STATUS_RANK["preview-verified"] and rank >= STATUS_RANK[SOURCES[args.source]]:
             raise BadInput(f"{ref}: the stored correction is {base.status} with other numbers ({describe(base)}; "
