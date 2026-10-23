@@ -25,6 +25,10 @@ preview proved, so that the next `jlcplace cpl` writes those rows as verified.
   jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db --checklist checklist.md --overlay overlay
   ```
 
+  If the CPL was written with a `--reading` other than the default `jlc-2022` (`jlcplace cpl --reading X`, after
+  [diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md) found how JLC reads the bottom side), pass the
+  same `--reading` here and to every `confirm` below.
+
 * The correction database directory (`jlcplace-db/` unless the project has another; `confirm` creates it) and the
   name of the person looking (`--by`). Run `jlcplace --version` first. If it is missing, follow
   [setup-jlcplace](../setup-jlcplace/SKILL.md).
@@ -66,7 +70,9 @@ item left for them.
 
 Pass the uploaded CPL every time, read from the origin it was written from: the same `--gerbers` as the check (leave
 it out without the zip, and pass the `--origin` the check's first line names when it is not aux: `origin 0, 0 from
-the Gerbers (absolute)` is `--origin absolute`). Add `--note` with what was seen when it helps the next person.
+the Gerbers (absolute)` is `--origin absolute`; when the check ends with an `origin mismatch` hint, check again with
+the `--origin` the hint names, and confirm with that same `--origin`). Pass the check's `--reading` too, when it is
+not the default. Add `--note` with what was seen when it helps the next person.
 
 * **Right as shown:**
 
@@ -97,18 +103,24 @@ the Gerbers (absolute)` is `--origin absolute`). Add `--note` with what was seen
 command) when:
 
 * the uploaded CPL has no row for the part;
-* the row, read from that origin, puts every EasyEDA pad off copper (`... so it is not what was seen right`): the
-  origin is wrong; pass `--gerbers` or `--origin` as above;
+* the row puts every EasyEDA pad off copper, or, for a part with no EasyEDA footprint, its point lies off the part
+  (`... so it is not what was seen right`). It is usually read from another origin (or, for a bottom part, another
+  bottom reading): pass what the message names (`--gerbers`, `--origin` as above, or the `--reading` the CPL was
+  written with). When it says `the row itself is off`, the row is wrong as the check reports it: if the part came out
+  right, JLC moved it and there is nothing to record (with presses, check their signs);
 * the part's EasyEDA record is not in the cache (ask before running `jlcplace fetch`; never add `--online`);
 * a verified entry would get other numbers before that entry's own row is recorded as failed;
 * `--failed` is given for a row that is not jlcplace's correction: `the row in ... is not the stored correction's
   (...): its failure says nothing about that correction; nothing recorded`. That row is red or off its correction
-  already, and jlcplace writes another one, so there is nothing to record. Leave the part out, or fix its row.
+  already, and jlcplace writes another one, so there is nothing to record. Leave the part out, or fix its row. But
+  when the message adds that the rows may be read from another origin than the CPL's, the failure is real: record it
+  again with the `--gerbers`, or the `--origin`, the check was given.
 
 Read its message and tell the user. Each successful line says the new status (`preview-verified, verified`), the
 stored correction, the row it gives, and whether it replaced an older correction. For a CPL that `jlcplace cpl`
-wrote with this database, recorded without presses, `replaces the auto correction` usually means the rows were read
-from the wrong origin: tell the user, and do not commit the database until that is settled.
+wrote with this database, recorded without presses, `replaces the auto correction` means the rows were read otherwise
+than the CPL was written: with another `--reading`, from another origin, or against a database that changed since
+the CPL was written. Tell the user, and do not commit the database until that is settled.
 
 After an assembled board has been inspected, record the parts that came out right the same way, with
 `--source board`, the strongest status. For parts that came out wrong, use
@@ -116,7 +128,7 @@ After an assembled board has been inspected, record the parts that came out righ
 
 ## Afterwards
 
-1. Check again with the database, and the same `--gerbers` (or `--origin`) as above:
+1. Check again with the database, and the same `--gerbers` (or `--origin`) and `--reading` as above:
 
    ```sh
    jlcplace check board.kicad_pcb uploaded-CPL.csv --bom uploaded-BOM.csv --gerbers uploaded-gerbers.zip --db jlcplace-db
