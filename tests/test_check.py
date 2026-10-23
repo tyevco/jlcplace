@@ -942,6 +942,28 @@ def test_a_one_pad_part_without_a_footprint_says_why():
         and "more than two" not in res.messages[0]
 
 
+def test_an_exposed_pad_at_the_anchor_is_no_pin_off_the_centre():
+    """A WSON with no courtyard or fabrication drawing and no EasyEDA record: KiCad's anchor is its exposed pad (9), in
+    the middle of its copper. The check said "the row point is KiCad's anchor, pin 9: JLC places a part by its centre"
+    and the fallback "that anchor is pin 9, not the part's centre", a wrong reason to doubt the row; so for a one-pad
+    test point. A connector's pin 1 at the anchor, off the middle of its pads, is still said."""
+    from jlcplace.pipeline import fallback
+    pads = [Pad(str(i + 1), x, y, 0.6, 0.25, net=f"N{i}") for i, (x, y) in enumerate(
+        [(-0.95, -0.75), (-0.95, -0.25), (-0.95, 0.25), (-0.95, 0.75), (0.95, 0.75), (0.95, 0.25), (0.95, -0.25),
+         (0.95, -0.75)])] + [Pad("9", 0.0, 0.0, 0.9, 1.6, net="GND")]
+    part = Part("U40", TOP, 120.0, 80.0, 0.0, footprint="MyParts:WSON-8-1EP", lcsc="C39159", pads=pads)
+    row, nf = CplRow("U40", 20.0, 20.0, TOP, 0.0), NotFound("C39159", "Component not found")
+    res = check_row(part, row, nf, ORIGIN)
+    assert (res.status, res.verdict) == ("not-simulated", RED) and "pin 9" not in res.messages[0], res.messages
+    assert "not the part's centre" not in fallback(part, nf).reasons[0]
+    part.pads = [Pad("1", 0.0, 0.0, 1.0, 1.0, net="X")]                                  # a test point
+    assert "pin 1" not in check_row(part, row, nf, ORIGIN).messages[0]
+    part.pads = [Pad("1", 0.0, 0.0, 1.7, 1.7, kind="tht"), Pad("2", 0.0, 2.54, 1.7, 1.7, kind="tht")]   # a header
+    assert "the row point is KiCad's anchor, pin 1: JLC places a part by its centre" in \
+        check_row(part, row, nf, ORIGIN).messages[0]
+    assert "that anchor is pin 1, not the part's centre" in fallback(part, nf).reasons[0]
+
+
 def test_bidirectional_tvs_may_be_turned_round():
     """truth-7: D13 (pin functions A1 / A2) at 90 and at 270 degrees is the same part."""
     from jlcplace.fit import fit_part

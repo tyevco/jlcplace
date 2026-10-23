@@ -39,7 +39,8 @@ from .fit import fit_part
 from .gerber import ORIGIN_TOL, OriginCheck
 from .model import BOTTOM, GREEN, RED, VERDICT_ORDER, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     EEPad, NotFound, Part, RowResult
-from .parts import BODY_TOL, BODY_WORDS, anchor_pin, body_centre, ee_key, kicad_hash, norm_number, trimmer
+from .parts import BODY_TOL, BODY_WORDS, anchor_pin, body_centre, ee_key, kicad_hash, norm_number, off_centre_pin, \
+    trimmer
 
 _CODE = re.compile(r"C[1-9][0-9]*", re.I)
 
@@ -230,8 +231,8 @@ def fallback(part: Part, ee) -> Correction:
     """No EasyEDA footprint and no stored correction: the row is at KiCad's angle (rot 0) and at the part's centre,
     where JLC places a part: the centre of its courtyard (else of its fabrication-layer drawing) when that is not
     KiCad's anchor, which is pin 1 on most through-hole connectors; else KiCad's own position, and the reason says
-    when that anchor is a pin. Right for the usual centred two-pad passive; the check says not-simulated (red unless
-    non-polar with two pads, or a two-pad trimmer)."""
+    when that anchor is a pin off the middle of the part's copper (not an exposed pad). Right for the usual centred
+    two-pad passive; the check says not-simulated (red unless non-polar with two pads, or a two-pad trimmer)."""
     why = ee.message if isinstance(ee, NotFound) else "no EasyEDA footprint"
     ok = (nonpolar(part) or trimmer(part)) and len(part.copper_pads()) == 2
     c, pin = body_centre(part), anchor_pin(part)
@@ -241,7 +242,7 @@ def fallback(part: Part, ee) -> Correction:
         dx, dy = round(c[0], 4) + 0.0, round(c[1], 4) + 0.0
         what = (f"the centre of its {BODY_WORDS[part.body_layer]}, {math.hypot(*c):.2f} mm from KiCad's anchor"
                 + (f" (pin {pin})" if pin else "") + ", at KiCad's angle")
-    elif pin and c is None and len(part.copper_pads()) > 1:
+    elif c is None and off_centre_pin(part):            # not an exposed pad or a one-pad part's pad: the centre
         what += (f"; that anchor is pin {pin}, not the part's centre, and the board draws no courtyard to take the "
                  f"centre from: check the row in JLC's preview")
     return Correction(rot=0.0, dx=dx, dy=dy, method="none", verdict=YELLOW if ok else RED,

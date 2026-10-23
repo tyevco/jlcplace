@@ -203,7 +203,9 @@ is red. A polar
 two-pad part, a one-pad part, or anything with more pads is red, and the message ends with where the row point lies:
 `the row point is the centre of its courtyard`, `the row point is KiCad's anchor, pin 1, 13.50 mm from the centre of
 its courtyard: JLC places a part by its centre` (KiCad's anchor of a through-hole connector is usually pin 1), or how
-far it is from that centre (J1's EasyEDA origin, which the released CPL uses, is 1.01 mm from it). `jlcplace cpl`
+far it is from that centre (J1's EasyEDA origin, which the released CPL uses, is 1.01 mm from it). With neither a
+courtyard nor a fabrication-layer drawing, the anchor is named a pin only when that pin lies off the middle of the
+part's pads (pin 1 of a connector), not for an exposed pad or a test point's one pad at the anchor. `jlcplace cpl`
 writes such a part at its courtyard's centre. Inside the parentheses, `no EasyEDA record in the
 cache` means `jlcplace fetch` has not been run for it; `Component not found` means EasyEDA has no footprint for the
 code (see [Troubleshooting](../guide/troubleshooting#component-not-found)). A row for a part without an LCSC code is
