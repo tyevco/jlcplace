@@ -155,7 +155,8 @@ After an assembled board has been inspected, record the parts that came out righ
    the correction in with `jlcplace confirm --rot --dx --dy --source manual` (the user's decision; confirm it in the
    next preview); choose another part; or fix the pinout or footprint
    ([diagnose-jlc-misplacement](../diagnose-jlc-misplacement/SKILL.md)).
-   Then write a new CPL from the database ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)). Check that it is written and
+   Then write a new CPL from the database, with the same `--db` and `--reading` (when not `jlc-2022`)
+   ([write-jlc-cpl](../write-jlc-cpl/SKILL.md)). Check that it is written and
    that its checklist no longer says `verification failed` for the part, upload it, and look at the moved and failed
    parts once more.
 3. Tell the user to commit `jlcplace-db/`. It holds derived numbers and the verification history, no EasyEDA data.

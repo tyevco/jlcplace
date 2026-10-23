@@ -456,8 +456,10 @@ every other reading, preferring the one with the most pads off copper: if it sit
 the bottom side as jlcplace assumed, and every other bottom part follows. Recorded with `jlcplace confirm` (`--source
 preview`, or `--source board` on the assembled board), a bottom part shown right rules out every reading under which
 it would have moved, for the whole board: a part that moves only under readings ruled out leaves the checklist. Only
-a part's own verification counts (its reference, side and board): a part that shares the verified one's database
-entry at another angle could still move under a reading that one could not tell apart.
+a part's own verification counts (its reference, side and board), and only for a row at the rotation it was seen at:
+a part that shares the verified one's database entry at another angle could still move under a reading that one
+could not tell apart, and so could the part's own row at another rotation, such as one written under another
+`--reading`.
 
 If JLC ever changes how it reads bottom rotations, `--reading` makes another reading the one the verdicts use (see
 [Checking a CPL](../guide/check#reading-the-bottom-side-rotation)).
