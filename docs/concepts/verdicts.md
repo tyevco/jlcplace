@@ -101,7 +101,9 @@ An `ok` row is **yellow** when:
   without the EasyEDA record, and capped ([below](#capped)).
 * `the row point is outside the board outline (Edge.Cuts), 10.00 mm beyond its edge: look at it in JLC's preview`:
   JLC puts the part's centre off the board (a cutout counts as off it). A part overhanging the edge can have its
-  centre there; a row of another part, or from another origin, too. With `--gerbers` the outline is the Gerbers'.
+  centre there; a row of another part, or from another origin, too. With `--gerbers` the outline is the Gerbers',
+  unless their check finds it wrong (plotted from another origin, another board's: a `gerbers` finding says so), and
+  then the board's Edge.Cuts.
   Any other row outside the outline gets the same message, last.
 
 An `ok` row is **red** when the part's correction is red and nothing else vouches for the row:

@@ -327,6 +327,42 @@ def test_gerbers_that_are_not_this_boards_as_it_is_are_red(made, capsys):
     assert d["findings"][0]["status"] == "gerbers" and d["origin"]["from_gerbers"] is False
 
 
+def profile(directory: Path, origin, rect) -> None:
+    """A profile layer (KiCad's Edge_Cuts) holding the board-frame rectangle `rect` (x0, y0, x1, y1), plotted from
+    `origin`."""
+    x0, y0, x1, y1 = rect
+    out = ["%TF.FileFunction,Profile,NP*%", "%FSLAX46Y46*%", "%MOMM*%", "%ADD10C,0.100000*%", "D10*"]
+    for i, (bx, by) in enumerate(((x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0))):
+        out.append(f"X{round((bx - origin[0]) * 1e6)}Y{round((origin[1] - by) * 1e6)}D0{2 if i == 0 else 1}*")
+    (directory / "board-Edge_Cuts.gm1").write_text("\n".join(out + ["M02*"]) + "\n", encoding="utf-8")
+
+
+def test_rows_are_not_judged_against_an_outline_the_gerbers_check_rejects(env, capsys):  # noqa: F811
+    """The Gerbers' outline plotted from the page origin while the copper is from the aux origin (or another board's
+    outline): the `gerbers` finding says so, and every correct row was yellow too, 'outside the board outline (the
+    Gerbers' outline)'. Such rows are judged against the board's Edge.Cuts; an outline the check accepts is used."""
+    from jlcplace.board import load_board
+    from test_cli import OUTLINED, R0402
+    path = env.tmp / "outlined.kicad_pcb"
+    path.write_text(OUTLINED.format(parts="\n".join(R0402.format(ref=r, x=x, y=y) for r, x, y in (
+        ("R1", 110, 90), ("R2", 130, 90), ("R4", 105, 95), ("R5", 105, 85)))), encoding="utf-8")
+    assert run(capsys, "cpl", path, "-o", env.out, "--reader", "sexpr", *offline(env))[0] == 0
+    board = load_board(path, reader="sexpr")
+    for name, origin, rect, finding in (
+            ("g-moved", PAGE, (100, 80, 120, 100), "was plotted from another origin than the copper"),
+            ("g-other", ORIGIN, (100, 80, 130, 95), "is not the board's Edge.Cuts"),
+            ("g-good", ORIGIN, (100, 80, 120, 100), None)):
+        gerbers = plot(board, ORIGIN, env.tmp / name)
+        profile(gerbers, origin, rect)
+        code, out, _ = run(capsys, "check", path, env.out, "--reader", "sexpr", "--gerbers", gerbers, *offline(env))
+        flagged = [ln for ln in lines(out) if ln.startswith(("RED", "YELLOW"))]
+        what = "Edge.Cuts" if finding else "the Gerbers' outline"
+        assert flagged[-1] == ("YELLOW  R2  C1002      top     ok: the row point is outside the board outline "
+                               f"({what}), 10.00 mm beyond its edge: look at it in JLC's preview"), (name, out)
+        assert "4 results: 0 red, 1 yellow, 3 green" in out, (name, out)
+        assert (finding is None) == (code == 1 or code == 0) and (finding is None or finding in flagged[0]), out
+
+
 def test_unreadable_gerbers_are_bad_input(made, capsys):
     e = made
     code, _, err = run(capsys, "check", e.board, e.out, "--gerbers", e.tmp / "nowhere", *offline(e))

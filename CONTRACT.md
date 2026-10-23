@@ -232,8 +232,9 @@ SCALES; MAX_ZIP; MAX_OBJECTS = 1_000_000; MAX_VERTICES = 10_000_000; MAX_PRIMITI
   (profile) that through the copper's map is not the board's `edge` (Edge.Cuts polylines, board frame: moved by one
   vector, plotted from another origin; or another size) or, without `edge`, holds under half of the board's pads; yellow
   for a side with copper but no paste; red for a set with no outline (no profile layer, or an empty one) when `edge` is
-  given. `messages` start with the verdict; a side without layers is a note, not stale; a set whose pads cannot be
-  compared says which files were taken for which layer and names the files nothing names that hold flashes.
+  given; `outline_ok` = no such problem with the outline (the rows may be judged against it). `messages` start with
+  the verdict; a side without layers is a note, not stale; a set whose pads cannot be compared says which files were
+  taken for which layer and names the files nothing names that hold flashes.
 
 ## parts.py — shared by fit, check and the pipeline
 
@@ -741,7 +742,8 @@ def origin_lines(run) -> list[(verdict, text)]
   rows are checked (cpl: written) from the Gerbers' (0, 0); findings from `gerber_findings` (check: with the CPL's rows)
   and `origin_findings` (`given` = the --origin point when --origin was given; origins named by `gerber.board_origins`).
   `check` and `cpl` (its written rows) run `pipeline.off_board` with the Gerbers' outline (`report.gerber_outline`,
-  when `jlc_origin`), else the board's Edge.Cuts (`report.board_outline`; a snapshot has none: not checked).
+  when `jlc_origin` and `OriginCheck.outline_ok`: an outline the Gerbers' check rejects is a finding, not every row's
+  fault), else the board's Edge.Cuts (`report.board_outline`; a snapshot has none: not checked).
   `check --units in|mil`: when the unit changed how the CPL's numbers were read (bare numbers), a red "units" finding
   (JLC reads them in mm; built after the common offset: when the rows sit on their parts read in mm, it says the file is
   in mm already and --units misread it, not that it is in inches). `check --fixed-cpl CSV`: when the run's common offset
