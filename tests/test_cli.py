@@ -1258,9 +1258,11 @@ def test_one_part_shown_right_at_an_odd_angle_settles_its_code_and_side(env, cap
     """field: the odd-angle item of a code and side names one part, 'the others are the same part on the same side',
     yet once that part was recorded right the next checklist named another one of them, once per part: 44 rounds
     for an LED ring. A verified row of the entry on that side has had its look; a part shown right at a multiple of
-    90 is no look at an odd angle, and the other side is another look."""
-    env.make(*[two(f"R{k}", TOP, 100.0 + 3 * k, 60.0, a, "C1002") for k, a in ((3, 10.0), (4, 20.0), (5, 30.0))],
-             two("R6", BOTTOM, 100.0, 50.0, 40.0, "C1002"))
+    90 is no look at an odd angle, also once it is turned to one (its verification records the rotation it was seen
+    at; an older one that records none settles only the part itself), and the other side is another look."""
+    extra = [two(f"R{k}", TOP, 100.0 + 3 * k, 60.0, a, "C1002") for k, a in ((3, 10.0), (4, 20.0), (5, 30.0))] + [
+        two("R6", BOTTOM, 100.0, 50.0, 40.0, "C1002")]
+    env.make(*extra)
     db = env.tmp / "db"
     run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
 
@@ -1272,6 +1274,20 @@ def test_one_part_shown_right_at_an_odd_angle_settles_its_code_and_side(env, cap
     confirm = ["confirm", env.board, "--db", db, "--by", "ann", "--cpl", env.out, "--source", "preview", *offline(env)]
     assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
     assert run(capsys, *confirm, "--ref", "R1")[0] == 0              # the same entry, at 90: no look at an odd angle
+    assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
+    # the next revision turns R1 to 15 degrees (the same board file, the same database): seen at 90, it settles
+    # nothing, not even its own odd angle
+    board = env.make(*extra)
+    board.parts = [dataclasses.replace(p, angle=15.0) if p.ref == "R1" else p for p in board.parts]
+    save_snapshot(board, env.board)
+    assert run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))[0] == 0
+    (v,) = json.loads((db / "C1002.json").read_text(encoding="utf-8"))["entries"][0]["verifications"]
+    assert (v["ref"], v["rotation"]) == ("R1", 90.0)
+    assert odd() == {("R5", ("R1", "R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
+    # a verification recorded before they held the rotation settles the part itself only
+    doc = json.loads((db / "C1002.json").read_text(encoding="utf-8"))
+    del doc["entries"][0]["verifications"][0]["rotation"]
+    (db / "C1002.json").write_text(json.dumps(doc), encoding="utf-8")
     assert odd() == {("R5", ("R3", "R4", "R5")), ("R6", ("R6",)), ("U2", ("U2",))}
     assert run(capsys, *confirm, "--ref", "R5")[0] == 0
     assert odd() == {("R6", ("R6",)), ("U2", ("U2",))}
