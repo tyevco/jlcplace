@@ -71,7 +71,7 @@ snapshot (`jlcplace snapshot`) and checked from that.
 **Check a CPL from any tool** (kicad-jlcpcb-tools, Fabrication-Toolkit, KiKit, hand-made, or KiCad's position file):
 
 ```
-jlcplace fetch board.kicad_pcb                    # download the EasyEDA records once (rate-limited, cached)
+jlcplace fetch board.kicad_pcb --bom board-BOM.csv   # download the EasyEDA records once (rate-limited, cached)
 jlcplace check board.kicad_pcb board-CPL.csv --bom board-BOM.csv \
     --report report.html --checklist checklist.md
 ```
@@ -428,9 +428,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/jlcplace
-          key: easyeda-${{ hashFiles('hardware/board.kicad_pcb') }}
+          key: easyeda-${{ hashFiles('hardware/board.kicad_pcb', 'fab/board-BOM.csv') }}
           restore-keys: easyeda-
-      - run: jlcplace fetch hardware/board.kicad_pcb
+      - run: jlcplace fetch hardware/board.kicad_pcb --bom fab/board-BOM.csv
         continue-on-error: true               # EasyEDA down or rate-limiting: the check says which records it lacks
       - run: >
           jlcplace check hardware/board.kicad_pcb fab/board-CPL.csv --bom fab/board-BOM.csv
@@ -439,8 +439,8 @@ jobs:
 
 Pin the install to a commit SHA, so that a new jlcplace does not change the verdicts under you. jlcplace has no
 release tag yet; the recipe pins a commit of `main`, so replace it with the one you tested with.
-`fetch` downloads the codes on the board; it takes LCSC codes too, for parts whose BOM names another code
-(`jlcplace fetch hardware/board.kicad_pcb C7519`).
+`fetch` downloads the codes on the board and, with `--bom`, the BOM's (JLC places the BOM's codes, also for a board
+that keeps its codes in the BOM only); it takes LCSC codes too (`jlcplace fetch hardware/board.kicad_pcb C7519`).
 Without KiCad on the runner, the board is read with the S-expression reader. Pass `--fail-on yellow` to make yellow
 fail the job as well (with the records missing, routine yellows such as "not simulated" fail it too). The check
 itself downloads nothing: drop the cache and fetch steps to check from the committed database alone.

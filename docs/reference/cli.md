@@ -173,7 +173,7 @@ jlcplace fit [options] BOARD
 Download EasyEDA records into the cache.
 
 ```text
-jlcplace fetch [options] BOARD|CODE [BOARD|CODE ...]
+jlcplace fetch [options] [BOARD|CODE ...]
 ```
 
 **Arguments**
@@ -187,6 +187,7 @@ jlcplace fetch [options] BOARD|CODE [BOARD|CODE ...]
 | option | what it does |
 |---|---|
 | `-v`, `--verbose` | log what the EasyEDA client does |
+| `--bom` `CSV` | the JLC BOM: its LCSC codes too (JLC places the BOM's codes, also where the board has none) |
 | `--cache` `DIR` | record cache (default ~/.cache/jlcplace) |
 | `--refresh` | fetch again even when cached |
 | `--min-interval` `S` | seconds between requests |
