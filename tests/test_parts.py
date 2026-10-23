@@ -81,6 +81,26 @@ def test_polar_footprint_words_are_words():
     assert both(two("SW3", "Button_Switch_THT:SW_Tactile_SKHH_Angled")) is False
 
 
+@pytest.mark.parametrize("ref, footprint, oriented", [
+    ("JP1", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Horizontal", True),
+    ("SW4", "Button_Switch_SMD:SW_Push_1P1T-MP_NO_Horizontal", True),
+    ("F1", "Connector_PinSocket_2.54mm:PinSocket_1x02_P2.54mm_Horizontal", True),
+    ("Y2", "Crystal:Crystal_HC49-U_Horizontal", True),
+    ("SW5", "MyLib:SW_Slide_1P1T_Horizontal", True),
+    ("JP2", "MyLib:PinHeader_1x02_P2.54mm_Horizontal", True),
+    ("R3", "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal", False),
+    ("C4", "Capacitor_THT:C_Axial_L3.8mm_D2.6mm_P7.50mm_Horizontal", False),
+    ("L4", "Inductor_THT:L_Axial_L5.3mm_D2.2mm_P10.16mm_Horizontal", False),
+    ("F2", "Fuse:Fuseholder_Clip-5x20mm_Inline_P20.00x5.00mm_D1.05mm_Horizontal", False),
+    ("JP3", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical", False),
+])
+def test_horizontal_connectors_and_switches_are_right_angle_parts(ref, footprint, oriented):
+    """field: KiCad names its right-angle headers, sockets and switches "_Horizontal", not "Angled": a jumper or
+    switch on one, turned half a turn, was a harmless terminal swap (green), though its body then faces the other
+    way. An axial passive lying flat between its leads, or a fuse in clips alike at both ends, may still be turned."""
+    assert both(two(ref, footprint)) is (not oriented)
+
+
 def test_bidirectional_parts_may_be_turned_round():
     """truth-7: a bidirectional TVS (pin functions A1 / A2, or EasyEDA's -BI title token) has no polarity."""
     assert both(two("D13", "Diode_SMD:D_SMF", names=("A1", "A2"))) is True
