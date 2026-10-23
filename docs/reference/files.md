@@ -740,7 +740,7 @@ Each checklist item:
 
 | field | what it is |
 |---|---|
-| `category` | `uncertain correction`, `not simulated`, `bottom reading` or `odd angle` |
+| `category` | `pinout`, `uncertain correction`, `not simulated`, `outside the outline`, `bottom reading` or `odd angle` |
 | `ref` | the part to look at |
 | `refs` | every part the item stands for (alike parts share one item) |
 | `lcsc`, `layer` | the code and side |
@@ -798,7 +798,7 @@ bottom reading,J1,C160411,bottom,120,green,"look at this one first: it moves und
 
 | column | what it is |
 |---|---|
-| `category` | `uncertain correction`, `not simulated`, `bottom reading` or `odd angle` |
+| `category` | `pinout`, `uncertain correction`, `not simulated`, `outside the outline`, `bottom reading` or `odd angle` |
 | `ref` | the part to look at |
 | `lcsc`, `layer` | the code and side |
 | `rotation` | the row's rotation; empty for a group whose rows differ |

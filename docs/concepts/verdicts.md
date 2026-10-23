@@ -106,7 +106,8 @@ An `ok` row is **yellow** when:
   centre there; a row of another part, or from another origin, too. With `--gerbers` the outline is the Gerbers',
   unless their check finds it wrong (plotted from another origin, another board's: a `gerbers` finding says so), and
   then the board's Edge.Cuts.
-  Any other row outside the outline gets the same message, last.
+  Any other row outside the outline gets the same message, last. The part is on the preview checklist
+  (`outside the outline`).
 
 An `ok` row is **red** when the part's correction is red and nothing else vouches for the row:
 
