@@ -212,7 +212,8 @@ C7519: SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BL, 6 pads (cached)
 15 codes: 15 footprints, 0 not found, 0 failed; cache .../.cache/jlcplace
 ```
 
-`fetch` does not read BOMs. When the codes are only in the BOM, give `fetch` the codes themselves:
+When the codes are only in the BOM, `fetch` reads them from it with `--bom`
+(`jlcplace fetch board.kicad_pcb --bom board-BOM.csv`). It also takes the codes themselves:
 
 ```sh
 jlcplace fetch C7519 C318884
