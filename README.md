@@ -161,7 +161,10 @@ correction replaces the stored one when they differ. If you had to move a part i
 pressed (`--space N --right N --up N`): they are relative to the uploaded row, never to the stored correction. Parts
 that share a database entry (one code on one footprint) must agree on it, and a verified entry is not given other
 numbers until its own row is recorded as failed (`--failed`). `--source board` (the assembled board) also takes the
-uploaded CPL; `--source manual` does not need one. `confirm` needs the part's EasyEDA record in the cache (or
+uploaded CPL; `--source manual` does not need one. The rows are read from `--origin` (default aux), as `check` reads
+them without the Gerbers; for a CPL written from the Gerbers' (0, 0) (`cpl --gerbers`), pass the same `--gerbers`
+(`show` takes it too). A row that puts every EasyEDA pad off copper is refused: it was read from another origin than
+the CPL's, and the correction stored from it would be that far off. `confirm` needs the part's EasyEDA record in the cache (or
 `--online`): a verification is stored under the EasyEDA footprint it was made with, so that a later version of the
 footprint makes it stale. A verification records the numbers it was of. After `--failed`, `check --db` holds the
 stored correction's row red ("verified wrong by JLC's preview on 2026-10-22 (U3, you: pin 1 at the wrong corner)"),

@@ -453,6 +453,36 @@ def test_cpl_writes_the_rows_from_the_gerbers_origin(made, capsys):
     assert lines(out)[-1] == f"jlcplace: {out_aux} not written: the origin is red (--force writes it anyway)"
 
 
+def test_confirm_and_show_read_the_rows_from_the_gerbers_origin(made, capsys):
+    """field: a CPL that `cpl --gerbers` wrote from page-origin Gerbers, confirmed right in the preview, was read from
+    the aux origin: confirm stored a verified correction 141 mm off with exit 0, and every later `cpl` wrote it. The
+    rows are read from the Gerbers' (0, 0) with --gerbers, and a row that puts every pad off copper is not taken for
+    what was seen right."""
+    e = made
+    page = e.tmp / "from-page.csv"
+    assert run(capsys, "cpl", e.board, "-o", page, "--gerbers", e.page, *offline(e))[0] == 0
+    db = e.tmp / "db"
+    confirm = ["confirm", e.board, "--ref", "U1", "--db", db, "--by", "ann", "--source", "preview", "--cpl", page,
+               *offline(e)]
+    code, out, err = run(capsys, *confirm)
+    assert code == 3 and not db.exists(), out
+    assert err.strip() == (f"jlcplace: U1: read from the aux origin (100, 100), the row in {page.name} puts every "
+                           "EasyEDA pad off copper (the nearest 138.47 mm from a KiCad pad centre), so it is not "
+                           "what was seen right: give the Gerbers it was ordered with (--gerbers), or the origin "
+                           "`jlcplace check` names on its first line (--origin); nothing recorded"), err
+    assert run(capsys, *confirm, "--gerbers", e.aux, "--origin", "aux")[0] == 3
+    code, out, _ = run(capsys, *confirm, "--gerbers", e.page)
+    row = next(r for r in read_cpl(page) if r.ref == "U1")
+    assert code == 0 and f"; row X {row.x:.4f} Y {row.y:.4f} rot {row.rotation:g} " in out, out
+    assert "replaces" not in out, out                                 # the fitted correction, verified
+    for origin in (["--gerbers", e.page], ["--origin", "absolute"]):
+        code, out, _ = run(capsys, "show", e.board, "--ref", "U1", "--db", db, *origin, *offline(e), "--json", "-")
+        assert code == 0 and json.loads(out)["rows"]["jlc-2022"] == pytest.approx(
+            {"x": row.x, "y": row.y, "rotation": row.rotation}, abs=2e-4), out
+    code, out, _ = run(capsys, "check", e.board, page, "--gerbers", e.page, "--db", db, *offline(e))
+    assert code == 0 and "2 green, 2 verified" in out, out             # U1, and U2 of its entry
+
+
 def test_without_gerbers_the_origin_is_a_reminder_said_once(made, capsys):
     e = made
     t = e.tmp

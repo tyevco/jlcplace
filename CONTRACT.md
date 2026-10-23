@@ -733,14 +733,17 @@ def origin_lines(run) -> list[(verdict, text)]
   `fit BOARD [--ref]... [--db] [--json]`; `fetch [BOARD|CODE]... [--bom CSV] [--refresh]` (the codes of the boards'
   parts a CPL can get placed, the codes given, and with --bom every LCSC code of the BOM; none of them: bad input);
   `confirm BOARD --ref REF --db DIR --by NAME
-  --source manual|preview|board [--cpl UPLOADED [--units]] [--failed] [--note] [--space/--right/--up N] [--rot --dx
-  --dy]` (preview and board need --cpl or --rot, presses need --cpl; each ref's row, moved by the presses, gives the
-  correction recorded, refs of one entry must agree on it, a reference two placed parts carry is refused, the part's
+  --source manual|preview|board [--cpl UPLOADED [--units] [--gerbers G]] [--failed] [--note] [--space/--right/--up N]
+  [--rot --dx --dy]` (preview and board need --cpl or --rot, presses need --cpl; each ref's row, moved by the presses,
+  read from --origin, or with --gerbers from the Gerbers' (0, 0) as `jlc_origin` gives it (none, or --origin given too:
+  bad input), gives the correction recorded; a row seen right that puts every EasyEDA pad off copper is bad input (read
+  from another origin than the CPL's: --gerbers or --origin); refs of one entry must agree on it, a reference two
+  placed parts carry is refused, the part's
   EasyEDA record must be at hand (a cache miss or a failed fetch is bad input: entries are keyed by the footprint they
   were verified with; EasyEDA's own not-found answer gives an entry with no EasyEDA key), and everything is checked
   before anything is written; a part whose entry is then verified wrong gets a line saying that `check --db` holds its
   row red and `cpl --db` does not write it until the correction is fixed and confirmed again); `show CODE | BOARD --ref
-  REF [--json]`; `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache
+  REF [--gerbers G] [--json]` (rows from --origin, or the Gerbers' (0, 0) as for confirm); `snapshot BOARD -o board.json`. `check`, `cpl`, `fit`, `show` and `confirm` read only the record cache
   (the default, also `--offline`) unless `--online` is given; `check`, `cpl` and `fit` then name the codes the cache
   lacked and say how to fetch them (the `jlcplace fetch BOARD [--bom BOM]` to type, with the --lcsc-field, --reader and
   --cache given): after the summary ("no EasyEDA record in the cache DIR for 1 code (C1002): ..."), or, when the cache

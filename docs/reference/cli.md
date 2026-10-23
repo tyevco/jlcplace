@@ -225,6 +225,7 @@ jlcplace confirm --ref REF --db DIR --by NAME --source {board,preview,manual} [o
 | `--ref` `REF` | the part that was checked (repeatable) |
 | `--cpl` `CPL` | the CPL that was uploaded to JLC (what was checked; the presses are relative to its rows) |
 | `--units` `{mm,in,mil}` | unit of bare numbers in the CPL (default mm) |
+| `--gerbers` `GERBERS` | the Gerbers ordered with the CPL: its rows are read from their (0, 0), as check and cpl read them (in place of --origin) |
 | `--db` `DIR` | correction database directory to record it in |
 | `--by` `NAME` | who checked it |
 | `--source` `{board,preview,manual}` | what was checked: manual (datasheet), preview (JLC's preview) or board (assembled) |
@@ -275,6 +276,7 @@ jlcplace show [options] CODE|BOARD
 | `--db` `DIR` | correction database directory (one JSON file per LCSC code) |
 | `--reading` `{jlc-2022,ccw-from-top,ccw-from-top+180,jlc-2022+180}` | how JLC reads a bottom-side rotation (default jlc-2022) |
 | `--ref` `REF` | with BOARD: the part to show |
+| `--gerbers` `GERBERS` | with BOARD: the rows from the Gerbers' (0, 0), as check and cpl write them (in place of --origin) |
 | `--json` `PATH` | write it as JSON ('-' for stdout) |
 
 ### Board

@@ -282,6 +282,29 @@ def _gerbers(args, board, rows=None):
     return board, (gs, chk), gerber_findings(chk, rows)
 
 
+def _rows_origin(args, board):
+    """confirm and show --gerbers: the board with the CPL origin JLC reads the rows from, the Gerbers' (0, 0), as
+    check and cpl take it; BadInput when the set gives none (another board's, mirrored, scaled) or --origin names one
+    too. Without --gerbers, the board as --origin (default aux) gives it."""
+    if not getattr(args, "gerbers", None):
+        return board
+    if args.origin:
+        raise BadInput("--gerbers: the rows are read from the Gerbers' (0, 0), as JLC reads them; leave out --origin")
+    jlc, _, found = _gerbers(args, board)
+    if jlc.origin_kind != "gerber":
+        why = "; ".join(f.message for f in found if f.verdict == RED) or "no origin found"
+        raise BadInput(f"--gerbers {args.gerbers}: no CPL origin can be taken from them ({why}): `jlcplace check "
+                       f"--gerbers` says more")
+    return jlc
+
+
+def _origin_words(board) -> str:
+    """Where a board's rows are read from: "the Gerbers' (0, 0)", "the aux origin (100, 100)"."""
+    if board.origin_kind == "gerber":
+        return "the Gerbers' (0, 0)"
+    return f"the {board.origin_kind} origin ({board.origin[0]:g}, {board.origin[1]:g})"
+
+
 def _judge_origin(args, run, board, gerbers, found) -> list[str]:
     """Fill in the run's Gerbers, findings and common offset; the terminal hints that remain (pipeline.offset_hints:
     an origin mismatch without Gerbers to tell which origin is JLC's, a unit or a Y axis)."""
@@ -659,7 +682,7 @@ def _close(a: Correction, b: Correction) -> bool:
 
 
 def cmd_confirm(args) -> int:
-    board = _board(args)
+    board = _rows_origin(args, _board(args))
     db = CorrectionDB(args.db)
     client = _client(args)
     presses = {"space": args.space, "right": args.right, "up": args.up}
@@ -690,6 +713,17 @@ def cmd_confirm(args) -> int:
             uploaded = replace(row_correction(part, seen, board.origin, args.reading), method="manual",
                                status="manual", verdict=YELLOW, ee_key=key, kicad_hash=h,
                                reasons=[f"{ROW_REASON} of {ref} in {cpl_name} ({args.source}, {args.by}{how})"])
+            lands = ee_landings(part, ee, uploaded) if isinstance(ee, EEFootprint) and not args.failed else []
+            if lands and all(lnd.kicad_number is None for lnd in lands):
+                # nothing that was seen right puts every pad off copper: the rows are read from another origin than
+                # the CPL's (the Gerbers' (0, 0), when jlcplace cpl --gerbers wrote it), and the correction stored
+                # from them would be that far off
+                moved = " and moved by the presses" if pressed else ""
+                raise BadInput(f"{ref}: read from {_origin_words(board)}{moved}, the row in {cpl_name} puts every "
+                               f"EasyEDA pad off copper (the nearest {min(lnd.dist for lnd in lands):.2f} mm from a "
+                               f"KiCad pad centre), so it is not what was seen right: give the Gerbers it was ordered "
+                               f"with (--gerbers), or the origin `jlcplace check` names on its first line (--origin); "
+                               f"nothing recorded")
         stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=h)
         fitted = None
         if (stored is None or stored.status == "stale") and isinstance(ee, EEFootprint):
@@ -784,7 +818,7 @@ def _show_code(args) -> dict:
 
 def _show_ref(args) -> dict:
     args.board = args.target
-    board = _board(args)
+    board = _rows_origin(args, _board(args))
     part = board.part(args.ref)
     if part is None:
         raise BadInput(f"{args.ref} is not on the board")
@@ -830,6 +864,8 @@ def _print_tree(d, indent: int = 0) -> None:
 
 
 def cmd_show(args) -> int:
+    if args.gerbers and not args.ref:
+        raise BadInput("--gerbers: give a board with --ref REF")
     if args.ref:
         d = _show_ref(args)
     elif is_code(args.target):
@@ -979,6 +1015,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the CPL that was uploaded to JLC (what was checked; the presses are relative to its rows)")
     s.add_argument("--units", default="mm", choices=("mm", "in", "mil"),
                    help="unit of bare numbers in the CPL (default mm)")
+    s.add_argument("--gerbers", metavar="GERBERS",
+                   help="the Gerbers ordered with the CPL: its rows are read from their (0, 0), as check and cpl "
+                        "read them (in place of --origin)")
     s.add_argument("--db", required=True, metavar="DIR", help="correction database directory to record it in")
     s.add_argument("--by", required=True, metavar="NAME", help="who checked it")
     s.add_argument("--source", required=True, choices=[k for k in SOURCES if "-" not in k],
@@ -999,6 +1038,9 @@ def build_parser() -> argparse.ArgumentParser:
                                help="show what jlcplace knows about a code or part"))
     s.add_argument("target", metavar="CODE|BOARD", help="an LCSC code, or a board with --ref")
     s.add_argument("--ref", metavar="REF", help="with BOARD: the part to show")
+    s.add_argument("--gerbers", metavar="GERBERS",
+                   help="with BOARD: the rows from the Gerbers' (0, 0), as check and cpl write them (in place of "
+                        "--origin)")
     s.add_argument("--json", metavar="PATH", help="write it as JSON ('-' for stdout)")
     s.set_defaults(func=cmd_show)
 
