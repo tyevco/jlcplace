@@ -356,8 +356,8 @@ disagree, else a message. The two libraries' spellings are read as one: Input / 
 V-, 1IN+ / IN1+ / INA+ / VIN+ / +IN / + (an op-amp's input), VCC+ / VS+ / V+ and VCC- / -VS / V- (split supplies), R- /
 RK, DP1 / D+ (an index only one side has), P0.00_XL1 / P0.00/XL1; G against GND (a gate, or a crystal's ground) is not
 compared, and names that say where a pad is, not what it is (TAB, EP, PAD, THERMAL: a regulator's tab is often its
-output), say nothing. Names swapped between pads of one net, and a two-terminal part's names (its polarity, decided by
-the + mark and the pad numbers), are not a pinout.
+output), say nothing. Names swapped between pads of one net, and a two-terminal part's names (its polarity, which the
+fit decides from the pad numbers, the pin names and the + mark), are not a pinout.
 
 **The bottom-side caveat.** JLC does not document how it reads a bottom-side rotation. The reading jlcplace uses,
 `jlc-2022` (180 - theta + rot, viewed from below), is the one every open tool uses. It also matches the JLC
