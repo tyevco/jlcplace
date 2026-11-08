@@ -26,9 +26,10 @@ from jlcplace.check import check_row
 from jlcplace.cli import main
 from jlcplace.cpl import read_cpl, write_cpl
 from jlcplace.db import CorrectionDB
+from jlcplace.fit import fit_part
 from jlcplace.model import BOTTOM, GREEN, RED, TOP, VERIFIED, YELLOW, Board, Correction, CplRow, EEFootprint, \
     NotFound, Pad, Part
-from jlcplace.parts import ee_key
+from jlcplace.parts import ee_key, kicad_hash
 from jlcplace.pipeline import CheckItem, Run, apply_bom_codes, check, correction, key_reasons, proxy_footprint, resolve
 from jlcplace.report import _gh, github_annotations, html, junit
 
@@ -511,6 +512,110 @@ def test_stale_database_entries_are_refitted(tmp_path):
     assert (source, corr.dx, corr.verdict) == ("db", 0.01, YELLOW)
     touched = EEFootprint("C1001", "SOT", uuid="new", utime=3, pads=ee.pads)
     assert correction(part, touched, db2)[1] == "db" and touched.key() != ee.key()
+
+
+def test_an_unchecked_database_correction_never_overrules_the_pads(env, capsys):
+    """An auto entry (fitted, never checked) whose numbers put EasyEDA pads on other nets: a USBLC6-2SC6 turned half a
+    turn lands every pad on copper, VBUS on GND. `check --db` called that row green ("numbering accepted by the
+    correction (auto)") and `cpl --db` wrote it; without --db it was red. The entry is checked against the EasyEDA
+    record: it vouches for nothing the record does not give, so its row is red, by either command, on either side."""
+    board = env.make()
+    db = env.tmp / "db"
+    ee = correction_ee(env, "C1001")
+    CorrectionDB(db).upsert("C1001", Correction(0.0, method="number", verdict=GREEN, reasons=["fits by pad numbers"],
+                                                ee_key=ee_key(ee), kicad_hash=kicad_hash(board.part("U1"))))
+    # cpl writes the entry's rows, finds them red, and writes no file
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    assert code == 2 and not os.path.exists(env.out), out
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, "--force", *offline(env))
+    assert code == 2 and os.path.exists(env.out)
+    assert {r.ref: r.rotation for r in read_cpl(env.out)}["U1"] == 0.0
+    # check: red with and without the database, the entry named
+    code, out, _ = run(capsys, "check", env.board, env.out, *offline(env))
+    assert code == 2 and re.search(r"RED +U1 .*wrong-pad", out), out
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env), "--json", env.tmp / "r.json")
+    assert code == 2 and "numbering accepted" not in out, out
+    res = {r["ref"]: r for r in json.loads((env.tmp / "r.json").read_text(encoding="utf-8"))["results"]}
+    for ref in ("U1", "U2"):                                         # the top and the bottom part share the entry
+        assert res[ref]["verdict"] == RED, res[ref]
+        assert res[ref]["correction"]["verdict"] == RED and res[ref]["correction"]["source"] == "db"
+    assert "the stored auto correction (rot 0" in out and "the EasyEDA record gives rot 180" in out, out
+    # the row the record gives is green against that entry: the pad numbers decide it
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, *offline(env))
+    assert code == 0
+    code, out, _ = run(capsys, "check", env.board, env.out, "--db", db, *offline(env))
+    assert code == 0 and "0 red" in out, out
+    # a refit replaces the entry, and both commands are clean with it
+    code, out, _ = run(capsys, "fit", env.board, "--db", db, *offline(env))
+    assert code == 0 and CorrectionDB(db).entries("C1001")[0]["correction"]["rot"] == 180.0
+    code, out, _ = run(capsys, "cpl", env.board, "-o", env.out, "--db", db, *offline(env))
+    assert code == 0 and {r.ref: r.rotation for r in read_cpl(env.out)}["U1"] == 180.0
+
+
+def test_database_entries_are_held_to_what_the_easyeda_record_decides(tmp_path):
+    """An auto entry is only as good as the fit it stands for: the record's evidence decides its verdict. A confirmed
+    one may settle what the record leaves open, but not contradict pads that decide the nets."""
+    u1 = sot("U1", TOP, 120.0, 80.0, 0.0)
+    ee = EEFootprint("C1001", "SOT", uuid="sot", utime=1, pads=proxy_footprint(u1, Correction(180.0)).pads)
+    fitted = fit_part(u1, ee)
+    assert (fitted.rot, fitted.verdict) == (180.0, GREEN)
+    x, y, a = cv.cpl_row_for(u1, fitted, ORIGIN)
+    right = CplRow("U1", x, y, TOP, a)
+    wrong = dataclasses.replace(right, rotation=cv.norm_angle(a + 180.0))
+
+    def entry(where, rot, status="auto", part=u1, foot=ee):
+        db = CorrectionDB(tmp_path / where)
+        db.upsert(part.lcsc, Correction(rot, method="number", verdict=GREEN, reasons=["fits by pad numbers"],
+                                        ee_key=ee_key(foot), kicad_hash=kicad_hash(part)))
+        if status != "auto":
+            db.confirm(part.lcsc, ee_key=ee_key(foot), kicad_hash=kicad_hash(part), by="me",
+                       source={"preview-verified": "preview", "board-verified": "board", "manual": "manual"}[status])
+        corr, source = correction(part, foot, db)
+        assert source == "db" and corr.rot == rot
+        return corr
+
+    # an auto entry the record contradicts: red, saying why, and its row red; the record's row is not
+    corr = entry("auto", 0.0)
+    assert corr.verdict == RED
+    assert key_reasons(corr, 1)[0].startswith("the stored auto correction (rot 0, dx 0.0000, dy 0.0000) puts EasyEDA "
+                                              "pads on other nets than"), corr.reasons
+    res = check_row(u1, wrong, ee, ORIGIN, corr=corr)
+    assert res.verdict == RED and "nothing vouches for this numbering" in res.messages[0], res.messages
+    assert check_row(u1, right, ee, ORIGIN, corr=corr).verdict == GREEN
+    # a confirmed one that puts pads on other nets than they decide: red, named
+    for status in ("manual", "preview-verified", "board-verified"):
+        corr = entry(status, 0.0, status)
+        assert (corr.status, corr.verdict) == (status, RED), (status, corr.reasons)
+        assert key_reasons(corr, 1)[0].startswith(f"the stored {status} correction (rot 0, dx 0.0000, dy 0.0000) "
+                                                  f"puts EasyEDA pads on other nets than"), corr.reasons
+        res = check_row(u1, wrong, ee, ORIGIN, corr=corr)
+        assert res.verdict == RED and f"correction ({status})" in res.messages[0], res.messages
+    # agreeing with the record, or differing from it only where the nets are the same, an entry stands as stored
+    assert entry("same", 180.0).verdict == GREEN
+    corr = entry("verified", 180.0, "preview-verified")
+    assert corr.verdict == VERIFIED and check_row(u1, right, ee, ORIGIN, corr=corr).verdict == VERIFIED
+    sym = sot("U3", BOTTOM, 120.0, 80.0, 30.0)
+    for p, net in zip(sym.pads, ("A", "GND", "B", "A", "GND", "B")):     # half a turn maps every pad onto its net
+        p.net = net
+    s_ee = EEFootprint("C1001", "SOT", uuid="sot", utime=1, pads=proxy_footprint(sym, Correction(180.0)).pads)
+    corr = entry("sym", 0.0, part=sym, foot=s_ee)
+    assert corr.verdict == GREEN, corr.reasons
+    x, y, a = cv.cpl_row_for(sym, corr, ORIGIN)
+    assert check_row(sym, CplRow("U3", x, y, BOTTOM, a), s_ee, ORIGIN, corr=corr).verdict == GREEN
+    # what the record cannot decide, an auto entry cannot make green: a diode polarised by its pad numbers only
+    d1 = two("D1", TOP, 110.0, 95.0, 0.0, "C1009", footprint="Diode_SMD:D_SOD-123", half=1.6)
+    d_ee = EEFootprint("C1009", "SOD-123", uuid="sod", utime=1, pads=proxy_footprint(d1, Correction(0.0)).pads)
+    assert (fit_part(d1, d_ee).verdict, fit_part(d1, d_ee).doubt) == (YELLOW, "polarity")
+    corr = entry("diode", 0.0, part=d1, foot=d_ee)
+    assert (corr.verdict, corr.doubt) == (YELLOW, "polarity"), corr.reasons
+    x, y, a = cv.cpl_row_for(d1, corr, ORIGIN)
+    res = check_row(d1, CplRow("D1", x, y, TOP, a), d_ee, ORIGIN, corr=corr)
+    assert res.verdict == YELLOW and any("the fit was unsure of that placement" in m for m in res.messages), \
+        res.messages
+    # ... nor the other way round: that is the polarity the pad numbers reject
+    assert entry("diode-reversed", 180.0, part=d1, foot=d_ee).verdict == RED
+    # a person may decide it (the polarity was checked in JLC's preview)
+    assert entry("diode-preview", 180.0, "preview-verified", part=d1, foot=d_ee).verdict == VERIFIED
 
 
 def test_bom_codes_and_rows_the_bom_leaves_out():
@@ -1159,7 +1264,10 @@ def test_a_preview_confirmation_records_the_uploaded_row(env, capsys):
     assert code == 0 and out.startswith("U1 C1001: preview-verified, verified: rot 0"), out + err
     assert "replaces the auto correction rot 180" in out
     code, out, _ = run(capsys, "check", env.board, raw, "--db", db, *offline(env), "--json", "-")
-    assert {r["ref"]: r["verdict"] for r in json.loads(out)["results"]}["U1"] == VERIFIED
+    # ... but the pad numbers decide this SOT-23-6 (rot 180): a person's check does not put its pads on other nets
+    u1 = {r["ref"]: r for r in json.loads(out)["results"]}["U1"]
+    assert code == 2 and u1["verdict"] == RED and u1["correction"]["status"] == "preview-verified", u1
+    assert any(r.startswith("the stored preview-verified correction (rot 0") for r in u1["correction"]["reasons"])
     # a verified entry is not replaced by a verification of other numbers ...
     write_cpl(raw, rows_with(board, U1=90.0))
     code, out, err = run(capsys, "confirm", env.board, "--ref", "U1", "--db", db, "--by", "me", "--source", "preview",

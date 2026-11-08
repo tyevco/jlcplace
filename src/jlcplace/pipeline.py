@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from . import geom
-from .check import ANGLE_TOL, check_cpl, check_row, jlc_part, listed_note, nonpolar
+from .check import ANGLE_TOL, check_cpl, check_row, jlc_part, listed_note, nonpolar, same_nets
 from .convention import BOTTOM_READINGS, DEFAULT, board_to_cpl, cpl_row_for, cpl_to_board, rot
 from .cpl import UNITS, assembled, assembled_refs, jlc_places, natural_key, read_text
 from .easyeda import EEError
@@ -179,7 +179,7 @@ def describe(c: Correction) -> str:
 
 
 _LATER = ("accepted manually", "verification failed", "derived from presses", "typed in by", "taken from the row",
-          "the EasyEDA footprint changed")
+          "the EasyEDA footprint changed", "the stored ", "the EasyEDA record leaves")
 #: reasons that only inform (what the fit ruled out, what agrees): they never make a correction yellow
 _INFO = re.compile(r"fits by pad numbers|\d+ pin names agree|rot [^;]* also [^;]*; ruled out by"
                    r"|the EasyEDA footprint changed .*the refit gives the same placement")
@@ -203,14 +203,57 @@ def needs_preview(c: Correction) -> bool:
     return c.verdict == RED or bool(c.doubt) or any(not _INFO.match(r) and not _QUIET.match(r) for r in c.reasons)
 
 
+def held_to_record(part: Part, ee: EEFootprint, stored: Correction, fitted: Correction) -> Correction:
+    """A database entry held to what its EasyEDA record decides (`fitted`, a fit to that record). The record's pads,
+    numbers, pin names and drawn + are the evidence; an entry is a placement someone stood for:
+      auto      fitted, never checked: it vouches for nothing a fit to the record does not give. When it lands the
+                pads on the same nets as the fit (or is the fit), it is kept, its verdict no better than the fit's
+                (an entry stored green for a polarity only the pad numbers decide is yellow, as the fit is); otherwise
+                it is red: the pads go on other nets than the record gives them.
+      confirmed manual, preview- or board-verified: a person's check settles what the record leaves open (a fit
+                that is not green), but not pads that decide the nets: when the fit is green and the entry puts pads
+                on other nets, it is red, the reason naming the entry.
+    A red or mirrored entry (one verified wrong among them) is returned as it is. The entry is changed in place (it is
+    lookup's copy; nothing is stored)."""
+    if stored.mirror or stored.verdict == RED:
+        return stored
+    if _same(stored, fitted) or same_nets(part, ee, stored, fitted):
+        if stored.status == "auto" and VERDICT_ORDER.get(fitted.verdict, 0) < VERDICT_ORDER.get(stored.verdict, 0):
+            why = key_reasons(fitted, 1)[0] if fitted.reasons else "as a fit to it finds"
+            stored.reasons += [r for r in fitted.reasons if r not in stored.reasons]
+            stored.reasons.append(f"the EasyEDA record leaves this placement {fitted.verdict} (the auto entry was "
+                                  f"stored {stored.verdict}): {why}")
+            stored.verdict, stored.doubt = fitted.verdict, fitted.doubt or stored.doubt
+        return stored
+    gives = f"{describe(fitted)} ({fitted.verdict}" + (f": {key_reasons(fitted, 1)[0]})" if fitted.reasons else ")")
+    if stored.status == "auto":
+        stored.reasons.append(
+            f"the stored auto correction ({describe(stored)}) puts EasyEDA pads on other nets than the EasyEDA record "
+            f"gives them: the EasyEDA record gives {gives}; the entry was fitted, never checked, so it vouches for "
+            f"nothing: refit it (`jlcplace fit --db`), or check the part in JLC's preview and record it (`jlcplace "
+            f"confirm`)")
+    elif fitted.verdict == GREEN:
+        stored.reasons.append(
+            f"the stored {stored.status} correction ({describe(stored)}) puts EasyEDA pads on other nets than the "
+            f"EasyEDA record decides: the EasyEDA record gives {gives}, and a check by a person does not overrule pads "
+            f"that decide the nets: if that check was wrong, record it (`jlcplace confirm --failed`) and refit")
+    else:
+        return stored            # the record leaves it open: the person's check settles it
+    stored.verdict = RED
+    return stored
+
+
 def correction(part: Part, ee, db=None, *, snap: float = 0.5) -> tuple[Correction | None, str]:
-    """(correction, source) for a part: the database entry for its code, KiCad key and EasyEDA key; else a fit
-    (a stale entry is compared with the refit: a refit that differs is at best yellow); else (None, "")."""
+    """(correction, source) for a part: the database entry for its code, KiCad key and EasyEDA key, held to what the
+    EasyEDA record decides when it is at hand (held_to_record); else a fit (a stale entry is compared with the refit:
+    a refit that differs is at best yellow); else (None, "")."""
     key = ee_key(ee) if isinstance(ee, EEFootprint) else ""
     stored = None
     if db is not None:
         stored = db.lookup(part.lcsc, ee_key=key, kicad_hash=kicad_hash(part))
         if stored is not None and stored.status != "stale":
+            if isinstance(ee, EEFootprint):
+                stored = held_to_record(part, ee, stored, fit_part(part, ee, snap=snap))
             return stored, "db"
     if not isinstance(ee, EEFootprint):
         return None, ""
