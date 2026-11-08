@@ -221,6 +221,16 @@ def _place(part: Part, row: CplRow, ee: EEFootprint, origin, reading: str):
     return out
 
 
+def same_nets(part: Part, ee: EEFootprint, a: Correction, b: Correction) -> bool:
+    """Whether corrections a and b both land every EasyEDA pad, each on the same net (a land without a net is its own
+    net) or, for a non-polar two-terminal part (judged as with b), with its two terminals exchanged as a whole: one
+    placement as far as the board's wiring goes."""
+    ka, kb = _corr_keys(part, ee, a), _corr_keys(part, ee, b)
+    if None in ka or None in kb:
+        return False
+    return ka == kb or (nonpolar(part, ee, b) and _swap_of(ka, kb))
+
+
 def _swap_of(a: list, b: list) -> bool:
     """b is a with the two terminals of a two-terminal part exchanged everywhere."""
     keys = set(a) | set(b)
