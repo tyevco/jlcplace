@@ -207,7 +207,16 @@ Each entry has a status, strongest first:
 | `manual` | `confirm --source manual`: a person's decision, about the stored numbers or typed in with `--rot`, `--dx`, `--dy` | as fitted; a red one becomes yellow ("accepted manually") |
 | `auto` | `fit`; `confirm` fitting a part the database lacked; `confirm --failed`, which also makes it red | as fitted; red after `--failed`, through refits of the same numbers or of numbers within 0.15 mm and 2 degrees of them, and its rows red (`verified-wrong`), until other numbers replace it or a later verification of it goes right |
 
-A row that matches a `verified` correction is itself `verified`. The status decides two things.
+A row that matches a `verified` correction is itself `verified`. With the EasyEDA record at hand, `check` and
+`cpl` hold every entry to what the record decides: they fit the part again and compare. An `auto` entry vouches
+for nothing that fit does not give: one that puts EasyEDA pads on other nets than the fit is red ("the stored auto
+correction (rot 90, ...) puts EasyEDA pads on other nets than the EasyEDA record gives them"), so are its rows,
+and `cpl --db` writes no CPL with them until `fit --db` replaces it; one that agrees with the fit is no better
+than the fit (stored green for a polarity only the pad numbers decide, it is yellow). A `manual` or verified entry
+settles what the record leaves open, but an entry that puts pads on other nets than a green fit (pads that decide
+the nets) is red as well, the reason naming its status. Without the record the entry is used as stored.
+
+The status decides two things.
 
 **Which entry is used.** When several entries match a part's keys (an entry written by hand without keys matches
 any part with its code), the strongest status wins, and among equals the later entry in the file.

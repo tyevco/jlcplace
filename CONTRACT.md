@@ -406,6 +406,8 @@ def nonpolar(part, ee=None, corr=None) -> bool     # parts.nonpolar; a correctio
                                                    # without the record, one it judged non-polar is judged with its
                                                    # entry's EasyEDA title (corr.ee_title: BI, a crystal's)
 def unsimulated_off(part, row, origin, *, outside=False, near=None, corr=None) -> tuple[float, str] | None
+def same_nets(part, ee, a: Correction, b: Correction) -> bool   # both land every EasyEDA pad, on the same nets
+                                                                # (a non-polar part's terminals may swap)
 ```
 * `place_row`: each EasyEDA pad centre (pads on EasyEDA's bottom layer skipped) goes to the board via
   `convention.ee_to_board`, then to the library frame, then onto the copper pad containing it (`LAND_TOL` 1e-3
@@ -575,6 +577,8 @@ def presses_to_correction(part, base: Correction, *, space=0, right=0, up=0) -> 
 
 ```python
 def correction(part, ee, db=None, *, snap=0.5) -> (Correction | None, source)     # db | fit | ""
+def held_to_record(part, ee, stored: Correction, fitted: Correction) -> Correction   # an entry against a
+                                              # fit to its EasyEDA record (correction does this)
 def fallback(part, ee) -> Correction          # rot 0 at the body's centre (else KiCad's anchor); yellow for a
                                               # non-polar 2-pad part or a two-pad trimmer, else red
 def resolve(board, client, db=None, *, refs=None, snap=0.5, use_fallback=False, bom_rows=None, cpl_refs=None)
@@ -602,6 +606,17 @@ def gerber_findings(check, rows=None) -> list[Finding]
 def origin_findings(run, *, given=None, given_kind="", units="mm", origins=None) -> list[Finding]
 def origin_lines(run) -> list[(verdict, text)]
 ```
+* `correction`: an entry (not stale) is held to its EasyEDA record when the record is at hand (`held_to_record`,
+  with `fit_part` of the record). Red and mirrored entries are left as they are. An entry that is the fit, or lands
+  every pad on the same nets as it (`check.same_nets`), is kept; an auto one then takes the fit's verdict, doubt and
+  reasons when they are worse ("the EasyEDA record leaves this placement yellow (the auto entry was stored green):
+  <the fit's key reason>"). Otherwise an auto entry is red ("the stored auto correction (rot R, dx X, dy Y) puts
+  EasyEDA pads on other nets than the EasyEDA record gives them: the EasyEDA record gives <the fit> ...; refit it
+  ..."): fitted and never checked, it vouches for nothing a fit does not give, so its rows are red ("nothing vouches
+  for this numbering") and `cpl` writes no CPL with them. A manual or verified entry is red only against a green
+  fit ("the stored preview-verified correction (...) puts EasyEDA pads on other nets than the EasyEDA record
+  decides: ..."): a person settles what the record leaves open, not pads that decide the nets. Without the record
+  the entry is used as stored (the proxy below). These reasons lead `key_reasons`.
 * `fallback`: no EasyEDA footprint and no entry (`cpl`): rot 0, the row at KiCad's angle and at `parts.body_centre`
   when that is more than BODY_TOL from KiCad's anchor (reason "the row is the centre of its courtyard, 13.50 mm from
   KiCad's anchor (pin 1), at KiCad's angle"), else at the anchor ("the row is KiCad's own position and angle", adding,

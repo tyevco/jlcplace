@@ -295,6 +295,11 @@ A correction also has a status, from the [correction database](../guide/database
 | `manual` | a person decided it or typed it in (`--source manual`); a red correction accepted this way becomes yellow |
 | `auto` | fitted; also a correction whose verification failed (`--failed`), which is then red, and its row `verified-wrong`, until other numbers replace it or a later verification of it goes right |
 
+With the EasyEDA record at hand, an entry is held to it: an `auto` entry that puts pads on other nets than a fit
+to the record is red (`the stored auto correction (rot 90, ...) puts EasyEDA pads on other nets than the EasyEDA
+record gives them`), and one that agrees is no better than that fit; a `manual` or verified entry settles what the
+record leaves open, but not pads that decide the nets (`the stored preview-verified correction ...`, red).
+
 When EasyEDA changes a footprint, the stored entries for it go stale: the part is fitted again, and a refit that
 differs from the stored correction is at best yellow (`the refit differs: check it in JLC's preview, then confirm it
 again`).
